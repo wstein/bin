@@ -1,0 +1,95 @@
+#!/bin/sh
+
+init() {
+  SCRIPT_DIR="$(dirname "$0")"
+  BRANCH="master"
+  PROVIDER="github"
+  DRY_RUN=0
+}
+
+run() {
+  build_cmd
+  if [ $DRY_RUN -eq 1 ]; then
+    echo $CMD
+  else
+    echo $CMD >&2
+    $CMD
+  fi
+}
+
+build_cmd() {
+  case "$PROVIDER" in
+  github)
+    CMD="curl -fsSL https://raw.github.com/$REPO/$BRANCH/$FILE"
+    ;;
+  gitlab)
+    CMD="curl -fsSL https://gitlab.com/$REPO/-/blob/$BRANCH/$FILE"
+    ;;
+  bitbucket)
+    CMD="curl -fsSL https://bitbucket.org/$REPO/raw/$BRANCH/$FILE"
+    ;;
+  esac
+}
+
+usage() {
+  echo "Usage:"
+  echo "  getraw [options] <username>/<repository>/[path/]<file>"
+  echo ""
+  echo "Options:"
+  echo "  -b, --branch=<branch>      Use <branch> instead of master branch"
+  echo "  -d, --dry-run              Only prints the curl command line and exits"
+  echo "  -h, --help                 Display this help message"
+  # echo "  -p, --provider=<provider>  Use SCM <provider>, default is github, valid"
+  # echo "                             providers are github, gitlab, bitbucket"
+  exit 1
+}
+
+parse_args() {
+  local USAGE=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --help | -h)
+      USAGE=1
+      ;;
+    --branch=*)
+      BRANCH="${1#*=}"
+      ;;
+    -b)
+      shift
+      BRANCH="$1"
+      ;;
+    --dry-run | -d)
+      DRY_RUN=1
+      ;;
+    *)
+      if [ -z $REPO ]; then
+        REPO=$(echo $1 | cut -d/ -f1-2)
+        FILE=$(echo $1 | cut -d/ -f3-)
+      else
+        echo "to many arguments: $1"
+        USAGE=1
+      fi
+      ;;
+    esac
+    shift
+  done
+
+  if [ -z "$REPO" ] || [ -z "$FILE" ]; then
+    echo "Missing arguments!"
+    USAGE=1
+  fi
+
+  if [ $USAGE -eq 1 ]; then
+    usage
+    exit
+  fi
+}
+
+main() {
+  init
+  parse_args $@
+  run
+}
+
+main "$@"
