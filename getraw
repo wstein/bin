@@ -1,126 +1,140 @@
 #!/bin/sh
 
 init() {
-  SCRIPT_DIR="$(dirname "$0")"
+	SCRIPT_DIR="$(dirname "$0")"
 }
 
 run() {
-  build_cmdline
-  if [ $DRY_RUN -eq 1 ]; then
-    echo $CMDLINE
-  else
-    echo $CMDLINE >&2
-    $CMDLINE
-  fi
+	build_cmdline
+	if [ $DRY_RUN -eq 1 ]; then
+		echo $CMDLINE
+	else
+		echo $CMDLINE >&2
+		$CMDLINE
+	fi
 }
 
 build_cmdline() {
-  if [ -n "$(command -v curld)" ]; then
-    CMD="curl -fsSL"
-  elif [ -n "$(command -v wget)" ]; then
-    CMD="wget -O- -q"
-  else
-    echo no downloader found! Please install either wget or curl.
-    exit 1
-  fi
+	if [ -n "$(command -v curld)" ]; then
+		CMD="curl -fsSL"
+	elif [ -n "$(command -v wget)" ]; then
+		CMD="wget -O- -q"
+	else
+		echo no downloader found! Please install either wget or curl.
+		exit 1
+	fi
 
-  case "$PROVIDER" in
-  chisel)
-    CMDLINE="$CMD https://chiselapp.com/user/$USER/repository/$REPO/raw?ci=$BRANCH&filename=$FILE"
-    ;;
-  github)
-    CMDLINE="$CMD https://raw.github.com/$USER/$REPO/$BRANCH/$FILE"
-    ;;
-  gitlab)
-    CMDLINE="$CMD https://gitlab.com/$USER/$REPO/-/blob/$BRANCH/$FILE"
-    ;;
-  bitbucket)
-    CMDLINE="$CMD https://bitbucket.org/$USER/$REPO/raw/$BRANCH/$FILE"
-    ;;
-  esac
+	case "$PROVIDER" in
+	chisel)
+		CMDLINE="$CMD https://chiselapp.com/user/$USER/repository/$REPO/raw?ci=$BRANCH&filename=$FILE"
+		;;
+
+	github)
+		CMDLINE="$CMD https://raw.github.com/$USER/$REPO/$BRANCH/$FILE"
+		;;
+
+	gitlab)
+		CMDLINE="$CMD https://gitlab.com/$USER/$REPO/-/blob/$BRANCH/$FILE"
+		;;
+
+	bitbucket)
+		CMDLINE="$CMD https://bitbucket.org/$USER/$REPO/raw/$BRANCH/$FILE"
+		;;
+
+	esac
 }
 
 usage() {
-  echo "Usage:"
-  echo "  getraw [options] <username>/<repository>/[<path>/]<file>"
-  echo ""
-  echo "Options:"
-  echo "  -b, --branch=<branch>      Use <branch> instead of master branch"
-  echo "  -d, --dry-run              Only prints the curl command line and exits"
-  echo "  -h, --help                 Display this help message"
-  echo "  -p, --provider=<provider>  Use SCM <provider>, default is github, supported"
-  echo "                             providers are chisel, github, gitlab, bitbucket"
-  exit 1
+	echo "Usage:"
+	echo "  getraw [options] <username>/<repository>/[<path>/]<file>"
+	echo ""
+	echo "Options:"
+	echo "  -b, --branch=<branch>      Use <branch> instead of master branch"
+	echo "  -d, --dry-run              Only prints the curl command line and exits"
+	echo "  -h, --help                 Display this help message"
+	echo "  -p, --provider=<provider>  Use SCM <provider>, default is github, supported"
+	echo "                             providers are chisel, github, gitlab, bitbucket"
+	exit 1
 }
 
 parse_args() {
-  local USAGE=0
+	local USAGE=0
 
-  PROVIDER="github"
-  DRY_RUN=0
+	PROVIDER="github"
+	DRY_RUN=0
 
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --help | -h)
-      USAGE=1
-      ;;
-    --branch=*)
-      BRANCH="${1#*=}"
-      ;;
-    -b)
-      shift
-      BRANCH="$1"
-      ;;
-    --provider=*)
-      PROVIDER="${1#*=}"
-      ;;
-    -p)
-      shift
-      PROVIDER="$1"
-      ;;
-    --dry-run | -d)
-      DRY_RUN=1
-      ;;
-    *)
-      if [ -z $REPO ]; then
-        USER=$(echo $1 | cut -d/ -f1)
-        REPO=$(echo $1 | cut -d/ -f2)
-        FILE=$(echo $1 | cut -d/ -f3-)
-      else
-        echo "to many arguments: $1"
-        USAGE=1
-      fi
-      ;;
-    esac
-    shift
-  done
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--help | -h)
+			USAGE=1
+			;;
 
-  if [ -z $BRANCH ]; then
-    case "$PROVIDER" in
-    chisel)
-      BRANCH="trunk"
-      ;;
-    *)
-      BRANCH="master"
-      ;;
-    esac
-  fi
+		--branch=*)
+			BRANCH="${1#*=}"
+			;;
 
-  if [ -z "$REPO" ] || [ -z "$FILE" ]; then
-    echo "Missing arguments!"
-    USAGE=1
-  fi
+		-b)
+			shift
+			BRANCH="$1"
+			;;
 
-  if [ $USAGE -eq 1 ]; then
-    usage
-    exit
-  fi
+		--provider=*)
+			PROVIDER="${1#*=}"
+			;;
+
+		-p)
+			shift
+			PROVIDER="$1"
+			;;
+
+		--dry-run | -d)
+			DRY_RUN=1
+			;;
+
+		*)
+			if [ -z $REPO ]; then
+				USER=$(echo $1 | cut -d/ -f1)
+				REPO=$(echo $1 | cut -d/ -f2)
+				FILE=$(echo $1 | cut -d/ -f3-)
+			else
+				echo "to many arguments: $1"
+				USAGE=1
+			fi
+			;;
+
+		esac
+		shift
+	done
+
+	if [ -z $BRANCH ]; then
+		case "$PROVIDER" in
+		chisel)
+			BRANCH="trunk"
+			;;
+
+		*)
+			BRANCH="master"
+			;;
+
+		esac
+	fi
+
+	if [ $USAGE -eq 1 ]; then
+		usage
+		exit
+	fi
+
+	if [ -z "$REPO" ] || [ -z "$FILE" ]; then
+		echo "Missing arguments!"
+		usage
+		exit
+	fi
 }
 
 main() {
-  init
-  parse_args $@
-  run
+	init
+	parse_args $@
+	run
 }
 
 main "$@"
