@@ -33,6 +33,11 @@ build_cmdline() {
 		CMDLINE="$CMD https://bitbucket.org/$USER/$REPO/raw/$BRANCH/$FILE"
 		;;
 
+	*)
+		echo "Unknown provider $PROVIDER"
+		exit 1
+		;;
+
 	esac
 }
 
