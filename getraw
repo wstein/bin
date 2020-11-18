@@ -30,7 +30,7 @@ build_cmdline() {
 		;;
 
 	github)
-		CMDLINE="$CMD https://raw.github.com/$USER/$REPO/$BRANCH/$FILE"
+		CMDLINE="$CMD https://github.com/$USER/$REPO/raw/$BRANCH/$FILE"
 		;;
 
 	gitlab)
