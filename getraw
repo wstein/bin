@@ -1,29 +1,21 @@
-#!/bin/sh
+#!/bin/bash
 
-init() {
-	SCRIPT_DIR="$(dirname "$0")"
-}
+set -e
 
-run() {
-	build_cmdline
-	if [ $DRY_RUN -eq 1 ]; then
-		echo $CMDLINE
-	else
-		echo $CMDLINE >&2
-		$CMDLINE
-	fi
+usage() {
+	echo "Usage:"
+	echo "  getraw [options] <username>/<repository>/[<path>/]<file>"
+	echo ""
+	echo "Options:"
+	echo "  -b, --branch=<branch>      Use <branch> instead of master branch"
+	echo "  -d, --dry-run              Only prints the curl command line and exits"
+	echo "  -h, --help                 Display this help message"
+	echo "  -p, --provider=<provider>  Use SCM <provider>, default is github. Supported"
+	echo "                             providers are chisel, github, gitlab, bitbucket"
+	exit 1
 }
 
 build_cmdline() {
-	if [ -n "$(command -v curld)" ]; then
-		CMD="curl -fsSL"
-	elif [ -n "$(command -v wget)" ]; then
-		CMD="wget -O- -q"
-	else
-		echo no downloader found! Please install either wget or curl.
-		exit 1
-	fi
-
 	case "$PROVIDER" in
 	chisel)
 		CMDLINE="$CMD https://chiselapp.com/user/$USER/repository/$REPO/raw?ci=$BRANCH&filename=$FILE"
@@ -42,19 +34,6 @@ build_cmdline() {
 		;;
 
 	esac
-}
-
-usage() {
-	echo "Usage:"
-	echo "  getraw [options] <username>/<repository>/[<path>/]<file>"
-	echo ""
-	echo "Options:"
-	echo "  -b, --branch=<branch>      Use <branch> instead of master branch"
-	echo "  -d, --dry-run              Only prints the curl command line and exits"
-	echo "  -h, --help                 Display this help message"
-	echo "  -p, --provider=<provider>  Use SCM <provider>, default is github, supported"
-	echo "                             providers are chisel, github, gitlab, bitbucket"
-	exit 1
 }
 
 parse_args() {
@@ -92,7 +71,7 @@ parse_args() {
 			;;
 
 		*)
-			if [ -z $REPO ]; then
+			if [ -z "$REPO" ]; then
 				USER=$(echo $1 | cut -d/ -f1)
 				REPO=$(echo $1 | cut -d/ -f2)
 				FILE=$(echo $1 | cut -d/ -f3-)
@@ -131,10 +110,36 @@ parse_args() {
 	fi
 }
 
+init() {
+	SCRIPT_DIR="$(dirname "$0")"
+}
+
+determine_download_tool() {
+	if [ -n "$(command -v curl)" ]; then
+		CMD="curl -fsSL"
+	elif [ -n "$(command -v wget)" ]; then
+		CMD="wget -O- -q"
+	else
+		echo "no downloader found! Please install either wget or curl." 1>&2
+		exit 1
+	fi
+}
+
+execute() {
+	if [ $DRY_RUN -eq 1 ]; then
+		echo $CMDLINE
+	else
+		echo $CMDLINE >&2
+		$CMDLINE
+	fi
+}
+
 main() {
 	init
-	parse_args $@
-	run
+	parse_args "$@"
+	determine_download_tool
+	build_cmdline
+	execute
 }
 
 main "$@"
