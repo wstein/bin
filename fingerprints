@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+FingerprintsArray = Dir.glob('/etc/ssh/*.pub').map do |file|
+  `ssh-keygen -lvf #{file}`.lines.map(&:strip)
+end
+
+Transposed = FingerprintsArray.transpose
+Hashes = Transposed[0].map(&:split).map { |piece| "#{piece[1]} #{piece[3]}" }
+AsciiArt = Transposed[1..-1].map { |lines| lines.join(' ') }
+
+puts AsciiArt, "\n", Hashes, "\n"
