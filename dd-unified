@@ -1,0 +1,15 @@
+#!/bin/sh
+
+set -eu
+
+DOKUDIFF=$(mktemp)
+OLD=$(mktemp)
+NEW=$(mktemp)
+
+cat <&0 >$DOKUDIFF
+sed -e '/^-/d;/^+/s// /' $DOKUDIFF >$OLD
+sed -e '/^+/d;/^-/s// /' $DOKUDIFF >$NEW
+
+diff --unified $OLD $NEW
+
+rm $OLD $NEW
