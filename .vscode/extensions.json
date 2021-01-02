@@ -15,7 +15,8 @@
 		"rogalmic.bash-debug",
 		"shaharkazaz.git-merger",
 		"streetsidesoftware.code-spell-checker",
-		"wmaurer.change-case"
+		"wmaurer.change-case",
+		"heaths.vscode-guid",
 	],
 	// List of extensions recommended by VS Code that should not be recommended for users of this workspace.
 	"unwantedRecommendations": []
