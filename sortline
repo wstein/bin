@@ -1,0 +1,6 @@
+#!/bin/sh
+
+set -eu
+SEPARATOR=${1:-' '} # first argument is separator, if given, otherwise use <space>
+
+tr "$SEPARATOR" \\n | sort --uniq | tr \\n "$SEPARATOR"
