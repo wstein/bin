@@ -12,6 +12,7 @@ usage() {
 	echo "  -h, --help                 Display this help message"
 	echo "  -p, --provider=<provider>  Use SCM <provider>, default is github. Supported"
 	echo "                             providers are chisel, gitea, github, gitlab, bitbucket"
+	echo "  -x, --execute              instead of printing to stdout, directly execute the file"
 	exit 1
 }
 
@@ -50,6 +51,7 @@ parse_args() {
 
 	PROVIDER="github"
 	DRY_RUN=0
+	EXECUTE=0
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -77,6 +79,10 @@ parse_args() {
 
 		--dry-run | -d)
 			DRY_RUN=1
+			;;
+
+		--execute | -x)
+			EXECUTE=1
 			;;
 
 		*)
@@ -134,11 +140,21 @@ determine_download_tool() {
 	fi
 }
 
+execute_remote_file() {
+	FILE=$(mktemp)
+	$CMDLINE >$FILE
+	chmod +x $FILE
+	$FILE
+	rm $FILE
+}
+
 execute() {
+	echo $CMDLINE >&2
 	if [ $DRY_RUN -eq 1 ]; then
-		echo $CMDLINE
+		: # do nothing on dry-run
+	elif [ $EXECUTE -eq 1 ]; then
+		execute_remote_file
 	else
-		echo $CMDLINE >&2
 		$CMDLINE
 	fi
 }
