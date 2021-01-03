@@ -27,8 +27,8 @@ setup_kitty() {
 }
 
 parse_args() {
-	typeset -l USAGE=0
-	typeset -g BRANCH=master
+	local USAGE=0
+	BRANCH=master
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
