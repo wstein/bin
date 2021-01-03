@@ -7,7 +7,7 @@ usage() {
 	echo "  getraw [options] <username>/<repository>/[<path>/]<file>"
 	echo ""
 	echo "Options:"
-	echo "  -b, --branch=<branch>      Use <branch> instead of master branch"
+	echo "  -b, --branch <branch>      Use <branch> instead of master branch"
 	echo "  -d, --dry-run              Only prints the curl command line and exits"
 	echo "  -h, --help                 Display this help message"
 	echo "  -p, --provider=<provider>  Use SCM <provider>, default is github. Supported"
@@ -63,7 +63,7 @@ parse_args() {
 			BRANCH="${1#*=}"
 			;;
 
-		-b)
+		-b | --branch)
 			shift
 			BRANCH="$1"
 			;;
@@ -72,7 +72,7 @@ parse_args() {
 			PROVIDER="${1#*=}"
 			;;
 
-		-p)
+		-p | --provider)
 			shift
 			PROVIDER="$1"
 			;;
