@@ -41,28 +41,28 @@ install_packages() {
 
 	case "$PKG_MANAGER" in
 	apk)
-		apk add $PACKAGES
+		sudo apk add $PACKAGES
 		;;
 
 	apt)
 		apt update
-		apt -y install $PACKAGES
+		sudo apt -y install $PACKAGES
 		;;
 
 	dnf)
-		dnf -y install $PACKAGES
+		sudo dnf -y install $PACKAGES
 		;;
 
 	pacman)
-		pacman -Sy --noconfirm $PACKAGES
+		sudo pacman -Sy --noconfirm $PACKAGES
 		;;
 
 	yum)
-		yum install -y $PACKAGES
+		sudo yum install -y $PACKAGES
 		;;
 
 	zypper)
-		zypper install -y $PACKAGES
+		sudo zypper install -y $PACKAGES
 		;;
 
 	*)
