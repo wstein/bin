@@ -47,7 +47,7 @@ build_cmdline() {
 }
 
 parse_args() {
-	local USAGE=0
+	USAGE=0
 
 	PROVIDER="github"
 	DRY_RUN=0
@@ -87,9 +87,9 @@ parse_args() {
 
 		*)
 			if [ -z "$REPO" ]; then
-				USER=$(echo $1 | cut -d/ -f1)
-				REPO=$(echo $1 | cut -d/ -f2)
-				FILE=$(echo $1 | cut -d/ -f3-)
+				USER=$(echo "$1" | cut -d/ -f1)
+				REPO=$(echo "$1" | cut -d/ -f2)
+				FILE=$(echo "$1" | cut -d/ -f3-)
 			else
 				echo "to many arguments: $1"
 				USAGE=1
@@ -100,7 +100,7 @@ parse_args() {
 		shift
 	done
 
-	if [ -z $BRANCH ]; then
+	if [ -z "$BRANCH" ]; then
 		case "$PROVIDER" in
 		chisel)
 			BRANCH="trunk"
@@ -125,10 +125,6 @@ parse_args() {
 	fi
 }
 
-init() {
-	SCRIPT_DIR="$(dirname "$0")"
-}
-
 determine_download_tool() {
 	if [ -n "$(command -v curl)" ]; then
 		CMD="curl -fsSL"
@@ -142,14 +138,14 @@ determine_download_tool() {
 
 execute_remote_file() {
 	FILE=$(mktemp)
-	$CMDLINE >$FILE
-	chmod +x $FILE
+	$CMDLINE >"$FILE"
+	chmod +x "$FILE"
 	$FILE
-	rm $FILE
+	rm "$FILE"
 }
 
 execute() {
-	echo $CMDLINE >&2
+	echo "$CMDLINE" >&2
 	if [ $DRY_RUN -eq 1 ]; then
 		: # do nothing on dry-run
 	elif [ $EXECUTE -eq 1 ]; then
@@ -160,7 +156,6 @@ execute() {
 }
 
 main() {
-	init
 	parse_args "$@"
 	determine_download_tool
 	build_cmdline
