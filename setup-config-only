@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	checkout_home_config
+}
+
+checkout_home_config() {
+	echo "Setting up configuration from github.com/wstein/lxconfig..."
+
+	TEMP=$(mktemp -d)
+
+	git clone --no-checkout https://github.com/wstein/lxconfig $TEMP
+
+	cd ~
+	mv $TEMP/.git .
+	rmdir $TEMP
+	git reset --hard
+}
+
+main "$@"

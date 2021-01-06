@@ -3,40 +3,43 @@
 set -eu
 
 main() {
-	get_package_manager
+	install_base_packages
 	install_zsh
 }
 
-get_package_manager() {
+install_base_packages() {
+  PACKAGES="curl git procps zsh"
+
 	# evaluates the package manager
-	PKG_MANAGER_PATH=$({ command -v apt || command -v apk || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
+	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
 
 	# /usr/bin/dnf -> dnf
 	PKG_MANAGER=${PKG_MANAGER_PATH##*/}
 
 	case "$PKG_MANAGER" in
 	apk)
-		PKG_MANAGER_CMD="apk add"
+		apk add $PACKAGES
 		;;
 
 	apt)
-		PKG_MANAGER_CMD="apt update && apt -y"
+		apt update
+		apt -y install $PACKAGES libuser
 		;;
 
 	dnf)
-		PKG_MANAGER_CMD="dnf install -y"
+		dnf -y install $PACKAGES libuser
 		;;
 
 	pacman)
-		PKG_MANAGER_CMD="pacman -Sy"
+		pacman -Sy $PACKAGES libuser
 		;;
 
 	yum)
-		PKG_MANAGER_CMD="yum install -y"
+		yum install -y $PACKAGES libuser
 		;;
 
 	zypper)
-		PKG_MANAGER_CMD="zypper install"
+		zypper install $PACKAGES libuser
 		;;
 
 	*)
@@ -49,8 +52,6 @@ get_package_manager() {
 
 install_zsh() {
 	echo "Installing ..."
-	$PKG_MANAGER_CMD curl git procps zsh
-
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
 }
