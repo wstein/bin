@@ -2,14 +2,37 @@
 
 set -eu
 
+. /etc/os-release
+cat /etc/os-release
+echo ======================
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo ======================
+
 main() {
-	install_base_packages
+	get_packages_to_install
+	install_packages
 	install_zsh
 }
 
-install_base_packages() {
-  PACKAGES="curl git procps zsh"
+get_packages_to_install() {
+	PACKAGES="curl git procps zsh neovim exa"
 
+	if [ "$ID" = "centos" ] && [ $VERSION_ID -le 8 ]; then
+		echo PACKAGES=$PACKAGES
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<neovim\>/vim/' -e 's/\<exa\>//')
+		echo PACKAGES=$PACKAGES
+	fi
+}
+
+install_packages() {
 	# evaluates the package manager
 	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
 
@@ -23,23 +46,23 @@ install_base_packages() {
 
 	apt)
 		apt update
-		apt -y install $PACKAGES libuser
+		apt -y install $PACKAGES
 		;;
 
 	dnf)
-		dnf -y install $PACKAGES libuser
+		dnf -y install $PACKAGES
 		;;
 
 	pacman)
-		pacman -Sy $PACKAGES libuser
+		pacman -Sy --noconfirm $PACKAGES
 		;;
 
 	yum)
-		yum install -y $PACKAGES libuser
+		yum install -y $PACKAGES
 		;;
 
 	zypper)
-		zypper install $PACKAGES libuser
+		zypper install -y $PACKAGES
 		;;
 
 	*)
