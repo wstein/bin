@@ -16,12 +16,17 @@ echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo ============================================
-echo 
+echo
 
 main() {
+  set_max_user_watches
 	get_packages_to_install
 	install_packages
 	install_zsh
+}
+
+set_max_user_watches() {
+	echo 'fs.inotify.max_user_watches=524288' | sudo tee /etc/sysctl.d/10_max_user_watches >/dev/null
 }
 
 get_packages_to_install() {
