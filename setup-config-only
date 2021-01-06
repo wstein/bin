@@ -9,16 +9,16 @@ main() {
 	check_katacoda_and_setup_code_server
 
 	echo
-	echo "You need to do something like `git reset --hard`, "
+	echo "You need to do something like \`git reset --hard\`, "
 	echo "after you have checked the current state."
 }
 
 link_foreign_configurations() {
 	[ -d $HOME/.local/share/JetBrains/Toolbox/ ] || mkdir --parents $HOME/.local/share/JetBrains/Toolbox/
-	ln -s $HOME/.config/JetBrains/Toolbox/.settings.json $HOME/.local/share/JetBrains/Toolbox/
+	ln -sf $HOME/.config/JetBrains/Toolbox/.settings.json $HOME/.local/share/JetBrains/Toolbox/
 
-	ln -s $HOME/.config/.vscode $HOME/
-	ln -s $HOME/.config/zsh/.zshrc $HOME/
+	ln -sf $HOME/.config/.vscode $HOME/
+	ln -sf $HOME/.config/zsh/.zshrc $HOME/
 }
 
 check_katacoda_and_setup_code_server() {
@@ -29,7 +29,7 @@ check_katacoda_and_setup_code_server() {
 
 		# (replace) vscode setting with link
 		[ -f /opt/.katacodacode/user-data/User/settings.json ] && rm /opt/.katacodacode/user-data/User/settings.json
-		ln -s ~/.config/Code/User/settings.json  /opt/.katacodacode/user-data/User
+		ln -sf ~/.config/Code/User/settings.json  /opt/.katacodacode/user-data/User
 	fi
 }
 
