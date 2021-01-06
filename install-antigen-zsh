@@ -34,6 +34,8 @@ get_packages_to_install() {
 
 	if [ "$ID" = "centos" ] && [ $VERSION_ID -le 8 ]; then
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<neovim\>/vim/' -e 's/\<exa\>//')
+	elif [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<exa\>//')
 	fi
 }
 
