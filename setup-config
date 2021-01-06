@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	setup_config
+}
+
+setup_config() {
+	echo "Setting up configuration from github.com/wstein/lxconfig..."
+
+	TEMP=$(mktemp -d)
+
+	git clone https://github.com/wstein/lxconfig $TEMP
+
+	mv $TEMP/.git ~
+
+	rm -rf $TEMP
+
+	echo
+	echo "To complete setup, go to $HOME and do a"
+	echo "  > git reset --hard"
+	echo "to override the courrent config."
+}
+
+main "$@"

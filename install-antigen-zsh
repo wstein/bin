@@ -1,0 +1,58 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	get_package_manager
+	install_zsh
+}
+
+get_package_manager() {
+	# evaluates the package manager
+	PKG_MANAGER_PATH=$({ command -v apt || command -v apk || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
+
+	# /usr/bin/dnf -> dnf
+	PKG_MANAGER=${PKG_MANAGER_PATH##*/}
+
+	case "$PKG_MANAGER" in
+	apk)
+		PKG_MANAGER_CMD="apk add"
+		;;
+
+	apt)
+		PKG_MANAGER_CMD="apt update && apt -y"
+		;;
+
+	dnf)
+		PKG_MANAGER_CMD="dnf install -y"
+		;;
+
+	pacman)
+		PKG_MANAGER_CMD="pacman -Sy"
+		;;
+
+	yum)
+		PKG_MANAGER_CMD="yum install -y"
+		;;
+
+	zypper)
+		PKG_MANAGER_CMD="zypper install"
+		;;
+
+	*)
+		echo "Fatal Error: No supported package manager found!"
+		exit 1
+		;;
+
+	esac
+}
+
+install_zsh() {
+	echo "Installing ..."
+	$PKG_MANAGER_CMD curl git procps zsh
+
+	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
+	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
+}
+
+main "$@"
