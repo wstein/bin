@@ -18,6 +18,8 @@ for weight in Bold Light Medium Regular Retina SemiBold; do
 	file_path="${HOME}/.local/share/fonts/FiraCode-${weight}-NF-Win.ttf"
 	file_url="https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/FiraCode/${weight}/complete/Fira Code ${weight} Nerd Font Complete ${category}.ttf"
 
+	file_url=$(echo $file_url | sed 's/ /%20/g')  # replace <space> with %20
+
 	echo "wget -O $file_path $file_url"
 	wget -q -O "${file_path}" "${file_url}"
 done
