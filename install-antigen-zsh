@@ -5,15 +5,15 @@ set -eu
 . /etc/os-release
 cat /etc/os-release
 echo ======================
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
-echo \'$ID\' \'$VERSION_ID\' \"$PRETTY_NAME\"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
+echo $ID $VERSION_ID "$PRETTY_NAME"
 echo ======================
 
 main() {
@@ -26,9 +26,9 @@ get_packages_to_install() {
 	PACKAGES="curl git procps zsh neovim exa"
 
 	if [ "$ID" = "centos" ] && [ $VERSION_ID -le 8 ]; then
-		echo PACKAGES=$PACKAGES
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<neovim\>/vim/' -e 's/\<exa\>//')
-		echo PACKAGES=$PACKAGES
+		echo PACKAGES="$PACKAGES"
+		PACKAGES=$(echo "$PACKAGES" | sed -r -e 's/\<neovim\>/vim/' -e 's/\<exa\>//')
+		echo PACKAGES="$PACKAGES"
 	fi
 }
 
@@ -41,28 +41,28 @@ install_packages() {
 
 	case "$PKG_MANAGER" in
 	apk)
-		apk add $PACKAGES
+		apk add "$PACKAGES"
 		;;
 
 	apt)
 		apt update
-		apt -y install $PACKAGES
+		apt -y install "$PACKAGES"
 		;;
 
 	dnf)
-		dnf -y install $PACKAGES
+		dnf -y install "$PACKAGES"
 		;;
 
 	pacman)
-		pacman -Sy --noconfirm $PACKAGES
+		pacman -Sy --noconfirm "$PACKAGES"
 		;;
 
 	yum)
-		yum install -y $PACKAGES
+		yum install -y "$PACKAGES"
 		;;
 
 	zypper)
-		zypper install -y $PACKAGES
+		zypper install -y "$PACKAGES"
 		;;
 
 	*)
