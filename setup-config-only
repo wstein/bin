@@ -12,7 +12,14 @@ checkout_home_config() {
 	LXCONFIG_TEMP=$(mktemp -d)
 	cd $LXCONFIG_TEMP
 	git clone https://github.com/wstein/lxconfig $LXCONFIG_TEMP
-	mv .git .gitignore ~
+	rsync -avx .git .gitignore ~/.config
+
+	# link foreign files
+	[ -d $HOME/.local/share/JetBrains/Toolbox/ ] || mkdir --parents $HOME/.local/share/JetBrains/Toolbox/
+	ln -s $HOME/.config/JetBrains/Toolbox/.settings.json $HOME/.local/share/JetBrains/Toolbox/
+
+	ln -s $HOME/.config/.vscode $HOME/
+	ln -s $HOME/.config/zsh/.zshrc $HOME/
 
 	cd ~
 	echo
