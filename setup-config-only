@@ -9,14 +9,15 @@ main() {
 checkout_home_config() {
 	echo "Setting up configuration from github.com/wstein/lxconfig..."
 
-	TEMP=$(mktemp -d)
-
-	git clone --no-checkout https://github.com/wstein/lxconfig $TEMP
+	LXCONFIG_TEMP=$(mktemp -d)
+	cd $LXCONFIG_TEMP
+	git clone https://github.com/wstein/lxconfig $LXCONFIG_TEMP
+	mv .git .gitignore ~
 
 	cd ~
-	mv $TEMP/.git .
-	rmdir $TEMP
-	git reset --hard
+	echo
+	echo "You need to do something like `git reset --hard`, "
+	echo "after you have checked the current state."
 }
 
 main "$@"
