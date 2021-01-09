@@ -1,6 +1,6 @@
 #!/bin/sh
 
 set -eu
-SEPARATOR=${1:-' '} # first argument is separator, if given, otherwise use <space>
+SEPARATOR=${1:-' '} # first argument is separator, default is <space>
 
 tr "$SEPARATOR" \\n | sort --uniq | tr \\n "$SEPARATOR"
