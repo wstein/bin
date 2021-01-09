@@ -1,0 +1,70 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	echo "finishing user configuration..."
+
+	setup_zsh_antigen
+	setup_firacode_font
+	link_foreign_configurations
+	check_katacoda_and_setup_code_server
+}
+
+link_foreign_configurations() {
+	[ -d $HOME/.local/share/JetBrains/Toolbox/ ] || mkdir --parents $HOME/.local/share/JetBrains/Toolbox/
+	ln -sf $HOME/.config/JetBrains/Toolbox/.settings.json $HOME/.local/share/JetBrains/Toolbox/
+
+	ln -sf $HOME/.config/.vscode $HOME/
+	ln -sf $HOME/.config/zsh/.zshrc $HOME/
+}
+
+check_katacoda_and_setup_code_server() {
+	if [ -d /opt/.katacodacode ]; then
+		echo "Setting up code server..."
+
+		[ -d /opt/.katacodacode/user-data/User ] || mkdir --parents /opt/.katacodacode/user-data/User
+
+		# (replace) vscode setting with link
+		[ -f /opt/.katacodacode/user-data/User/settings.json ] && rm /opt/.katacodacode/user-data/User/settings.json
+		ln -sf ~/.config/Code/User/settings.json  /opt/.katacodacode/user-data/User
+	fi
+}
+
+# modified installscript
+# using Windows compatible Nerd Font
+#
+# origin: https://github.com/tonsky/FiraCode/wiki/Linux-instructions#installing-with-a-package-manager
+setup_firacode_font() {
+	echo "setting up Fira Code Nerd Font ..."
+
+	fonts_dir="${HOME}/.local/share/fonts"
+	if [ ! -d "${fonts_dir}" ]; then
+		echo "mkdir -p $fonts_dir"
+		mkdir -p "${fonts_dir}"
+	else
+		echo "Found fonts dir $fonts_dir"
+	fi
+
+	for weight in Bold Light Medium Regular Retina SemiBold; do
+		category="Mono Windows Compatible" # or for pure non Windows environments "Mono"
+		file_path="${HOME}/.local/share/fonts/FiraCode-${weight}-NF-Win.ttf"
+		file_url="https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/FiraCode/${weight}/complete/Fira Code ${weight} Nerd Font Complete ${category}.ttf"
+
+		file_url=$(echo $file_url | sed 's/ /%20/g')  # replace <space> with %20
+
+		echo "curl -L -O $file_path $file_url"
+		curl -fsSL -o "${file_path}" "${file_url}"
+	done
+
+	echo "fc-cache -f"
+	fc-cache -f || true # ignore error
+}
+
+setup_zsh_antigen() {
+	echo "setting up Fira Code Nerd Font ..."
+	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
+	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
+}
+
+main "$@"

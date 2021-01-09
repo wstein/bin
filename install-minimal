@@ -18,19 +18,26 @@ echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo ============================================
 echo
 
+# SUDO is only set, if sudo is actually installed!
+SUDO=$(command -v sudo || true)
+
 main() {
-  set_max_user_watches
 	get_packages_to_install
 	install_packages
-	install_zsh
+	install_git_extras_from_sources
+	set_max_user_watches
 }
 
 set_max_user_watches() {
-	echo 'fs.inotify.max_user_watches=524288' | sudo tee /etc/sysctl.d/10_max_user_watches >/dev/null
+	if [ -d /etc/sysctl.d/ ]; then
+		# each watch needs up to 1080 bytes (https://code.visualstudio.com/docs/setup/linux#_visual-studio-code-is-unable-to-watch-for-file-changes-in-this-large-workspace-error-enospc)
+		echo 'fs.inotify.max_user_watches=196608' | $SUDO tee /etc/sysctl.d/10_max_user_watches >/dev/null
+		$SUDO sysctl -p || true # ignore error
+	fi
 }
 
 get_packages_to_install() {
-	PACKAGES="curl git procps zsh neovim exa"
+	PACKAGES="bash bash-completion curl diffutils exa git make neovim patch procps qrencode tmux util-linux wget zsh"
 
 	if [ "$ID" = "centos" ] && [ $VERSION_ID -le 8 ]; then
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<neovim\>/vim/' -e 's/\<exa\>//')
@@ -48,28 +55,30 @@ install_packages() {
 
 	case "$PKG_MANAGER" in
 	apk)
-		sudo apk add $PACKAGES
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/')
+		$SUDO apk update
+		$SUDO apk add $PACKAGES
 		;;
 
 	apt)
 		apt update
-		sudo apt -y install $PACKAGES
+		$SUDO apt -y install $PACKAGES bsdmainutils
 		;;
 
 	dnf)
-		sudo dnf -y install $PACKAGES
+		$SUDO dnf -y install $PACKAGES
 		;;
 
 	pacman)
-		sudo pacman -Sy --noconfirm $PACKAGES
+		$SUDO pacman -Sy --noconfirm $PACKAGES
 		;;
 
 	yum)
-		sudo yum install -y $PACKAGES
+		$SUDO yum install -y $PACKAGES
 		;;
 
 	zypper)
-		sudo zypper install -y $PACKAGES
+		$SUDO zypper install -y $PACKAGES
 		;;
 
 	*)
@@ -80,10 +89,13 @@ install_packages() {
 	esac
 }
 
-install_zsh() {
-	echo "Installing ..."
-	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
-	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
+install_git_extras_from_sources() {
+	TEMP_DIR=$(mktemp -d git-extras.XXXXXX)
+	git clone https://github.com/tj/git-extras.git $TEMP_DIR
+	cd $TEMP_DIR
+	# checkout the latest tag
+	git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
+	$SUDO make install
 }
 
 main "$@"
