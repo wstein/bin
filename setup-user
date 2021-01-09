@@ -31,7 +31,7 @@ check_katacoda_and_setup_code_server() {
 }
 
 setup_zsh_antigen() {
-	echo "setting up Fira Code Nerd Font ..."
+	echo "setting up Zsh Antigen..."
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
 }
