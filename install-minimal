@@ -90,7 +90,7 @@ install_packages() {
 }
 
 install_git_extras_from_sources() {
-	TEMP_DIR=$(mktemp -d git-extras.XXXXXX)
+	TEMP_DIR=$(mktemp -d /tmp/git-extras.XXXXXX)
 	git clone https://github.com/tj/git-extras.git $TEMP_DIR
 	cd $TEMP_DIR
 	# checkout the latest tag
