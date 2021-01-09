@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+
+set -eu
+
+# modified installscript
+# using Windows compatible Nerd Font
+#
+# origin: https://github.com/tonsky/FiraCode/wiki/Linux-instructions#installing-with-a-package-manager
+setup_firacode_font() {
+	echo "setting up Fira Code Nerd Font ..."
+
+	fonts_dir="${HOME}/.local/share/fonts"
+	if [ ! -d "${fonts_dir}" ]; then
+		echo "mkdir -p $fonts_dir"
+		mkdir -p "${fonts_dir}"
+	else
+		echo "Found fonts dir $fonts_dir"
+	fi
+
+	for weight in Bold Light Medium Regular Retina SemiBold; do
+		category="Mono Windows Compatible" # or for pure non Windows environments "Mono"
+		file_path="${HOME}/.local/share/fonts/FiraCode-${weight}-NF-Win.ttf"
+		file_url="https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/FiraCode/${weight}/complete/Fira Code ${weight} Nerd Font Complete ${category}.ttf"
+
+		file_url=$(echo $file_url | sed 's/ /%20/g')  # replace <space> with %20
+
+		echo "curl -L -O $file_path $file_url"
+		curl -fsSL -o "${file_path}" "${file_url}"
+	done
+
+	echo "fc-cache -f"
+	fc-cache -f || true # ignore error
+}
+
+setup_firacode_font "$@"
