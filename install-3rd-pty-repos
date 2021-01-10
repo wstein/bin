@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+	sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/
+
+	sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
+	sudo dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/vscode/
+
+	sudo dnf check-update
+}
+
+main "$@"
