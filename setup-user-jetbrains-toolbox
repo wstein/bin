@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_jetbrains_toolbox() {
+	echo "Installing Jetbrains Toolbox..."
+
+	test -d .local/share/JetBrains/Toolbox || mkdir --parents .local/share/JetBrains/Toolbox
+
+	DL_LINK=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=TBA&latest=true&type=release" | jq -r .TBA[0].downloads.linux.link)
+	TMP_DIR=$(mktemp -d /tmp/jetbrains-XXXXXX)
+
+	echo "Downloading $DL_LINK..."
+	curl -L "$DL_LINK" | tar -xz --strip-components=1 -C "$TMP_DIR"
+
+	# jetbrains-toolbox will automatically copy toolbox to ~/.local/share/...
+	("$TMP_DIR/jetbrains-toolbox" &)
+}
+
+install_jetbrains_toolbox "$@"
