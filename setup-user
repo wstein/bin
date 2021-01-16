@@ -6,6 +6,7 @@ main() {
 	echo "finishing user configuration..."
 
 	setup_zsh_antigen
+	setup_csvq
 	link_foreign_configurations
 	check_katacoda_and_setup_code_server
 }
@@ -26,7 +27,7 @@ check_katacoda_and_setup_code_server() {
 
 		# (replace) vscode setting with link
 		[ -f /opt/.katacodacode/user-data/User/settings.json ] && rm /opt/.katacodacode/user-data/User/settings.json
-		ln -sf ~/.config/Code/User/settings.json  /opt/.katacodacode/user-data/User
+		ln -sf ~/.config/Code/User/settings.json /opt/.katacodacode/user-data/User
 	fi
 }
 
@@ -34,6 +35,20 @@ setup_zsh_antigen() {
 	echo "setting up Zsh Antigen..."
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
+}
+
+setup_csvq() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/mithrandie/csvq/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
+	)
+
+	pushd $(mktemp -d /tmp/csvq-XXXXXX)
+
+	curl -L $DL | tar xz --strip-components=1
+	mv csvq ~/.local/bin
+
+	popd ~
 }
 
 main "$@"
