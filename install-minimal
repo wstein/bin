@@ -37,11 +37,9 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion curl diffutils exa git make neovim patch procps qrencode tmux util-linux wget zsh"
+	PACKAGES="bash bash-completion curl diffutils exa git jq libffi make patch procps qrencode tmux util-linux wget zsh"
 
-	if [ "$ID" = "centos" ] && [ $VERSION_ID -le 8 ]; then
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<neovim\>/vim/' -e 's/\<exa\>//')
-	elif [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
+	if [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<exa\>//')
 	fi
 }
@@ -57,28 +55,28 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES
+		$SUDO apk add $PACKAGES vim
 		;;
 
 	apt)
 		apt update
-		$SUDO apt -y install $PACKAGES bsdmainutils
+		$SUDO apt -y install $PACKAGES bsdmainutils vim
 		;;
 
 	dnf)
-		$SUDO dnf -y install $PACKAGES
+		$SUDO dnf -y install $PACKAGES neovim
 		;;
 
 	pacman)
-		$SUDO pacman -Sy --noconfirm $PACKAGES
+		$SUDO pacman -Sy --noconfirm $PACKAGES vim
 		;;
 
 	yum)
-		$SUDO yum install -y $PACKAGES
+		$SUDO yum install -y $PACKAGES neovim
 		;;
 
 	zypper)
-		$SUDO zypper install -y $PACKAGES
+		$SUDO zypper install -y $PACKAGES vim
 		;;
 
 	*)
