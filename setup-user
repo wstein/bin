@@ -43,12 +43,12 @@ setup_csvq() {
 			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
 	)
 
-	pushd $(mktemp -d /tmp/csvq-XXXXXX)
+	cd $(mktemp -d /tmp/csvq-XXXXXX)
 
 	curl -L $DL | tar xz --strip-components=1
 	mv csvq ~/.local/bin
 
-	popd ~
+	cd
 }
 
 main "$@"
