@@ -37,11 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion curl diffutils exa git jq make patch procps qrencode rsync tmux util-linux wget zsh"
-
-	if [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<exa\>//')
-	fi
+	PACKAGES="bash bash-completion curl diffutils git jq make patch procps qrencode rsync tmux util-linux wget zsh"
 }
 
 install_packages() {
@@ -60,23 +56,27 @@ install_packages() {
 
 	apt)
 		apt update
-		$SUDO apt -y install $PACKAGES bsdmainutils vim libffi7
+		if [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
+			$SUDO apt -y install $PACKAGES bsdmainutils vim
+		else
+			$SUDO apt -y install $PACKAGES bsdmainutils vim exa
+		fi
 		;;
 
 	dnf)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO dnf -y install $PACKAGES neovim libffi
+			$SUDO dnf -y install $PACKAGES neovim exa
 		else
-			$SUDO dnf -y install $PACKAGES vim libffi
+			$SUDO dnf -y install $PACKAGES vim 
 		fi
 		;;
 
 	pacman)
-		$SUDO pacman -Sy --noconfirm $PACKAGES vim libffi
+		$SUDO pacman -Sy --noconfirm $PACKAGES vim
 		;;
 
 	zypper)
-		$SUDO zypper install -y $PACKAGES vim libffi
+		$SUDO zypper install -y $PACKAGES vim
 		;;
 
 	*)
