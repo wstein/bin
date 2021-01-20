@@ -37,7 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion curl diffutils exa git jq libffi make patch procps qrencode tmux util-linux wget zsh"
+	PACKAGES="bash bash-completion curl diffutils exa git jq make patch procps qrencode rsync tmux util-linux wget zsh"
 
 	if [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<exa\>//')
@@ -55,28 +55,28 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES vim
+		$SUDO apk add $PACKAGES vim libffi
 		;;
 
 	apt)
 		apt update
-		$SUDO apt -y install $PACKAGES bsdmainutils vim
+		$SUDO apt -y install $PACKAGES bsdmainutils vim libffi7
 		;;
 
 	dnf)
-		$SUDO dnf -y install $PACKAGES neovim
+		if [ "$ID" = "fedora" ]; then
+			$SUDO dnf -y install $PACKAGES neovim libffi
+		else
+			$SUDO dnf -y install $PACKAGES vim libffi
+		fi
 		;;
 
 	pacman)
-		$SUDO pacman -Sy --noconfirm $PACKAGES vim
-		;;
-
-	yum)
-		$SUDO yum install -y $PACKAGES neovim
+		$SUDO pacman -Sy --noconfirm $PACKAGES vim libffi
 		;;
 
 	zypper)
-		$SUDO zypper install -y $PACKAGES vim
+		$SUDO zypper install -y $PACKAGES vim libffi
 		;;
 
 	*)
