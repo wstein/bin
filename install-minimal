@@ -37,7 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion curl diffutils git jq make patch procps qrencode rsync tmux util-linux wget zsh"
+	PACKAGES="bash bash-completion curl diffutils git gnupg htop jq make patch procps qrencode rsync tmux util-linux wget zsh"
 }
 
 install_packages() {
@@ -66,8 +66,11 @@ install_packages() {
 	dnf)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO dnf -y install $PACKAGES neovim exa
+		elif [ "$ID" = "centos" ]; then
+			$SUDO dnf -y install epel-release
+			$SUDO dnf -y install $PACKAGES vim
 		else
-			$SUDO dnf -y install $PACKAGES vim 
+			$SUDO dnf -y install $PACKAGES vim
 		fi
 		;;
 
