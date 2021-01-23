@@ -56,7 +56,9 @@ install_packages() {
 
 	apt)
 		apt update
-		if [ "$ID" = "ubuntu" ] && [ "$VERSION_ID" = "20.04" ]; then
+		VERION_MAJOR="${VERSION_ID%%.*}"
+		VERION_MINOR="${VERSION_ID#*.}"
+		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils vim
 		else
 			$SUDO apt -y install $PACKAGES bsdmainutils vim exa
