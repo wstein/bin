@@ -28,6 +28,14 @@ check_katacoda_and_setup_code_server() {
 		# (replace) vscode setting with link
 		[ -f /opt/.katacodacode/user-data/User/settings.json ] && rm /opt/.katacodacode/user-data/User/settings.json
 		ln -sf ~/.config/Code/User/settings.json /opt/.katacodacode/user-data/User
+
+		# remove/replace incompatible extensions
+		sed -i \
+			-e '/ms-vscode-remote.remote-/d' \
+			-e '/adamhartford.vscode-base64/d' \
+			-e '/DavidAnson.vscode-markdownlint/d' \
+			-e 's/CoenraadS.bracket-pair-colorizer-2/CoenraadS.bracket-pair-colorizer/' \
+			~/.config/.vscode/extensions.json
 	fi
 }
 
