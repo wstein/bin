@@ -37,7 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion curl diffutils git gnupg htop jq make patch procps qrencode rsync tmux util-linux wget zsh"
+	PACKAGES="bash bash-completion curl diffutils git gnupg htop jq make patch procps qrencode rsync sl sqlite tmux util-linux wget zsh"
 }
 
 install_packages() {
