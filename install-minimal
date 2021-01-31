@@ -59,29 +59,29 @@ install_packages() {
 		VERION_MAJOR="${VERSION_ID%%.*}"
 		VERION_MINOR="${VERSION_ID#*.}"
 		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
-			$SUDO apt -y install $PACKAGES bsdmainutils vim
+			$SUDO apt -y install $PACKAGES bsdmainutils vim ripgrep
 		else
-			$SUDO apt -y install $PACKAGES bsdmainutils vim exa
+			$SUDO apt -y install $PACKAGES bsdmainutils vim ripgrep exa
 		fi
 		;;
 
 	dnf)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO dnf -y install $PACKAGES neovim exa
+			$SUDO dnf -y install $PACKAGES neovim ripgrep exa
 		elif [ "$ID" = "centos" ]; then
 			$SUDO dnf -y install epel-release
 			$SUDO dnf -y install $PACKAGES vim
 		else
-			$SUDO dnf -y install $PACKAGES vim
+			$SUDO dnf -y install $PACKAGES vim ripgrep
 		fi
 		;;
 
 	pacman)
-		$SUDO pacman -Sy --noconfirm $PACKAGES vim
+		$SUDO pacman -Sy --noconfirm $PACKAGES vim ripgrep
 		;;
 
 	zypper)
-		$SUDO zypper install -y $PACKAGES vim
+		$SUDO zypper install -y $PACKAGES vim ripgrep
 		;;
 
 	*)
