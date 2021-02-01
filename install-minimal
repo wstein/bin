@@ -37,7 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion curl diffutils git gnupg htop jq make patch procps qrencode rsync sl sqlite tmux util-linux wget zsh"
+	PACKAGES="bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync sl sqlite tar tmux util-linux wget xz zsh zstd"
 }
 
 install_packages() {
@@ -58,30 +58,32 @@ install_packages() {
 		$SUDO apt update
 		VERION_MAJOR="${VERSION_ID%%.*}"
 		VERION_MINOR="${VERSION_ID#*.}"
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/')
 		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
-			$SUDO apt -y install $PACKAGES bsdmainutils vim ripgrep
+			$SUDO apt -y install $PACKAGES bsdmainutils vim
 		else
-			$SUDO apt -y install $PACKAGES bsdmainutils vim ripgrep exa
+			$SUDO apt -y install $PACKAGES bsdmainutils vim exa
 		fi
 		;;
 
 	dnf)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO dnf -y install $PACKAGES neovim ripgrep exa
+			$SUDO dnf -y install $PACKAGES neovim exa
 		elif [ "$ID" = "centos" ]; then
 			$SUDO dnf -y install epel-release
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
 			$SUDO dnf -y install $PACKAGES vim
 		else
-			$SUDO dnf -y install $PACKAGES vim ripgrep
+			$SUDO dnf -y install $PACKAGES vim
 		fi
 		;;
 
 	pacman)
-		$SUDO pacman -Sy --noconfirm $PACKAGES vim ripgrep
+		$SUDO pacman -Sy --noconfirm $PACKAGES vim
 		;;
 
 	zypper)
-		$SUDO zypper install -y $PACKAGES vim ripgrep
+		$SUDO zypper install -y $PACKAGES vim
 		;;
 
 	*)
