@@ -37,7 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync sl sqlite tar tmux util-linux wget xz zsh zstd"
+	PACKAGES="bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync sl sqlite sudo tar tmux util-linux wget xz zsh zstd"
 }
 
 install_packages() {
@@ -59,6 +59,7 @@ install_packages() {
 		VERION_MAJOR="${VERSION_ID%%.*}"
 		VERION_MINOR="${VERSION_ID#*.}"
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/')
+		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils vim
 		else
