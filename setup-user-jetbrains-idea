@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_jetbrains_tool() {
+	echo "Installing Jetbrains IntelliJ Idea..."
+
+	Product="IntelliJIdea"
+	PRODUCT_CODE="IIU" # IntelliJ Idea Ultimate
+	product="idea"
+
+	PRODUCT_INFO_JSON=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=${PRODUCT_CODE}&latest=true&type=release")
+	DL_LINK=$(echo ${PRODUCT_INFO_JSON} | jq -r ".${PRODUCT_CODE}[0].downloads.linux.link")
+	MAJOR_VERSION=$(echo ${PRODUCT_INFO_JSON} | jq -r ".${PRODUCT_CODE}[0].majorVersion")
+
+	JB_DIR="$HOME/.local/share/JetBrains"
+	PRODUCT_DIR="${JB_DIR}/${Product}${MAJOR_VERSION}"
+
+	test -d "${HOME}/.local/bin" || mkdir --parents "${HOME}/.local/bin"
+	test -d "${PRODUCT_DIR}" || mkdir --parents "${PRODUCT_DIR}"
+
+	echo "Downloading ${DL_LINK}..."
+	curl -L "${DL_LINK}" | tar -xz --strip-components=1 -C "${PRODUCT_DIR}"
+
+	test -h "${HOME}/.local/bin/${product}" && rm "${HOME}/.local/bin/${product}"
+	ln -s "${PRODUCT_DIR}/bin/${product}.sh" "${HOME}/.local/bin/${product}"
+}
+
+install_jetbrains_tool "$@"

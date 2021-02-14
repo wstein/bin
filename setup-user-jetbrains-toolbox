@@ -7,7 +7,7 @@ install_jetbrains_toolbox() {
 
 	test -d .local/share/JetBrains/Toolbox || mkdir --parents .local/share/JetBrains/Toolbox
 
-	DL_LINK=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=TBA&latest=true&type=release" | jq -r .TBA[0].downloads.linux.link)
+	DL_LINK=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=TBA&latest=true&type=release" | jq -r ".TBA[0].downloads.linux.link")
 	TMP_DIR=$(mktemp -d /tmp/jetbrains-XXXXXX)
 
 	echo "Downloading $DL_LINK..."

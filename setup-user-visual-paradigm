@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_visual_paradigm() {
+	echo "Installing Visual Paradigm..."
+
+	PRODUCT="Visual_Paradigm"
+
+	DL_LINK="https://www.visual-paradigm.com/downloads/vp/Visual_Paradigm_Linux64.sh"
+
+	VP_DIR="${HOME}/.local/share/Visual_Paradigm"
+	TMP_DIR=$(mktemp -d /tmp/${PRODUCT}-XXXXXX)
+
+	test -d "${HOME}/.local/bin" || mkdir --parents "${HOME}/.local/bin"
+	test -d "${VP_DIR}" || mkdir --parents "${VP_DIR}"
+
+	echo "Downloading ${DL_LINK}..."
+	curl -L "${DL_LINK}" >${TMP_DIR}/vp.sh
+	sh ${TMP_DIR}/vp.sh -q -dir "${VP_DIR}"
+	rm -rf ${TMP_DIR}
+
+	test -h "${HOME}/.local/bin/${PRODUCT}" && rm "${HOME}/.local/bin/${PRODUCT}"
+	ln -s "${VP_DIR}/bin/${PRODUCT}" "${HOME}/.local/bin/${PRODUCT}"
+}
+
+install_visual_paradigm "$@"
