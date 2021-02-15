@@ -37,7 +37,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync sl sqlite sudo tar tmux util-linux wget xz zsh zstd"
+	PACKAGES="bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
@@ -67,7 +67,7 @@ install_packages() {
 		fi
 		;;
 
-	dnf)
+	dnf|yum)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO dnf -y install $PACKAGES neovim exa
 		elif [ "$ID" = "centos" ]; then
@@ -80,6 +80,7 @@ install_packages() {
 		;;
 
 	pacman)
+	  PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<virt-what\>//')	
 		$SUDO pacman -Sy --noconfirm $PACKAGES vim
 		;;
 
