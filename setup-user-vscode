@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_vscode() {
+	echo "Installing Visual Studio Code..."
+
+	curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-x64" | tar --directory=$HOME/.local/share/ -xz
+	ln -s $HOME/.local/share/VSCode-linux-x64/code $HOME/.local/bin
+}
+
+install_vscode "$@"
