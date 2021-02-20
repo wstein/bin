@@ -8,6 +8,7 @@ main() {
 	setup_zsh_antigen
 	setup_csvq
 	link_foreign_configurations
+	setup_gems
 	check_katacoda_and_setup_code_server
 }
 
@@ -17,6 +18,7 @@ link_foreign_configurations() {
 
 	ln -sf $HOME/.config/.vscode $HOME/
 	ln -sf $HOME/.config/zsh/.zshrc $HOME/
+	ln -sf $HOME/.config/.gemrc $HOME/
 }
 
 check_katacoda_and_setup_code_server() {
@@ -57,6 +59,13 @@ setup_csvq() {
 	mv csvq ~/.local/bin
 
 	cd
+}
+
+setup_gems() {
+	GEM_CMD=$(command -v gem)
+	if [ -n "${GEM_CMD}" ]; then
+		gem install lolcat rubocop ruby_figlet pastel optimist tty-cursor
+	fi
 }
 
 main "$@"
