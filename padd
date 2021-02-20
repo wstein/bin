@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+
+set -eu
+
+. /etc/os-release
+cat /etc/os-release
+echo
+echo ============================================
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo ============================================
+echo
+
+# SUDO is only set, if sudo is actually installed!
+SUDO=$(command -v sudo || true)
+
+PACKAGES="$@"
+
+PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
+
+# /usr/bin/dnf -> dnf
+PKG_MANAGER=${PKG_MANAGER_PATH##*/}
+
+case "$PKG_MANAGER" in
+apk)
+	$SUDO apk add $PACKAGES
+	;;
+
+apt)
+	$SUDO apt -y install $PACKAGES
+	;;
+
+dnf)
+	$SUDO dnf -y install $PACKAGES
+	;;
+
+pacman)
+	$SUDO pacman -Sy --noconfirm $PACKAGES
+	;;
+
+zypper)
+	$SUDO zypper install -y $PACKAGES
+	;;
+
+*)
+	echo "Fatal Error: No supported package manager found!"
+	exit 1
+	;;
+
+esac
