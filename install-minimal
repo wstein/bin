@@ -24,6 +24,7 @@ SUDO=$(command -v sudo || true)
 main() {
 	get_packages_to_install
 	install_packages
+	install_neofetch_from_sources
 	install_git_extras_from_sources
 	set_max_user_watches
 }
@@ -103,6 +104,17 @@ install_git_extras_from_sources() {
 	# checkout the latest tag
 	git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
 	$SUDO make install
+}
+
+install_neofetch_from_sources() {
+	TEMP_DIR=$(mktemp -d /tmp/neofetch-XXXXXX)
+	mkdir --parents "${TEMP_DIR}"
+	
+	curl -L https://github.com/dylanaraps/neofetch/archive/7.1.0.tar.gz | tar xz --strip-components=1 --directory "${TEMP_DIR}"
+	
+	cd "${TEMP_DIR}"
+	$SUDO make install
+	cd ~
 }
 
 main "$@"
