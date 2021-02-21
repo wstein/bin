@@ -11,27 +11,27 @@ require 'optimist'
 using RubyFiglet # For String.new(...).art / .art! Moneky Patches
 
 opts = Optimist::options do
-  synopsis "A simple countdown timer for tty. "
-  version "countdown 0.1 (c)2021 werner.stein@gmail.com"
+	synopsis "A simple countdown timer for tty. "
+	version "countdown 0.1 (c)2021 werner.stein@gmail.com"
 
-  opt :color, "Color name", :short => 'c', :default => "blue", :type => :string
-  opt :font, "Font name", :short => 'f', :default => "doh", :type => :string
+	opt :color, "Color name", :short => 'c', :default => "blue", :type => :string
+	opt :font, "Font name", :short => 'f', :default => "doh", :type => :string
 end
 
 begin
-  cursor = TTY::Cursor
-  pastel = Pastel.new
+	cursor = TTY::Cursor
+	pastel = Pastel.new
 
-  countdown_time_in_seconds = (ARGV[0] || 600).to_i
+	countdown_time_in_seconds = (ARGV[0] || 600).to_i
 	start_time = Time.now
 	t = Time.new(0)
 
 	countdown_time_in_seconds.downto(0) do |seconds|
-    counter = (t + seconds).strftime("%M:%S")
-    counter.art! opts[:font]
+		counter = (t + seconds).strftime("%M:%S")
+		counter.art! opts[:font]
 
-    print cursor.clear_screen
-    puts pastel.decorate(counter, opts[:color].to_sym, :bold)
+		print cursor.clear_screen
+		puts pastel.decorate(counter, opts[:color].to_sym, :bold)
 
 		sleep 1.0 - (Time.now - start_time - countdown_time_in_seconds + seconds)
 	end
