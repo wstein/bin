@@ -52,7 +52,7 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES vim libffi
+		$SUDO apk add $PACKAGES neovim libffi exa
 		;;
 
 	apt)
@@ -68,7 +68,7 @@ install_packages() {
 		fi
 		;;
 
-	dnf|yum)
+	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO dnf -y install $PACKAGES neovim exa
 		elif [ "$ID" = "centos" ]; then
@@ -81,7 +81,7 @@ install_packages() {
 		;;
 
 	pacman)
-	  PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<virt-what\>//')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<virt-what\>//')
 		$SUDO pacman -Sy --noconfirm $PACKAGES vim
 		;;
 
