@@ -1,0 +1,89 @@
+#!/bin/bash
+
+set -e
+
+usage() {
+	echo "Usage:"
+	echo "  ghclone [options] <repository>"
+	echo ""
+	echo "Options:"
+	echo "  -b, --branch <branch>      Use <branch> instead of default branch"
+	echo "  -d, --develop              Use develop branch instead of default branch"
+	echo "  -h, --help                 Display this help message"
+	exit 0
+}
+
+parse_args() {
+	USAGE=0
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--help | -h)
+			USAGE=1
+			;;
+
+		--branch=*)
+			BRANCH="${1#*=}"
+			;;
+
+		-b | --branch)
+			shift
+			BRANCH="$1"
+			;;
+
+		-d | --develop)
+			BRANCH="develop"
+			;;
+
+		*)
+			if [ -z "$REPO" ]; then
+				case $1 in
+				*[/]*)
+					USER=$(echo "$1" | cut -d/ -f1)
+					REPO=$(echo "$1" | cut -d/ -f2-)
+					;;
+
+				*)
+					USER="wstein"
+					REPO=$1
+					;;
+
+				esac
+			else
+				echo "to many arguments: $1"
+				USAGE=1
+			fi
+			;;
+
+		esac
+		shift
+	done
+
+	if [ $USAGE -eq 1 ]; then
+		usage
+		exit
+	fi
+
+	if [ -z "$REPO" ]; then
+		echo "Missing arguments!"
+		usage
+		exit
+	fi
+}
+
+execute() {
+	OPTS=""
+	if [ -n "$BRANCH" ]; then
+		OPTS="--branch=${BRANCH}"
+	fi
+	CMDLINE="git clone ${OPTS} https://github.com/$USER/$REPO"
+	echo "$CMDLINE" >&2
+	$CMDLINE
+}
+
+main() {
+	parse_args "$@"
+	execute
+}
+
+main "$@"
