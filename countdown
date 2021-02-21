@@ -14,7 +14,7 @@ opts = Optimist::options do
   synopsis "A simple countdown timer for tty. "
   version "countdown 0.1 (c)2021 werner.stein@gmail.com"
 
-  opt :color, "Color name", :short => 'c', :default => "white", :type => :string
+  opt :color, "Color name", :short => 'c', :default => "blue", :type => :string
   opt :font, "Font name", :short => 'f', :default => "doh", :type => :string
 end
 
@@ -22,19 +22,18 @@ begin
   cursor = TTY::Cursor
   pastel = Pastel.new
 
-  now = Time.now
   countdown_time_in_seconds = (ARGV[0] || 600).to_i
-  t = Time.new(0)
-  countdown_time_in_seconds.downto(0) do |seconds|
-    # counter = (t + seconds).strftime("%H:%M:%S")
+	start_time = Time.now
+	t = Time.new(0)
+
+	countdown_time_in_seconds.downto(0) do |seconds|
     counter = (t + seconds).strftime("%M:%S")
     counter.art! opts[:font]
 
     print cursor.clear_screen
-    puts pastel.decorate(counter, :bright_blue, :bold)
+    puts pastel.decorate(counter, opts[:color].to_sym, :bold)
 
-    while Time.now - countdown_time_in_seconds + seconds - now < 1 do
-      sleep 0.05
-    end
-  end
+		sleep 1.0 - (Time.now - start_time - countdown_time_in_seconds + seconds)
+	end
+
 end
