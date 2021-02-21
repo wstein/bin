@@ -10,6 +10,13 @@ main() {
 	link_foreign_configurations
 	setup_gems
 	check_katacoda_and_setup_code_server
+	set_aliases
+}
+
+set_aliases() {
+	myalias ls=exa
+	myalias vim=nvim
+	myalias open=xdg-open
 }
 
 link_foreign_configurations() {
@@ -41,6 +48,19 @@ check_katacoda_and_setup_code_server() {
 	fi
 }
 
+# helper to check if command is available
+isvalid() {
+	command -v $1 >/dev/null
+}
+
+# helper to define alias, only if target command is available
+myalias() {
+	ALIAS=$(echo $1 | cut -d= -f1)
+	COMMAND=$(echo $1 | cut -d= -f2-)
+	COMMAND_PATH=$(command -v $COMMAND || true)
+	test -z COMMAND_PATH || ln -s $COMMAND_PATH $HOME/.local/bin/$ALIAS
+}
+
 setup_zsh_antigen() {
 	echo "setting up Zsh Antigen..."
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
@@ -64,7 +84,7 @@ setup_csvq() {
 setup_gems() {
 	GEM_CMD=$(command -v gem)
 	if [ -n "${GEM_CMD}" ]; then
-		gem install lolcat rubocop ruby_figlet pastel optimist tty-cursor
+		PATH=$PATH:$HOME/.local/bin gem install lolcat rubocop ruby_figlet pastel optimist tty-cursor
 	fi
 }
 
