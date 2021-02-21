@@ -15,7 +15,7 @@ opts = Optimist::options do
 	version "countdown 0.1 (c)2021 werner.stein@gmail.com"
 
 	opt :color, "Color name", :short => 'c', :default => "blue", :type => :string
-	opt :font, "Font name", :short => 'f', :default => "doh", :type => :string
+	opt :font, "Font name", :short => 'f', :default => "Big Money-ne", :type => :string
 end
 
 begin
