@@ -71,6 +71,10 @@ install_packages() {
 	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO dnf -y install $PACKAGES neovim exa
+		elif [ "$ID" = "almalinux" ]; then
+			$SUDO dnf -y install epel-release
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
+			$SUDO dnf -y install $PACKAGES vim
 		elif [ "$ID" = "centos" ]; then
 			$SUDO dnf -y install epel-release
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
