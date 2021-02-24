@@ -22,7 +22,7 @@ echo
 SUDO=$(command -v sudo || true)
 
 main() {
-	get_packages_to_install
+	get_packages_to_install "$@"
 	install_packages
 	install_neofetch_from_sources
 	install_git_extras_from_sources
@@ -38,7 +38,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
