@@ -57,8 +57,8 @@ isvalid() {
 myalias() {
 	ALIAS=$(echo $1 | cut -d= -f1)
 	COMMAND=$(echo $1 | cut -d= -f2-)
-	COMMAND_PATH=$(command -v $COMMAND || true)
-	test -z COMMAND_PATH || ln -s $COMMAND_PATH $HOME/.local/bin/$ALIAS
+	COMMAND_PATH=$(command -v ${COMMAND} || true)
+	test -z ${COMMAND_PATH} || ln -s ${COMMAND_PATH} ${HOME}/.local/bin/${ALIAS}
 }
 
 setup_zsh_antigen() {
