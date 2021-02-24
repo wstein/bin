@@ -1,0 +1,37 @@
+#!/usr/bin/env ruby
+
+# good fonts:'Big Money-ne', dotmatrix, doh, Electronic
+
+require 'ruby_figlet'
+require 'pastel'
+require 'tty-cursor'
+require 'optimist'
+
+using RubyFiglet # For String.new(...).art / .art! Moneky Patches
+
+opts = Optimist.options do
+  synopsis 'A simple countdown timer for tty. '
+  version 'countdown 0.1.1 (c)2021 werner.stein@gmail.com'
+
+  opt :color, 'Color name', short: 'c', default: 'blue'
+  opt :font, 'Font name', short: 'f', default: 'Big Money-ne'
+  opt :long, 'Create an hours instead of a minutes counter', short: 'l', default: false
+end
+
+timeformat = opts[:long] ? '%H:%M:%S' : '%M:%S'
+
+cursor = TTY::Cursor
+pastel = Pastel.new
+
+start_time = Time.now
+t = Time.new(0)
+
+0.step do |seconds|
+  counter = (t + seconds).strftime(timeformat)
+  counter.art! opts[:font]
+
+  print cursor.clear_screen
+  puts pastel.decorate(counter, opts[:color].to_sym, :bold)
+
+  sleep 1.0 - (Time.now - start_time - seconds)
+end
