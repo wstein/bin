@@ -5,8 +5,8 @@ set -eu
 main() {
 	echo "finishing user configuration..."
 
-	setup_zsh_antigen
-	setup_csvq
+	install_zsh_antigen
+	install_csvq
 	link_foreign_configurations
 	setup_gems
 	check_katacoda_and_setup_code_server
@@ -61,24 +61,26 @@ myalias() {
 	test -z ${COMMAND_PATH} || ln -s ${COMMAND_PATH} ${HOME}/.local/bin/${ALIAS}
 }
 
-setup_zsh_antigen() {
+install_zsh_antigen() {
 	echo "setting up Zsh Antigen..."
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
 }
 
-setup_csvq() {
+install_csvq() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/mithrandie/csvq/releases/latest |
 			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
 	)
 
-	cd $(mktemp -d /tmp/csvq-XXXXXX)
+	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
 
+	cd "${TEMP}"
 	curl -L $DL | tar xz --strip-components=1
 	mv csvq ~/.local/bin
 
-	cd
+	cd ~
+	rm -rf "${TEMP}"
 }
 
 setup_gems() {
