@@ -84,7 +84,7 @@ setup_csvq() {
 setup_gems() {
 	GEM_CMD=$(command -v gem)
 	if [ -n "${GEM_CMD}" ]; then
-		PATH=$PATH:$HOME/.local/bin gem install --user-install --no-document --file ~/bin/Gemfile
+		PATH=$PATH:$HOME/.local/bin gem install --file ~/bin/Gemfile
 	fi
 }
 
