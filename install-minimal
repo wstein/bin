@@ -108,6 +108,7 @@ install_git_extras_from_sources() {
 	# checkout the latest tag
 	git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
 	$SUDO make install
+	cd ~
 }
 
 install_neofetch_from_sources() {
