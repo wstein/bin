@@ -105,6 +105,7 @@ install_git_extras_from_sources() {
 	git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
 	$SUDO make install
 	cd ~
+	rm -rf $TEMP_DIR
 }
 
 install_neofetch_from_sources() {
@@ -121,6 +122,7 @@ install_neofetch_from_sources() {
 	cd "${TEMP_DIR}"
 	$SUDO make install
 	cd ~
+	rm -rf $TEMP_DIR
 }
 
 main "$@"
