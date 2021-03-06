@@ -3,19 +3,15 @@
 set -eu
 
 . /etc/os-release
-cat /etc/os-release
+cat /etc/*release
+
+OS_VERSION_STR="$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo
-echo ============================================
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
-echo ============================================
+echo "${OS_VERSION_STR}" | tr '[:print:]' '='
+for n in $(seq 1 8); do
+	echo "${OS_VERSION_STR}"
+done
+echo "${OS_VERSION_STR}" | tr '[:print:]' '='
 echo
 
 # SUDO is only set, if sudo is actually installed!
