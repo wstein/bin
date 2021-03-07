@@ -7,7 +7,7 @@ usage() {
 	echo "  getraw [options] <username>/<repository>/[<path>/]<file>"
 	echo ""
 	echo "Options:"
-	echo "  -b, --branch <branch>      Use <branch> instead of master branch"
+	echo "  -b, --branch <branch>      Use <branch> instead of default"
 	echo "  -d, --develop              Use develop branch instead of default branch"
 	echo "      --dry-run              Only prints the curl command line and exits"
 	echo "  -h, --help                 Display this help message"
@@ -111,8 +111,12 @@ parse_args() {
 			BRANCH="trunk"
 			;;
 
-		*)
+		gitea)
 			BRANCH="master"
+			;;
+
+		*)
+			BRANCH="HEAD"
 			;;
 
 		esac
