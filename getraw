@@ -8,7 +8,8 @@ usage() {
 	echo ""
 	echo "Options:"
 	echo "  -b, --branch <branch>      Use <branch> instead of master branch"
-	echo "  -d, --dry-run              Only prints the curl command line and exits"
+	echo "  -d, --develop              Use develop branch instead of default branch"
+	echo "      --dry-run              Only prints the curl command line and exits"
 	echo "  -h, --help                 Display this help message"
 	echo "  -p, --provider=<provider>  Use SCM <provider>, default is github. Supported"
 	echo "                             providers are chisel, gitea, github, gitlab, bitbucket"
@@ -77,7 +78,11 @@ parse_args() {
 			PROVIDER="$1"
 			;;
 
-		--dry-run | -d)
+		--develop | -d)
+			BRANCH="develop"
+			;;
+
+		--dry-run)
 			DRY_RUN=1
 			;;
 
