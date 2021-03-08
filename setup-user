@@ -7,6 +7,7 @@ main() {
 
 	install_zsh_antigen
 	install_csvq
+	install_oq
 	install_ccat
 	link_foreign_configurations
 	setup_gems
@@ -98,6 +99,16 @@ install_ccat() {
 
 	cd ~
 	rm -rf "${TEMP}"
+}
+
+install_oq() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
+	)
+
+	curl -L $DL >~/.local/bin/oq
+	chmod +x ~/.local/bin/oq
 }
 
 setup_gems() {
