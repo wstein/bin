@@ -76,7 +76,7 @@ install_packages() {
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
 	  elif [ "$ID" = "photon" ]; then
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<bash-completion\>//')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
 		else
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
