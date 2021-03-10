@@ -46,7 +46,7 @@ install_packages() {
 
 	case "$PKG_MANAGER" in
 	apk)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/g')
 		$SUDO apk update
 		$SUDO apk add $PACKAGES neovim libffi exa
 		;;
@@ -55,7 +55,7 @@ install_packages() {
 		$SUDO apt update
 		VERION_MAJOR="${VERSION_ID%%.*}"
 		VERION_MINOR="${VERSION_ID#*.}"
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/g')
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils vim
@@ -69,14 +69,14 @@ install_packages() {
 			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa
 		elif [ "$ID" = "almalinux" ]; then
 			$SUDO $PKG_MANAGER -y install epel-release
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
 		elif [ "$ID" = "centos" ]; then
 			$SUDO $PKG_MANAGER -y install epel-release
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
 	  elif [ "$ID" = "photon" ]; then
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
 		else
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
