@@ -75,6 +75,9 @@ install_packages() {
 			$SUDO dnf -y install epel-release
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
 			$SUDO dnf -y install $PACKAGES vim
+	  elif [ "$ID" = "photon" ]; then
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<bash-completion\>//')
+			$SUDO dnf -y install $PACKAGES vim
 		else
 			$SUDO dnf -y install $PACKAGES vim
 		fi
