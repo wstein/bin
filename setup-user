@@ -114,7 +114,7 @@ install_oq() {
 setup_gems() {
 	GEM_CMD=$(command -v gem)
 	if [ -n "${GEM_CMD}" ]; then
-		PATH=$PATH:$HOME/.local/bin gem install --file ~/bin/Gemfile
+		PATH=$PATH:$HOME/.local/bin gem install --user --file ~/bin/Gemfile
 	fi
 }
 
