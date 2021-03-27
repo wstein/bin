@@ -57,7 +57,10 @@ install_packages() {
 		VERION_MINOR="${VERSION_ID#*.}"
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/g')
 		$SUDO apt -y install --no-install-recommends software-properties-common
-		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
+		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
+			$SUDO apt -y install $PACKAGES bsdmainutils vim
+		elif [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils vim
 		else
 			$SUDO apt -y install $PACKAGES bsdmainutils vim exa
