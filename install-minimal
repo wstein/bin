@@ -69,7 +69,7 @@ install_packages() {
 
 	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa
+			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa dnf-plugins-core
 		elif [ "$ID" = "almalinux" ]; then
 			$SUDO $PKG_MANAGER -y install epel-release
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
