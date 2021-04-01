@@ -4,7 +4,7 @@ set -e
 
 usage() {
 	echo "Usage:"
-	echo "  ghclone [options] <repository>"
+	echo "  ghclone [options] <repository> [<folder>]"
 	echo ""
 	echo "Options:"
 	echo "  -b, --branch <branch>      Use <branch> instead of default branch"
@@ -49,6 +49,8 @@ parse_args() {
 					;;
 
 				esac
+			elif [ -z "$FOLDER" ]; then
+				FOLDER="$1"
 			else
 				echo "to many arguments: $1"
 				USAGE=1
@@ -76,7 +78,7 @@ execute() {
 	if [ -n "$BRANCH" ]; then
 		OPTS="--branch=${BRANCH}"
 	fi
-	CMDLINE="git clone ${OPTS} https://github.com/$USER/$REPO"
+	CMDLINE="git clone ${OPTS} https://github.com/$USER/$REPO $FOLDER"
 	echo "$CMDLINE" >&2
 	$CMDLINE
 }
