@@ -71,7 +71,7 @@ install_packages() {
 		if [ "$ID" = "fedora" ]; then
 			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa dnf-plugins-core
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ]; then
-			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERION_MAJOR}.noarch.rpm
+			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES neovim
 	  elif [ "$ID" = "photon" ]; then
