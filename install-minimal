@@ -4,7 +4,9 @@ set -eu
 
 . /etc/os-release
 cat /etc/*release
-
+VERSION_MAJOR="${VERSION_ID%.*}"
+VERSION_MINOR="${VERSION_ID#*.}"
+		
 OS_VERSION_STR="$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo
 echo "${OS_VERSION_STR}" | tr '[:print:]' '='
@@ -53,14 +55,12 @@ install_packages() {
 
 	apt)
 		$SUDO apt update
-		VERION_MAJOR="${VERSION_ID%.*}"
-		VERION_MINOR="${VERSION_ID#*.}"
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/g')
 		$SUDO apt -y install --no-install-recommends software-properties-common
-		if [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
+		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
 			$SUDO apt -y install $PACKAGES bsdmainutils vim apt-file
-		elif [ "$ID" = "ubuntu" ] && [ "$VERION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
+		elif [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils vim apt-file
 		else
 			$SUDO apt -y install $PACKAGES bsdmainutils vim exa apt-file
