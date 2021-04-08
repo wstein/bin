@@ -53,7 +53,7 @@ install_packages() {
 
 	apt)
 		$SUDO apt update
-		VERION_MAJOR="${VERSION_ID%%.*}"
+		VERION_MAJOR="${VERSION_ID%.*}"
 		VERION_MINOR="${VERSION_ID#*.}"
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/g')
 		$SUDO apt -y install --no-install-recommends software-properties-common
@@ -71,13 +71,13 @@ install_packages() {
 		if [ "$ID" = "fedora" ]; then
 			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa dnf-plugins-core
 		elif [ "$ID" = "almalinux" ]; then
-			$SUDO $PKG_MANAGER -y install epel-release
+			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
-			$SUDO $PKG_MANAGER -y install $PACKAGES vim
+			$SUDO $PKG_MANAGER -y install $PACKAGES neovim
 		elif [ "$ID" = "centos" ]; then
-			$SUDO $PKG_MANAGER -y install epel-release
+			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
-			$SUDO $PKG_MANAGER -y install $PACKAGES vim
+			$SUDO $PKG_MANAGER -y install $PACKAGES neovim
 	  elif [ "$ID" = "photon" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
