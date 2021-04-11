@@ -4,11 +4,12 @@
   // List of extensions which should be recommended for users of this workspace.
   "recommendations": [
     "asciidoctor.asciidoctor-vscode",
-    "EditorConfig.EditorConfig",
+    "editorconfig.editorconfig",
     "formulahendry.code-runner",
     "foxundermoon.shell-format",
     "mads-hartmann.bash-ide-vscode",
     "rogalmic.bash-debug",
+    "maximus136.change-string-case"
   ],
   // List of extensions recommended by VS Code that should not be recommended for users of this workspace.
   "unwantedRecommendations": []
