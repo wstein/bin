@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 set -e
 
@@ -36,7 +36,7 @@ parse_args() {
 			;;
 
 		*)
-			if [ -z "$REPO" ]; then
+			if [ -z "${REPO}" ]; then
 				case $1 in
 				*[/]*)
 					USER=$(echo "$1" | cut -d/ -f1)
@@ -49,7 +49,7 @@ parse_args() {
 					;;
 
 				esac
-			elif [ -z "$FOLDER" ]; then
+			elif [ -z "${FOLDER}" ]; then
 				FOLDER="$1"
 			else
 				echo "to many arguments: $1"
@@ -61,12 +61,12 @@ parse_args() {
 		shift
 	done
 
-	if [ $USAGE -eq 1 ]; then
+	if [ "${USAGE}" -eq 1 ]; then
 		usage
 		exit
 	fi
 
-	if [ -z "$REPO" ]; then
+	if [ -z "${REPO}" ]; then
 		echo "Missing arguments!"
 		usage
 		exit
@@ -74,13 +74,11 @@ parse_args() {
 }
 
 execute() {
-	OPTS=""
-	if [ -n "$BRANCH" ]; then
-		OPTS="--branch=${BRANCH}"
-	fi
-	CMDLINE="git clone ${OPTS} https://github.com/$USER/$REPO $FOLDER"
-	echo "$CMDLINE" >&2
-	$CMDLINE
+	test -n "${BRANCH}" && OPTS="--branch=${BRANCH}"
+
+	CMDLINE="git clone ${OPTS} https://github.com/${USER}/${REPO} ${FOLDER}"
+	echo "${CMDLINE}" >&2
+	${CMDLINE}
 }
 
 main() {
