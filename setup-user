@@ -6,9 +6,6 @@ main() {
 	echo "finishing user configuration..."
 
 	install_zsh_antigen
-	install_csvq
-	install_oq
-	install_ccat
 	link_foreign_configurations
 	setup_gems
 	check_katacoda_and_setup_code_server
@@ -16,8 +13,7 @@ main() {
 }
 
 set_aliases() {
-	myalias ls=exa
-	myalias vim=nvim
+
 	myalias open=xdg-open
 }
 
@@ -67,48 +63,6 @@ install_zsh_antigen() {
 	echo "setting up Zsh Antigen..."
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
-}
-
-install_csvq() {
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/mithrandie/csvq/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
-	)
-
-	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
-
-	cd "${TEMP}"
-	curl -L $DL | tar xz --strip-components=1
-	mv csvq ~/.local/bin
-
-	cd ~
-	rm -rf "${TEMP}"
-}
-
-install_ccat() {
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/owenthereal/ccat/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
-	)
-
-	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
-
-	cd "${TEMP}"
-	curl -L $DL | tar xz --strip-components=1
-	mv ccat ~/.local/bin
-
-	cd ~
-	rm -rf "${TEMP}"
-}
-
-install_oq() {
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
-	)
-
-	curl -L $DL >~/.local/bin/oq
-	chmod +x ~/.local/bin/oq
 }
 
 setup_gems() {

@@ -6,7 +6,7 @@ set -eu
 cat /etc/*release
 VERSION_MAJOR="${VERSION_ID%.*}"
 VERSION_MINOR="${VERSION_ID#*.}"
-		
+
 OS_VERSION_STR="$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo
 echo "${OS_VERSION_STR}" | tr '[:print:]' '='
@@ -24,7 +24,59 @@ main() {
 	install_packages
 	install_neofetch_from_sources
 	install_git_extras_from_sources
+	install_csvq
+	install_oq
+	install_ccat
+	create_symbolic_links
 	set_max_user_watches
+}
+
+create_symbolic_links() {
+	if [ command -v nvim >/dev/null ]; then
+		ln -s $(command -v nvim) /usr/local/bin/vim
+	fi
+}
+
+install_csvq() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/mithrandie/csvq/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
+	)
+
+	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
+
+	cd "${TEMP}"
+	curl -L $DL | tar xz --strip-components=1
+	$SUDO mv csvq /usr/local/bin
+
+	cd ~
+	rm -rf "${TEMP}"
+}
+
+install_ccat() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/owenthereal/ccat/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
+	)
+
+	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
+
+	cd "${TEMP}"
+	curl -L $DL | tar xz --strip-components=1
+	$SUDO mv ccat /usr/local/bin
+
+	cd ~
+	rm -rf "${TEMP}"
+}
+
+install_oq() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
+	)
+
+	curl -L $DL | $SUDO dd of=/usr/local/bin/oq
+	$SUDO chmod +x /usr/local/bin/oq
 }
 
 set_max_user_watches() {
