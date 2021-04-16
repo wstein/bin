@@ -32,8 +32,8 @@ main() {
 }
 
 create_symbolic_links() {
-	if [ command -v nvim >/dev/null ]; then
-		ln -s $(command -v nvim) /usr/local/bin/vim
+	if [ command -v nvim ] >/dev/null; then
+		$SUDO ln -s $(command -v nvim) /usr/local/bin/vim
 	fi
 }
 
@@ -126,7 +126,7 @@ install_packages() {
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES neovim
-	  elif [ "$ID" = "photon" ]; then
+		elif [ "$ID" = "photon" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim
 		else
