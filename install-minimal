@@ -4,6 +4,7 @@ set -eu
 
 . /etc/os-release
 cat /etc/*release
+VERSION_ID="${VERSION_ID:-0.0}"
 VERSION_MAJOR="${VERSION_ID%.*}"
 VERSION_MINOR="${VERSION_ID#*.}"
 
