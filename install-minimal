@@ -28,6 +28,7 @@ main() {
 	install_csvq
 	install_oq
 	install_ccat
+	install_shellcheck
 	create_symbolic_links
 	set_max_user_watches
 }
@@ -50,7 +51,7 @@ install_csvq() {
 	curl -L $DL | tar xz --strip-components=1
 	$SUDO mv csvq /usr/local/bin
 
-	cd ~
+	cd -
 	rm -rf "${TEMP}"
 }
 
@@ -66,7 +67,7 @@ install_ccat() {
 	curl -L $DL | tar xz --strip-components=1
 	$SUDO mv ccat /usr/local/bin
 
-	cd ~
+	cd -
 	rm -rf "${TEMP}"
 }
 
@@ -79,6 +80,24 @@ install_oq() {
 	curl -L $DL | $SUDO dd of=/usr/local/bin/oq
 	$SUDO chmod +x /usr/local/bin/oq
 }
+
+
+install_shellcheck() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/koalaman/shellcheck/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux.x86_64")) .browser_download_url'
+	)
+
+	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
+
+	cd "${TEMP}"
+	curl -L $DL | tar xJ --strip-components=1
+	$SUDO mv shellcheck /usr/local/bin
+
+	cd -
+	rm -rf "${TEMP}"
+}
+
 
 set_max_user_watches() {
 	if [ -d /etc/sysctl.d/ ]; then
