@@ -1,0 +1,37 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_code_server() {
+	echo "Installing Coder Code Server..."
+
+	# create symbolic link to settings
+	test -d ~/.local/share/code-server/User/ || mkdir -p ~/.local/share/code-server/User/
+	test -f ~/.local/share/code-server/User/settings.json && rm ~/.local/share/code-server/User/settings.json || true
+	ln -s ~/.config/Code/User/settings.json ~/.local/share/code-server/User/settings.json
+
+	# remove/replace incompatible extensions
+	sed -i \
+			-e '/ms-vscode-remote.remote-/d' \
+			-e '/adamhartford.vscode-base64/d' \
+			~/.config/.vscode/extensions.json
+
+	# install code server
+	curl -fsSL https://code-server.dev/install.sh | sh
+
+	# shows version and also creates config.yaml
+	code-server --version
+
+	# create link code => code-server
+	CODE_SERVER=$(command -v code-server)
+	BIN_DIR=${CODE_SERVER%/*}
+	ln -s $CODE_SERVER $BIN_DIR/code
+
+	# print password to screen
+	sed -n -e '/^password: /s///p'  ~/.config/code-server/config.yaml | tee /dev/stderr | qrencode -t ansi256
+
+	echo start with:
+	echo code-server --disable-telemetry --bind-addr 0.0.0.0 --port 8080
+}
+
+install_code_server "$@"
