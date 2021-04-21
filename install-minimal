@@ -81,7 +81,6 @@ install_oq() {
 	$SUDO chmod +x /usr/local/bin/oq
 }
 
-
 install_shellcheck() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/koalaman/shellcheck/releases/latest |
@@ -98,7 +97,6 @@ install_shellcheck() {
 	rm -rf "${TEMP}"
 }
 
-
 set_max_user_watches() {
 	if [ -d /etc/sysctl.d/ ]; then
 		# each watch needs up to 1080 bytes (https://code.visualstudio.com/docs/setup/linux#_visual-studio-code-is-unable-to-watch-for-file-changes-in-this-large-workspace-error-enospc)
@@ -108,7 +106,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils git gnupg gzip htop jq make patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils git gnupg gzip htop iproute jq make patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
@@ -120,14 +118,14 @@ install_packages() {
 
 	case "$PKG_MANAGER" in
 	apk)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/g')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
 		$SUDO apk update
 		$SUDO apk add $PACKAGES neovim libffi exa
 		;;
 
 	apt)
 		$SUDO apt update
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/g')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<iproute\>//')
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
@@ -141,16 +139,16 @@ install_packages() {
 
 	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa dnf-plugins-core
+			$SUDO $PKG_MANAGER -y install $PACKAGES neovim exa dnf-plugins-core openssh-server
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
-			$SUDO $PKG_MANAGER -y install $PACKAGES neovim
+			$SUDO $PKG_MANAGER -y install $PACKAGES neovim openssh-server
 		elif [ "$ID" = "photon" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//g')
-			$SUDO $PKG_MANAGER -y install $PACKAGES vim
+			$SUDO $PKG_MANAGER -y install $PACKAGES vim openssh-server
 		else
-			$SUDO $PKG_MANAGER -y install $PACKAGES vim
+			$SUDO $PKG_MANAGER -y install $PACKAGES vim openssh-server
 		fi
 		;;
 
