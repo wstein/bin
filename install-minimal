@@ -34,7 +34,7 @@ main() {
 }
 
 create_symbolic_links() {
-	if [ command -v nvim ] >/dev/null; then
+	if command -v nvim >/dev/null; then
 		$SUDO ln -s $(command -v nvim) /usr/local/bin/vim
 	fi
 }
