@@ -28,15 +28,9 @@ main() {
 	install_csvq
 	install_oq
 	install_ccat
+	install_neovim
 	install_shellcheck
-	create_symbolic_links
 	set_max_user_watches
-}
-
-create_symbolic_links() {
-	if command -v nvim >/dev/null; then
-		$SUDO ln -s $(command -v nvim) /usr/local/bin/vim
-	fi
 }
 
 install_csvq() {
@@ -61,14 +55,24 @@ install_ccat() {
 			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
 	)
 
-	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
+	curl -L $DL | $SUDO tar xz --strip-components=1 --directory /usr/local/bin
+}
 
-	cd "${TEMP}"
-	curl -L $DL | tar xz --strip-components=1
-	$SUDO mv ccat /usr/local/bin
+install_neovim() {
+	if [ "${PKG_MANAGER}" = "apk" ]; then
+		# github build does not work for aline linux
+		$SUDO apk add $PACKAGES libnsl neovim
+	else
+		DL=$(
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/neovim/neovim/releases/latest |
+				jq --raw-output '.assets[] | select(.name | contains("linux64")) .browser_download_url'
+		)
 
-	cd -
-	rm -rf "${TEMP}"
+		curl -L $DL | $SUDO tar xz --strip-components=1 --directory /usr/local/
+	fi
+
+	# create symbolic link vim -> nvim
+	$SUDO ln -s $(command -v nvim) /usr/local/bin/vim
 }
 
 install_oq() {
@@ -116,11 +120,11 @@ install_packages() {
 	# /usr/bin/dnf -> dnf
 	PKG_MANAGER=${PKG_MANAGER_PATH##*/}
 
-	case "$PKG_MANAGER" in
+	case "${PKG_MANAGER}" in
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES neovim libffi exa
+		$SUDO apk add $PACKAGES libffi exa
 		;;
 
 	apt)
@@ -129,11 +133,11 @@ install_packages() {
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
-			$SUDO apt -y install $PACKAGES bsdmainutils vim apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
 		elif [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
-			$SUDO apt -y install $PACKAGES bsdmainutils vim apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
 		else
-			$SUDO apt -y install $PACKAGES bsdmainutils vim exa apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils exa apt-file
 		fi
 		;;
 
