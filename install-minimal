@@ -110,7 +110,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils git gnupg gzip htop iproute jq make patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils git gnupg gzip htop iproute jq make pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
@@ -162,7 +162,8 @@ install_packages() {
 		;;
 
 	zypper)
-		$SUDO zypper install -y $PACKAGES vim
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<pass\>/password-store/')
+			$SUDO zypper install -y $PACKAGES vim
 		;;
 
 	*)
