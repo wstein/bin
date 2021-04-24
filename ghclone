@@ -39,8 +39,8 @@ parse_args() {
 			if [ -z "${REPO}" ]; then
 				case $1 in
 				*[/]*)
-					USER=$(echo "$1" | cut -d/ -f1)
-					REPO=$(echo "$1" | cut -d/ -f2-)
+					USER="${1%/*}"	# wstein/setup => wstein
+					REPO="${1##*/}"	# wstein/setup => setup
 					;;
 
 				*)
