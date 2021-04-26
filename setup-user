@@ -10,10 +10,14 @@ main() {
 	setup_gems
 	check_katacoda_and_setup_code_server
 	set_aliases
+	install_nvim_plugins
+}
+
+install_nvim_plugins() {
+	nvim '+PlugInstall | q | q'
 }
 
 set_aliases() {
-
 	myalias open=xdg-open
 }
 
