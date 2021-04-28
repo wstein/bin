@@ -28,6 +28,7 @@ main() {
 	install_csvq
 	install_oq
 	install_ccat
+	install_exa
 	install_neovim
 	install_shellcheck
 	check_katacoda_and_setup_code_server
@@ -101,6 +102,24 @@ install_neovim() {
 	$SUDO ln -s $(command -v nvim) /usr/local/bin/vim
 }
 
+install_exa() {
+	if [ "${PKG_MANAGER}" = "apk" ]; then
+		DL=$(
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/ogham/exa/releases/latest |
+				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-musl-v")) .browser_download_url'
+		)
+	else
+		DL=$(
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/ogham/exa/releases/latest |
+				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-v")) .browser_download_url'
+		)
+	fi
+
+	curl -L -o /tmp/exa.zip $DL
+	$SUDO unzip -d /usr/local /tmp/exa.zip
+	rm /tmp/exa.zip
+}
+
 install_oq() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
@@ -136,7 +155,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils git gnupg gzip htop iproute jq libnsl make pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils git gnupg gzip htop iproute jq libnsl make pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux unzip util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
@@ -150,7 +169,7 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES libffi exa
+		$SUDO apk add $PACKAGES libffi
 		;;
 
 	apt)
@@ -163,13 +182,13 @@ install_packages() {
 		elif [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
 		else
-			$SUDO apt -y install $PACKAGES bsdmainutils exa apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
 		fi
 		;;
 
 	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO $PKG_MANAGER -y install $PACKAGES exa dnf-plugins-core openssh-server
+			$SUDO $PKG_MANAGER -y install $PACKAGES dnf-plugins-core openssh-server
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
