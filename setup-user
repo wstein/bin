@@ -49,9 +49,9 @@ install_zsh_antigen() {
 }
 
 setup_gems() {
-	GEM_CMD=$(command -v gem)
-	if [ -n "${GEM_CMD}" ]; then
-		PATH=$PATH:$HOME/.local/bin gem install --user --file ~/bin/Gemfile
+	BUNDLER_CMD=$(command -v bundler)
+	if [ -n "${BUNDLER_CMD}" ]; then
+		PATH=$PATH:$HOME/.local/bin GEM_HOME=$HOME/.gem ${BUNDLER_CMD} install --gem-file ~/bin/Gemfile
 	fi
 }
 
