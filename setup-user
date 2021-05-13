@@ -52,11 +52,6 @@ setup_gems() {
 	GEM_CMD=$(command -v gem)
 	if [ -n "${GEM_CMD}" ]; then
 		PATH=$PATH:$HOME/.local/bin GEM_HOME=$HOME/.gem ${GEM_CMD} install --file ~/bin/Gemfile
-
-		# work-a-round to install my version of rouge with dracula theme
-		echo ${GEM_CMD} specific_install --user "https://github.com/wstein/rouge" "feature/dracula-colorful"
-		PAGER="cat" PATH="$PATH:$HOME/.local/bin" GEM_HOME="$HOME/.gem" ${GEM_CMD} specific_install --user "https://github.com/wstein/rouge" "feature/dracula-colorful"
-		mv ~/.gem/ruby/bin/rougify ~/.local/bin || mv ~/.gem/ruby/*/bin/rougify ~/.local/bin
 	fi
 }
 
