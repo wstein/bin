@@ -120,6 +120,18 @@ install_exa() {
 	rm /tmp/exa.zip
 }
 
+install_sqlite() {
+	if [ "${PKG_MANAGER}" = "apk" ]; then
+		apk add sqlite
+	else
+		DL="https://sqlite.org/$(curl -fsSL https://sqlite.org/download.html | egrep -o "2[0-9]{3}[/]sqlite-tools-linux-x86-.*[.]zip")"
+	fi
+
+	curl -L -o /tmp/sqlite.zip $DL
+	$SUDO unzip -d /usr/local/bin -j /tmp/sqlite.zip
+	rm /tmp/sqlite.zip
+}
+
 install_oq() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
