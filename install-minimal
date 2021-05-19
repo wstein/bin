@@ -190,11 +190,11 @@ install_packages() {
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
-			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
 		elif [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
-			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
 		else
-			$SUDO apt -y install $PACKAGES bsdmainutils apt-file
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
 		fi
 		;;
 
