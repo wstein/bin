@@ -31,6 +31,7 @@ main() {
 	install_exa
 	install_neovim
 	install_shellcheck
+	install_kitty_terminfo
 	check_katacoda_and_setup_code_server
 	set_max_user_watches
 }
@@ -140,6 +141,16 @@ install_oq() {
 
 	curl -L $DL | $SUDO dd of=/usr/local/bin/oq
 	$SUDO chmod +x /usr/local/bin/oq
+}
+
+install_kitty_terminfo() {
+	if ! [ -f "/usr/share/terminfo/x/xterm-kitty" ]; then
+		curl -fsSL -o /tmp/xterm-kitty "https://github.com/kovidgoyal/kitty/raw/master/terminfo/x/xterm-kitty"
+
+		test -d /usr/share/terminfo/x/ || $SUDO mkdir -p /usr/share/terminfo/x/
+
+		$SUDO mv /tmp/xterm-kitty /usr/share/terminfo/x/
+	fi
 }
 
 install_shellcheck() {
