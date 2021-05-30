@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+
+gsettings set org.gnome.desktop.input-sources show-all-sources true
+
+gsettings set org.gnome.shell disable-user-extensions false
+
+# tile-by-default does not work at expected
+#gsettings set org.gnome.shell.extensions.pop-shell tile-by-default true
+gsettings set org.gnome.shell.extensions.pop-shell show-title false
+gsettings set org.gnome.shell.extensions.pop-shell gap-outer 1
+gsettings set org.gnome.shell.extensions.pop-shell gap-inner 1
+gsettings set org.gnome.shell.extensions.pop-shell hint-color-rgba 'rgba(189,147,249,0.95)'
+gsettings set org.gnome.shell.extensions.pop-shell active-hint true
+
+gnome-extensions enable pop-shell@system76.com
+
+busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart("Restarting…")'
