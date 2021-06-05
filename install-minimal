@@ -214,8 +214,9 @@ install_packages() {
 			$SUDO $PKG_MANAGER -y install $PACKAGES dnf-plugins-core openssh-server
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g' -e 's/\<fzf\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES openssh-server
+			install_fzf_from_github
 		elif [ "$ID" = "photon" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES vim openssh-server
@@ -268,6 +269,10 @@ install_neofetch_from_sources() {
 	$SUDO make install
 	cd ~
 	rm -rf $TEMP_DIR
+}
+
+install_fzf_from_github() {
+	curl -L "https://raw.githubusercontent.com/junegunn/fzf/master/install" | bash
 }
 
 main "$@"
