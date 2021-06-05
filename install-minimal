@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
 
-set -eu
+set -e
 
 . /etc/os-release
 cat /etc/*release
 VERSION_ID="${VERSION_ID:-0.0}"
 VERSION_MAJOR="${VERSION_ID%.*}"
 VERSION_MINOR="${VERSION_ID#*.}"
+
+test -z "${GITHUB_TOKEN}" || CURL_AUTH="Authorization: token ${GITHUB_TOKEN}"
 
 OS_VERSION_STR="$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo
@@ -58,7 +60,7 @@ check_katacoda_and_setup_code_server() {
 
 install_csvq() {
 	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/mithrandie/csvq/releases/latest |
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/mithrandie/csvq/releases/latest |
 			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
 	)
 
@@ -74,7 +76,7 @@ install_csvq() {
 
 install_ccat() {
 	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/owenthereal/ccat/releases/latest |
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/owenthereal/ccat/releases/latest |
 			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
 	)
 
@@ -87,7 +89,7 @@ install_neovim() {
 		$SUDO apk add $PACKAGES libnsl neovim
 	else
 		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/neovim/neovim/releases/latest |
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/neovim/neovim/releases/latest |
 				jq --raw-output '.assets[] | select(.name | contains("linux64")) .browser_download_url'
 		)
 
@@ -106,12 +108,12 @@ install_neovim() {
 install_exa() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
 		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/ogham/exa/releases/latest |
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/ogham/exa/releases/latest |
 				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-musl-v")) .browser_download_url'
 		)
 	else
 		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/ogham/exa/releases/latest |
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/ogham/exa/releases/latest |
 				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-v")) .browser_download_url'
 		)
 	fi
@@ -135,7 +137,7 @@ install_sqlite() {
 
 install_oq() {
 	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
 			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
 	)
 
@@ -155,7 +157,7 @@ install_kitty_terminfo() {
 
 install_shellcheck() {
 	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/koalaman/shellcheck/releases/latest |
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/koalaman/shellcheck/releases/latest |
 			jq --raw-output '.assets[] | select(.name | contains("linux.x86_64")) .browser_download_url'
 	)
 
@@ -256,7 +258,7 @@ install_git_extras_from_sources() {
 
 install_neofetch_from_sources() {
 	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/dylanaraps/neofetch/releases/latest |
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/dylanaraps/neofetch/releases/latest |
 			jq --raw-output '.tarball_url'
 	)
 
