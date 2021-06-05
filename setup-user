@@ -10,6 +10,7 @@ main() {
 	setup_gems
 	set_aliases
 	install_nvim_plugins
+	setup_zsh
 }
 
 install_nvim_plugins() {
@@ -53,6 +54,17 @@ setup_gems() {
 	if [ -n "${GEM_CMD}" ]; then
 		PATH=$PATH:$HOME/.local/bin GEM_HOME=$HOME/.gem ${GEM_CMD} install --file ~/bin/Gemfile
 	fi
+}
+
+setup_zsh() {
+	CMD_CHSH=$(command -v lchsh || command -v chsh || true)
+
+	if [ -n "$CMD_CHSH" ]; then
+		command -v zsh | sudo $CMD_CHSH $(whoami)
+	fi
+
+	# install zsh plugins ;-)
+	zsh -il -c true
 }
 
 main "$@"
