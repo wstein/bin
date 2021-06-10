@@ -12,11 +12,13 @@ test -z "${GITHUB_TOKEN}" || CURL_AUTH="Authorization: token ${GITHUB_TOKEN}"
 
 OS_VERSION_STR="$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
 echo
-echo "${OS_VERSION_STR}" | tr '[:print:]' '='
-for n in $(seq 1 8); do
+echo "${OS_VERSION_STR}" | tr -c '=' '='
+echo
+for _ in $(seq 1 8); do
 	echo "${OS_VERSION_STR}"
 done
-echo "${OS_VERSION_STR}" | tr '[:print:]' '='
+echo "${OS_VERSION_STR}" | tr -c '=' '='
+echo
 echo
 
 # SUDO is only set, if sudo is actually installed!
