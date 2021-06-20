@@ -5,8 +5,49 @@ set -eu
 install_vscode() {
 	echo "Installing Visual Studio Code..."
 
-	curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-x64" | tar --directory=$HOME/.local/share/ -xz
-	ln -s $HOME/.local/share/VSCode-linux-x64/code $HOME/.local/bin
+	mkdir -p $HOME/.local/bin
+	mkdir -p $HOME/.local/share/VSCode
+	mkdir -p $HOME/.local/share/applications
+	curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-x64" | tar --strip-components=1 --directory=$HOME/.local/share/VSCode -xz
+	ln -s $HOME/.local/share/VSCode/bin/code $HOME/.local/bin
+
+	cat >$HOME/.local/share/applications/code-url-handler.desktop <<-EOF
+		[Desktop Entry]
+		Name=Visual Studio Code - URL Handler
+		Comment=Code Editing. Redefined.
+		GenericName=Text Editor
+		Exec=$HOME/.local/share/VSCode/code --no-sandbox --open-url %U
+		Icon=$HOME/.local/share/VSCode/resources/app/resources/linux/code.png
+		Type=Application
+		NoDisplay=true
+		StartupNotify=true
+		Categories=Utility;TextEditor;Development;IDE;
+		MimeType=x-scheme-handler/vscode;
+		Keywords=vscode;
+	EOF
+
+	cat >$HOME/.local/share/applications/code.desktop <<-EOF
+		[Desktop Entry]
+		Name=Visual Studio Code
+		Comment=Code Editing. Redefined.
+		GenericName=Text Editor
+		Exec=$HOME/.local/share/VSCode/code --no-sandbox --unity-launch %F
+		Icon=$HOME/.local/share/VSCode/resources/app/resources/linux/code.png
+		Type=Application
+		StartupNotify=false
+		StartupWMClass=Code
+		Categories=Utility;TextEditor;Development;IDE;
+		MimeType=text/plain;inode/directory;application/x-code-workspace;
+		Actions=new-empty-window;
+		Keywords=vscode;
+
+		[Desktop Action new-empty-window]
+		Name=New Empty Window
+		Exec=$HOME/.local/share/VSCode/code --no-sandbox --new-window %F
+		Icon=com.visualstudio.code
+	EOF
+
+	chmod 744 $HOME/.local/share/applications/code.desktop $HOME/.local/share/applications/code-url-handler.desktop
 }
 
 install_vscode "$@"
