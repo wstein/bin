@@ -31,6 +31,7 @@ main() {
 	install_git_extras_from_sources
 	install_csvq
 	install_oq
+	install_fossil
 	install_ccat
 	install_exa
 	install_neovim
@@ -145,6 +146,15 @@ install_oq() {
 
 	curl -L $DL | $SUDO dd of=/usr/local/bin/oq
 	$SUDO chmod +x /usr/local/bin/oq
+}
+
+install_fossil() {
+	URL="https://fossil-scm.org/home/uv/$(curl -fsSL https://fossil-scm.org/home/juvlist | jq --raw-output '[ .[] | select(.name | match ("linux-x64")) | .name ] | first')"
+
+	curl -fsSL "${URL}" | sudo tar -xz --directory=/usr/local/bin
+
+	mkdir -p /usr/local/share/zsh/site-functions/
+	curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | sudo tee of=/usr/local/share/zsh/site-functions/_fossil >/dev/null
 }
 
 install_kitty_terminfo() {
