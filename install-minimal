@@ -154,7 +154,7 @@ install_fossil() {
 	curl -fsSL "${URL}" | sudo tar -xz --directory=/usr/local/bin
 
 	mkdir -p /usr/local/share/zsh/site-functions/
-	curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | sudo tee of=/usr/local/share/zsh/site-functions/_fossil >/dev/null
+	curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | sudo tee /usr/local/share/zsh/site-functions/_fossil >/dev/null
 }
 
 install_kitty_terminfo() {
