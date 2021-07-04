@@ -93,7 +93,7 @@ install_neovim() {
 	else
 		DL=$(
 			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/neovim/neovim/releases/latest |
-				jq --raw-output '.assets[] | select(.name | contains("linux64")) .browser_download_url'
+				jq --raw-output '.assets[] | select(.name | test("linux64.*gz$")) .browser_download_url'
 		)
 
 		curl -L $DL | $SUDO tar xz --strip-components=1 --directory /usr/local/
