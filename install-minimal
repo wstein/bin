@@ -226,7 +226,7 @@ install_packages() {
 	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO $PKG_MANAGER -y install $PACKAGES dnf-plugins-core openssh-server
-		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ]; then
+		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g' -e 's/\<fzf\>//g' -e 's/\<moreutils\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES openssh-server
