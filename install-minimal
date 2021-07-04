@@ -122,7 +122,7 @@ install_exa() {
 	fi
 
 	curl -L -o /tmp/exa.zip $DL
-	$SUDO unzip -d /usr/local /tmp/exa.zip
+	$SUDO unzip -o -d /usr/local /tmp/exa.zip
 	rm /tmp/exa.zip
 }
 
