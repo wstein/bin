@@ -218,8 +218,10 @@ install_packages() {
 			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
 		elif [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "20" -o "$VERSION_ID" = "20.04" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
-		else
+		elif [ "$ID" = "ubuntu" ]; then
 			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
+		else
+			$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre netselect-apt
 		fi
 		;;
 
