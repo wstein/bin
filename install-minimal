@@ -31,6 +31,7 @@ main() {
 	install_git_extras_from_sources
 	install_csvq
 	install_oq
+	install_taskctl
 	install_fossil
 	install_ccat
 	install_exa
@@ -144,17 +145,30 @@ install_oq() {
 			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
 	)
 
-	curl -L $DL | $SUDO dd of=/usr/local/bin/oq
+	curl -fsSL $DL | $SUDO dd of=/usr/local/bin/oq
 	$SUDO chmod +x /usr/local/bin/oq
+}
+
+install_taskctl() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/taskctl/taskctl/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("linux_amd64.tar.gz")) .browser_download_url'
+	)
+
+	curl -fsSL $DL | $SUDO tar -xz --directory=/usr/local/bin
+	$SUDO chmod +x /usr/local/bin/taskctl
+
+	$SUDO mkdir -p /usr/local/share/zsh/site-functions/
+	curl -fsSL "https://raw.githubusercontent.com/taskctl/taskctl/master/autocomplete/zsh_completion.zsh" | $SUDO dd of=/usr/local/share/zsh/site-functions/_taskctl
 }
 
 install_fossil() {
 	URL="https://fossil-scm.org/home/uv/$(curl -fsSL https://fossil-scm.org/home/juvlist | jq --raw-output '[ .[] | select(.name | match ("linux-x64")) | .name ] | first')"
 
-	curl -fsSL "${URL}" | sudo tar -xz --directory=/usr/local/bin
+	curl -fsSL "${URL}" | $SUDO tar -xz --directory=/usr/local/bin
 
-	mkdir -p /usr/local/share/zsh/site-functions/
-	curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | sudo tee /usr/local/share/zsh/site-functions/_fossil >/dev/null
+	$SUDO mkdir -p /usr/local/share/zsh/site-functions/
+	curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | $SUDO dd of=/usr/local/share/zsh/site-functions/_fossil
 }
 
 install_kitty_terminfo() {
@@ -206,7 +220,7 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES libffi
+		$SUDO apk add $PACKAGES libffi gcompat
 		;;
 
 	apt)
