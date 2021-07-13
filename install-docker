@@ -17,6 +17,32 @@ echo
 SUDO=$(command -v sudo || true)
 
 main() {
+	install_docker
+	install_docker_compose
+	install_dive
+}
+
+install_docker_compose() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/docker/compose/releases/latest |
+			jq --raw-output ".assets[] | select(.name == \"docker-compose-$(uname -s)-$(uname -m)\") .browser_download_url"
+	)
+
+	$SUDO curl -fsSL "${DL}" -o /usr/local/bin/docker-compose
+	$SUDO chmod +x /usr/local/bin/docker-compose
+}
+
+install_dive() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/wagoodman/dive/releases/latest |
+			jq --raw-output ".assets[] | select(.name | contains(\"linux_amd64.rpm\")) .browser_download_url"
+	)
+
+	$SUDO curl -fsSL -o /usr/local/bin/dive "${DL}"
+	$SUDO chmod +x /usr/local/bin/dive
+}
+
+install_docker() {
 	# evaluates the package manager
 	PKG_MANAGER_PATH=$({ command -v apk || command -v apt-get || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
 
@@ -48,11 +74,11 @@ main() {
 
 	# enable buildkit engine
 	sudo tee /etc/docker/daemon.json >/dev/null <<-EOF
-	{
-	  "features": {
-	    "buildkit": true
-	  }
-	}
+		{
+		  "features": {
+		    "buildkit": true
+		  }
+		}
 	EOF
 
 	$SUDO systemctl enable --now docker
