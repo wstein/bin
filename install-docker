@@ -73,6 +73,7 @@ install_docker() {
 	esac
 
 	# enable buildkit engine
+	mkdir -p /etc/docker/
 	sudo tee /etc/docker/daemon.json >/dev/null <<-EOF
 		{
 		  "features": {
