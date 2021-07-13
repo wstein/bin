@@ -83,7 +83,7 @@ install_docker() {
 		$SUDO systemctl enable --now docker
 	fi
 
-	$SUDO usermod -aG docker $USER
+	$SUDO usermod -aG docker $(whoami)
 }
 
 main "$@"
