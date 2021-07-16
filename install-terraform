@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+
+set -eu
+
+echo
+echo installing Terraform...
+echo -----------------------
+
+DL=$(curl -fsSL https://www.terraform.io/downloads.html | sed -nr -e '/.*href="(.*linux_amd64.zip).*/s//\1/p')
+TEMP=$(mktemp -d)
+
+wget -P $TEMP $DL
+sudo unzip -d /usr/local/bin $TEMP/*.zip
+
+rm -rf $TEMP
+
