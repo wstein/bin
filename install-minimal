@@ -206,7 +206,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg gzip htop iproute jq libnsl make moreutils pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux unzip util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg gzip htop iproute jq libnsl make moreutils pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux universal-ctags unzip util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
