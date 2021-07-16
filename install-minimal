@@ -206,7 +206,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg gzip htop iproute jq libnsl make moreutils pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux universal-ctags unzip util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg gzip htop iproute jq libnsl make moreutils pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
@@ -225,7 +225,7 @@ install_packages() {
 
 	apt)
 		$SUDO apt update
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<iproute\>//' -e 's/\<libnsl\>//')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<iproute\>//' -e 's/\<libnsl\>//' -e 's/\<ctags\>/universal-ctags/')
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
