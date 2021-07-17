@@ -32,11 +32,10 @@ main() {
 install_dive() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/wagoodman/dive/releases/latest |
-			jq --raw-output ".assets[] | select(.name | contains(\"linux_amd64.rpm\")) .browser_download_url"
+			jq --raw-output ".assets[] | select(.name | contains(\"linux_amd64.tar.gz\")) .browser_download_url"
 	)
 
-	$SUDO curl -fsSL -o /usr/local/bin/dive "${DL}"
-	$SUDO chmod +x /usr/local/bin/dive
+	curl -fsSL "${DL}" | $SUDO tar --directory=/usr/local/bin -xzv dive
 }
 
 install_docker() {
