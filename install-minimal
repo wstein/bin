@@ -220,7 +220,7 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
 		$SUDO apk update
-		$SUDO apk add $PACKAGES libffi gcompat
+		$SUDO apk add $PACKAGES libffi gcompat shadow
 		;;
 
 	apt)
