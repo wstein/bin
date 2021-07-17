@@ -90,7 +90,7 @@ install_ccat() {
 install_neovim() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
 		# github build does not work for aline linux
-		$SUDO apk add $PACKAGES libnsl neovim
+		$SUDO apk --no-cache add $PACKAGES libnsl neovim
 	else
 		DL=$(
 			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/neovim/neovim/releases/latest |
@@ -129,7 +129,7 @@ install_exa() {
 
 install_sqlite() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
-		apk add sqlite
+		apk --no-cache add sqlite
 	else
 		DL="https://sqlite.org/$(curl -fsSL https://sqlite.org/download.html | egrep -o "2[0-9]{3}[/]sqlite-tools-linux-x86-.*[.]zip")"
 	fi
@@ -219,8 +219,8 @@ install_packages() {
 	case "${PKG_MANAGER}" in
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
-		$SUDO apk update
-		$SUDO apk add $PACKAGES libffi gcompat shadow
+		$SUDO apk --no-cache update
+		$SUDO apk --no-cache add $PACKAGES libffi gcompat shadow
 		;;
 
 	apt)

@@ -49,9 +49,9 @@ install_docker() {
 	case "$PKG_MANAGER" in
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/-ce|[.]io//g')
-		$SUDO apk add ${PACKAGES}
+		$SUDO apk --no-cache add ${PACKAGES}
 		;;
-	
+
 	apt-get)
 		$SUDO apt-get update
 		$SUDO apt-get -y install apt-transport-https ca-certificates curl gnupg

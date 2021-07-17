@@ -22,7 +22,7 @@ PKG_MANAGER=${PKG_MANAGER_PATH##*/}
 
 case "$PKG_MANAGER" in
 apk)
-	$SUDO apk add $PACKAGES
+	$SUDO apk --no-cache add $PACKAGES
 	;;
 
 apt)
