@@ -206,7 +206,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg gzip htop iproute jq libnsl make moreutils pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg googler gzip htop iproute jq libnsl make moreutils pass patch procps qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
@@ -218,14 +218,14 @@ install_packages() {
 
 	case "${PKG_MANAGER}" in
 	apk)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<iproute\>//')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<(iproute|googler)\>//g')
 		$SUDO apk --no-cache update
 		$SUDO apk --no-cache add $PACKAGES doas libffi gcompat shadow
 		;;
 
 	apt)
 		$SUDO apt update
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<iproute\>//' -e 's/\<libnsl\>//' -e 's/\<ctags\>/universal-ctags/')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<(iproute|libnsl)\>//g' -e 's/\<ctags\>/universal-ctags/')
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
@@ -244,11 +244,11 @@ install_packages() {
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//g' -e 's/\<fzf\>//g' -e 's/\<moreutils\>//g')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(ripgrep|fzf|moreutils)\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core openssh-server
 			install_fzf_from_github
 		elif [ "$ID" = "photon" ]; then
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>|\<procps\>|\<sl\>|\<qrencode\>|\<htop\>|\<bash-completion\>//g')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(ripgrep|procps|sl|qrencode|htop|bash-completion)\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core vim openssh-server
 		else
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core vim openssh-server
@@ -256,12 +256,12 @@ install_packages() {
 		;;
 
 	pacman)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<virt-what\>//')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(virt-what|googler)\>//g')
 		$SUDO pacman -Sy --noconfirm $PACKAGES vim
 		;;
 
 	zypper)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<pass\>/password-store/' -e 's/\<libnsl\>//')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<pass\>/password-store/' -e 's/\<(libnsl)\>//g')
 		$SUDO zypper install -y $PACKAGES vim
 		;;
 
