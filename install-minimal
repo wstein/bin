@@ -168,12 +168,12 @@ install_fossil() {
 }
 
 install_kitty_terminfo() {
-	if ! [ -f "/usr/share/terminfo/x/xterm-kitty" ]; then
+	if ! [ -f "/etc/terminfo/x/xterm-kitty" ]; then
 		curl -fsSL -o /tmp/xterm-kitty "https://github.com/kovidgoyal/kitty/raw/master/terminfo/x/xterm-kitty"
 
-		test -d /usr/share/terminfo/x/ || $SUDO mkdir -p /usr/share/terminfo/x/
+		test -d /etc/terminfo/x/ || $SUDO mkdir -p /etc/terminfo/x/
 
-		$SUDO mv /tmp/xterm-kitty /usr/share/terminfo/x/
+		$SUDO mv /tmp/xterm-kitty /etc/terminfo/x/
 	fi
 }
 
@@ -202,12 +202,12 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash bash-completion bzip2 curl diffutils findutils fzf git gnupg googler gzip htop iproute jq libnsl make moreutils pass patch procps pv qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zsh zstd"
+	PACKAGES="$@ bash-completion bzip2 curl diffutils findutils fzf git gnupg googler gzip htop iproute jq libnsl make moreutils pass patch procps pv qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zsh zstd"
 }
 
 install_packages() {
 	# evaluates the package manager
-	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
+	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v rpm-ostree || command -v yum || command -v zypper || command -v pacman; })
 
 	# /usr/bin/dnf -> dnf
 	PKG_MANAGER=${PKG_MANAGER_PATH##*/}
@@ -216,7 +216,7 @@ install_packages() {
 	apk)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<(iproute|googler)\>//g')
 		$SUDO apk --no-cache update
-		$SUDO apk --no-cache add $PACKAGES doas libffi gcompat shadow
+		$SUDO apk --no-cache add $PACKAGES doas libffi gcompat shadow bash
 		;;
 
 	apt)
@@ -235,7 +235,16 @@ install_packages() {
 		fi
 		;;
 
-	dnf | yum)
+	rpm-ostree)
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
+		if [ "$ID" = "fedora" ]; then
+			$SUDO rpm-ostree install --idempotent fzf git googler htop libnsl make man-pages man-db moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux ctags unzip virt-what wget zsh zstd doas
+		else
+			$SUDO rpm-ostree install --idempotent fzf git googler htop libnsl make man-pages man-db moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux ctags unzip virt-what wget zsh zstd
+		fi
+		;;
+
+	dnf | yum | rpm-ostree)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
@@ -292,7 +301,7 @@ install_neofetch_from_sources() {
 	curl -L $DL | tar xz --strip-components=1 --directory "${TEMP_DIR}"
 
 	cd "${TEMP_DIR}"
-	$SUDO make install
+	$SUDO make install PREFIX=/usr/local/bin MANDIR=/usr/local/man
 	cd ~
 	rm -rf $TEMP_DIR
 }
