@@ -14,6 +14,8 @@ main() {
 }
 
 install_nvim_plugins() {
+	# download plug plugin
+	curl -fsSL --create-dirs -o $HOME/.local/share/nvim/site/autoload/plug.vim https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 	nvim '+PlugInstall | q | q'
 }
 
