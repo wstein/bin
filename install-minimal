@@ -301,7 +301,7 @@ install_neofetch_from_sources() {
 	curl -L $DL | tar xz --strip-components=1 --directory "${TEMP_DIR}"
 
 	cd "${TEMP_DIR}"
-	$SUDO make install PREFIX=/usr/local/bin MANDIR=/usr/local/man
+	$SUDO make install PREFIX=/usr/local MANDIR=/usr/local/man
 	cd ~
 	rm -rf $TEMP_DIR
 }
