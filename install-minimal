@@ -202,7 +202,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion bzip2 curl diffutils findutils fzf git gnupg googler gzip htop iproute jq libnsl lz4 lzma lzop make moreutils pass patch procps pv qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zip zsh zstd"
+	PACKAGES="$@ bash-completion bzip2 curl diffutils findutils fzf git gnupg googler gzip htop iproute jq libnsl lz4 lzma lzip lzop make moreutils pass patch procps pv qrencode ripgrep rsync ruby sl sqlite sudo tar tmux ctags unzip util-linux virt-what wget xz zip zsh zstd"
 }
 
 install_packages() {
