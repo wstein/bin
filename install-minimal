@@ -31,6 +31,7 @@ main() {
 	install_git_extras_from_sources
 	install_csvq
 	install_oq
+	install_yq
 	install_taskctl
 	install_fossil
 	install_ccat
@@ -65,10 +66,10 @@ check_katacoda_and_setup_code_server() {
 install_csvq() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/mithrandie/csvq/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) .browser_download_url'
+			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) | .browser_download_url'
 	)
 
-	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
+	TEMP=$(mktemp -d /tmp/csvq-XXXXXX)
 
 	cd "${TEMP}"
 	curl -L $DL | tar xz --strip-components=1
@@ -76,6 +77,16 @@ install_csvq() {
 
 	cd -
 	rm -rf "${TEMP}"
+}
+
+install_yq() {
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/bruceadams/yj/releases/latest |
+			jq --raw-output '.assets[] | select(.name == "yj.linux.x86_64") | .browser_download_url'
+	)
+
+	sudo curl -L -o /usr/local/bin/yq $DL
+	sudo chmod +x /usr/local/bin/yq
 }
 
 install_ccat() {
