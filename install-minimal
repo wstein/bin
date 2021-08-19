@@ -214,7 +214,7 @@ install_packages() {
 
 	case "${PKG_MANAGER}" in
 	apk)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<(iproute|googler)\>//g')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<lzop\>/lzo/' -e 's/\<(iproute|googler|lzma)\>//g')
 		$SUDO apk --no-cache update
 		$SUDO apk --no-cache add $PACKAGES doas libffi gcompat shadow bash
 		;;
