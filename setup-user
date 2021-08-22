@@ -42,7 +42,7 @@ myalias() {
 	ALIAS=$(echo $1 | cut -d= -f1)
 	COMMAND=$(echo $1 | cut -d= -f2-)
 	COMMAND_PATH=$(command -v ${COMMAND} || true)
-	test -z ${COMMAND_PATH} || ln -s ${COMMAND_PATH} ${HOME}/.local/bin/${ALIAS}
+	test -z ${COMMAND_PATH} || ln -fs ${COMMAND_PATH} ${HOME}/.local/bin/${ALIAS}
 }
 
 install_zsh_antigen() {
