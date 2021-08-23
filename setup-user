@@ -27,6 +27,7 @@ link_foreign_configurations() {
 	[ -d $HOME/.local/share/JetBrains/Toolbox/ ] || mkdir --parents $HOME/.local/share/JetBrains/Toolbox/
 	ln -sf $HOME/.config/JetBrains/Toolbox/.settings.json $HOME/.local/share/JetBrains/Toolbox/
 
+	ln -sf $HOME/.config/.byobu $HOME/
 	ln -sf $HOME/.config/.vscode $HOME/
 	ln -sf $HOME/.config/zsh/.zshrc $HOME/
 	ln -sf $HOME/.config/.gemrc $HOME/
