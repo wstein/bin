@@ -202,7 +202,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion byobu bzip2 ctags curl diffutils findutils fzf git gnupg googler gzip htop iproute jq libnsl lz4 lzip lzop make moreutils pass patch procps pv qrencode ripgrep rsync ruby sl sqlite sudo tar tmux unzip util-linux virt-what wget xz zip zsh zstd"
+	PACKAGES="$@ bash-completion byobu bzip2 ctags curl diffutils findutils fzf git gnupg googler gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make nethogs moreutils pass patch procps pv qrencode ripgrep rsync ruby sl sqlite sudo tar tmux unzip util-linux virt-what wget xz zip zsh zstd"
 }
 
 install_packages() {
@@ -238,9 +238,9 @@ install_packages() {
 	rpm-ostree)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
 		if [ "$ID" = "fedora" ]; then
-			$SUDO rpm-ostree install --idempotent byobu ctags fzf git googler htop libnsl lz4 lzip lzop make man-db man-pages moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget xz zip zsh zstd doas
+			$SUDO rpm-ostree install --idempotent byobu ctags fzf git googler htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget xz zip zsh zstd doas
 		else
-			$SUDO rpm-ostree install --idempotent byobu ctags fzf git googler htop libnsl lz4 lzip lzop make man-db man-pages moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget xz zip zsh zstd
+			$SUDO rpm-ostree install --idempotent byobu ctags fzf git googler htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget xz zip zsh zstd
 		fi
 		;;
 
