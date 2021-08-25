@@ -238,9 +238,9 @@ install_packages() {
 	rpm-ostree)
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
 		if [ "$ID" = "fedora" ]; then
-			$SUDO rpm-ostree install --idempotent byobu ctags fzf git googler htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget zip zsh zstd doas
+			$SUDO rpm-ostree install --idempotent --apply-live byobu ctags fzf git googler htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget zip zsh zstd doas
 		else
-			$SUDO rpm-ostree install --idempotent byobu ctags fzf git googler htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget zip zsh zstd
+			$SUDO rpm-ostree install --idempotent --apply-live byobu ctags fzf git googler htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tmux unzip virt-what wget zip zsh zstd
 		fi
 		;;
 
