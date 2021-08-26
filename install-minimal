@@ -31,7 +31,7 @@ main() {
 	install_git_extras_from_sources
 	install_csvq
 	install_oq
-	install_yq
+	install_yj
 	install_taskctl
 	install_fossil
 	install_ccat
@@ -79,14 +79,14 @@ install_csvq() {
 	rm -rf "${TEMP}"
 }
 
-install_yq() {
+install_yj() {
 	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/bruceadams/yj/releases/latest |
-			jq --raw-output '.assets[] | select(.name == "yj.linux.x86_64") | .browser_download_url'
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sclevine/yj/releases/latest |
+			jq --raw-output '.assets[] | select(.name == "yj-linux") | .browser_download_url'
 	)
 
-	sudo curl -L -o /usr/local/bin/yq $DL
-	sudo chmod +x /usr/local/bin/yq
+	sudo curl -L -o /usr/local/bin/yj $DL
+	sudo chmod +x /usr/local/bin/yj
 }
 
 install_ccat() {
