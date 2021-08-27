@@ -9,7 +9,7 @@ install_vscode() {
 	mkdir -p $HOME/.local/share/VSCode
 	mkdir -p $HOME/.local/share/applications
 	curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-x64" | tar --strip-components=1 --directory=$HOME/.local/share/VSCode -xz
-	ln -s $HOME/.local/share/VSCode/bin/code $HOME/.local/bin
+	ln -fs $HOME/.local/share/VSCode/bin/code $HOME/.local/bin
 
 	cat >$HOME/.local/share/applications/code-url-handler.desktop <<-EOF
 		[Desktop Entry]
