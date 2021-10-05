@@ -257,7 +257,7 @@ install_packages() {
 
 	dnf | yum | rpm-ostree)
 		if [ "$ID" = "fedora" ]; then
-			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server
+			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server kitty-terminfo
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(ripgrep|fzf|moreutils)\>//g')
