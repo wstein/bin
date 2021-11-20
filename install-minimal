@@ -281,7 +281,7 @@ install_packages() {
 		;;
 
 	zypper)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<pass\>/password-store/' -e 's/\<(libnsl)\>//g')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<pass\>/password-store/' -e 's/\<(libnsl)\>//g' -e 's/\<(gnupg)\>/gnupg dirmngr/g')
 		$SUDO zypper install -y $PACKAGES vim
 		;;
 
