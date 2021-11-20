@@ -8,6 +8,7 @@ main() {
 	install_zsh_antigen
 	link_foreign_configurations
 	setup_gems
+	install_asdf
 	set_aliases
 	install_nvim_plugins
 	setup_zsh
@@ -50,6 +51,11 @@ install_zsh_antigen() {
 	echo "setting up Zsh Antigen..."
 	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
+}
+
+install_asdf() {
+	echo "installing asdf..."
+	git clone https://github.com/asdf-vm/asdf.git ~/.asdf
 }
 
 setup_gems() {
