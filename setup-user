@@ -55,7 +55,9 @@ install_zsh_antigen() {
 
 install_asdf() {
 	echo "installing asdf..."
-	git clone https://github.com/asdf-vm/asdf.git ~/.asdf
+	if ![ -d ~/.asdf/ ]; then
+		git clone https://github.com/asdf-vm/asdf.git ~/.asdf
+	fi
 }
 
 setup_gems() {
