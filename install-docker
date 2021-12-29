@@ -40,7 +40,7 @@ install_dive() {
 
 install_docker() {
 	# evaluates the package manager
-	PKG_MANAGER_PATH=$({ command -v apk || command -v apt-get || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
+	PKG_MANAGER_PATH=$({ command -v apk || command -v apt-get || command -v dnf || command -v yum || command -v zypper || command -v pacman || command -v eopkg-cli; })
 
 	# /usr/bin/dnf -> dnf
 	PKG_MANAGER=${PKG_MANAGER_PATH##*/}

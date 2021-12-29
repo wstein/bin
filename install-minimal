@@ -105,7 +105,7 @@ install_neovim() {
 	else
 		DL=$(
 			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/neovim/neovim/releases/latest |
-				jq --raw-output '.assets[] | select(.name | test("linux64.*gz$")) .browser_download_url'
+				jq --raw-output '.assets[] | select(.name == "nvim-linux64.tar.gz") .browser_download_url'
 		)
 
 		curl -L $DL | $SUDO tar xz --strip-components=1 --directory /usr/local/
@@ -169,7 +169,7 @@ install_taskctl() {
 }
 
 install_fossil() {
-	URL="https://fossil-scm.org/home/uv/$(curl -fsSL https://fossil-scm.org/home/juvlist | jq --raw-output '[ .[] | select(.name | match ("linux-x64")) | .name ] | first')"
+	URL="https://fossil-scm.org/home/uv/$(curl -fsSL https://fossil-scm.org/home/juvlist | jq --raw-output '[ .[] | select(.name | contains ("linux-x64")) | .name ] | first')"
 
 	curl -fsSL "${URL}" | $SUDO tar -xz --directory=/usr/local/bin
 
@@ -217,7 +217,7 @@ get_packages_to_install() {
 
 install_packages() {
 	# evaluates the package manager
-	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v rpm-ostree || command -v yum || command -v zypper || command -v pacman; })
+	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v rpm-ostree || command -v yum || command -v zypper || command -v pacman || command -v eopkg-cli; })
 
 	# /usr/bin/dnf -> dnf
 	PKG_MANAGER=${PKG_MANAGER_PATH##*/}
@@ -227,6 +227,12 @@ install_packages() {
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<lzop\>/lzo/' -e 's/\<(iproute|googler)\>//g')
 		$SUDO apk --no-cache update
 		$SUDO apk --no-cache add $PACKAGES doas libffi gcompat shadow bash
+		;;
+
+	eopkg-cli)
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<sqlite\>/sqlite3/' -e 's/\<iproute\>/iproute2/' -e 's/\<(pass|libnsl|googler|iptraf-ng|procps|virt-what)\>//g')
+		$SUDO eopkg-cli update-repo
+		$SUDO eopkg-cli -y install $PACKAGES libffi6 shadow bash
 		;;
 
 	apt)
