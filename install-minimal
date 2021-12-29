@@ -112,8 +112,7 @@ install_neovim() {
 	fi
 
 	# create symbolic link vim -> nvim
-	test -f /usr/local/bin/vim && $SUDO rm /usr/local/bin/vim
-	$SUDO ln -s $(command -v nvim) /usr/local/bin/vim
+	$SUDO ln -fs /usr/local/bin/nvim /usr/local/bin/vim
 }
 
 install_exa() {
