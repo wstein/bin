@@ -236,6 +236,7 @@ install_packages() {
 		;;
 
 	apt)
+		$SUDO sed -i '/deb cdrom:/d' /etc/apt/sources.list # remove cdrom sources
 		$SUDO apt update
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<(iproute|libnsl)\>//g' -e 's/\<ctags\>/universal-ctags/')
 		$SUDO apt -y install --no-install-recommends software-properties-common
