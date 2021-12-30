@@ -207,7 +207,7 @@ set_max_user_watches() {
 	if [ -d /etc/sysctl.d/ ]; then
 		# each watch needs up to 1080 bytes (https://code.visualstudio.com/docs/setup/linux#_visual-studio-code-is-unable-to-watch-for-file-changes-in-this-large-workspace-error-enospc)
 		echo 'fs.inotify.max_user_watches=196608' | $SUDO tee /etc/sysctl.d/10_max_user_watches >/dev/null
-		$SUDO sysctl -p || true # ignore error
+		$SUDO sysctl -p /etc/sysctl.d/10_max_user_watches
 	fi
 }
 
