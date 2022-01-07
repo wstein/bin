@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+
+set -eu
+
+echo
+echo installing Tools for Fedora Workstation...
+echo ------------------------------------------
+
+sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/
+sudo dnf -y remove firefox
+sudo dnf -y install acpid cloud-init cloud-utils-growpart libosinfo
+sudo dnf -y install kitty toolbox buildah skopeo podman autokey-gtk brave-browser dconf-editor dnfdragora gnome-extensions-app gnome-shell-extension-pop-shell xprop
+
+# disable Wayland
+sudo sed -i -r -e 's/^#WaylandEnable.*/WaylandEnable=false/' /etc/gdm/custom.conf
+
+# Disable the zeroconf route
+echo "NOZEROCONF=yes" >> /etc/sysconfig/network
+
+
+# refer: https://docs.openstack.org/image-guide/fedora-image.html
+# and    https://fabianlee.org/2020/03/14/kvm-testing-cloud-init-locally-using-kvm-for-a-centos-cloud-image/
