@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 
+# some common settings
+gsettings set org.gnome.desktop.background picture-uri 'file:///usr/share/backgrounds/gnome/adwaita-timed.xml'
 gsettings set org.gnome.desktop.input-sources show-all-sources true
-
 gsettings set org.gnome.shell disable-user-extensions false
 
 # tile-by-default does not work at expected
