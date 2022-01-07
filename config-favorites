@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+
+set -eu
+
+gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed 's/\]$//'), 'brave-browser.desktop', 'kitty.desktop', 'code.desktop']"
