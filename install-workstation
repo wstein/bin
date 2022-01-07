@@ -16,7 +16,7 @@ sudo dnf -y install kitty toolbox buildah skopeo podman autokey-gtk brave-browse
 sudo sed -i -r -e 's/^#WaylandEnable.*/WaylandEnable=false/' /etc/gdm/custom.conf
 
 # Disable the zeroconf route
-echo "NOZEROCONF=yes" >> /etc/sysconfig/network
+echo "NOZEROCONF=yes" | sudo tee --append /etc/sysconfig/network >/dev/null
 
 
 # refer: https://docs.openstack.org/image-guide/fedora-image.html
