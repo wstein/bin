@@ -15,4 +15,5 @@ gsettings set org.gnome.shell.extensions.pop-shell active-hint true
 
 gnome-extensions enable pop-shell@system76.com
 
-busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart("Restarting…")'
+# restart like Alt-F2 restart
+busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart("Restarting…")' >/dev/null
