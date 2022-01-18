@@ -34,7 +34,7 @@ main() {
 	install_yj
 	install_taskctl
 	install_fossil
-	install_ccat
+	install_bat
 	install_exa
 	install_neovim
 	install_shellcheck
@@ -72,7 +72,7 @@ install_csvq() {
 	TEMP=$(mktemp -d /tmp/csvq-XXXXXX)
 
 	cd "${TEMP}"
-	curl -L $DL | tar xz --strip-components=1
+	curl -L "$DL" | tar xz --strip-components=1
 	$SUDO mv csvq /usr/local/bin
 
 	cd -
@@ -89,14 +89,14 @@ install_yj() {
 	sudo chmod +x /usr/local/bin/yj
 }
 
-install_ccat() {
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/owenthereal/ccat/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
-	)
+# install_ccat() {
+# 	DL=$(
+# 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/owenthereal/ccat/releases/latest |
+# 			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
+# 	)
 
-	curl -L $DL | $SUDO tar xz --strip-components=1 --directory /usr/local/bin
-}
+# 	curl -L "$DL" | $SUDO tar xz --strip-components=1 --directory /usr/local/bin
+# }
 
 install_neovim() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
@@ -108,7 +108,7 @@ install_neovim() {
 				jq --raw-output '.assets[] | select(.name == "nvim-linux64.tar.gz") .browser_download_url'
 		)
 
-		curl -L $DL | $SUDO tar xz --strip-components=1 --directory /usr/local/
+		curl -L "$DL" | $SUDO tar xz --strip-components=1 --directory /usr/local/
 	fi
 
 	# create symbolic link vim -> nvim
@@ -128,16 +128,25 @@ install_exa() {
 		)
 	fi
 
-	curl -L -o /tmp/exa.zip $DL
+	curl -L -o /tmp/exa.zip "$DL"
 	$SUDO unzip -o -d /usr/local /tmp/exa.zip
 	rm /tmp/exa.zip
+}
+
+install_bat() {
+	if false; then
+		DL=$(
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sharkdp/bat/releases/latest |
+				jq --raw-output '.assets[] | select(.name | contains("x86_64-unknown-linux-gnu")) .browser_download_url'
+		)
+	fi
 }
 
 install_sqlite() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
 		apk --no-cache add sqlite
 	else
-		DL="https://sqlite.org/$(curl -fsSL https://sqlite.org/download.html | egrep -o "2[0-9]{3}[/]sqlite-tools-linux-x86-.*[.]zip")"
+		DL="https://sqlite.org/$(curl -fsSL https://sqlite.org/download.html | grep -E -o "2[0-9]{3}[/]sqlite-tools-linux-x86-.*[.]zip")"
 	fi
 
 	curl -L -o /tmp/sqlite.zip $DL
@@ -169,12 +178,16 @@ install_taskctl() {
 }
 
 install_fossil() {
-	URL="https://fossil-scm.org/home/uv/$(curl -fsSL https://fossil-scm.org/home/juvlist | jq --raw-output '[ .[] | select(.name | contains ("linux-x64")) | .name ] | first')"
+	if [ "${PKG_MANAGER}" = "apk" ]; then
+		sudo apk add fossil
+	else
+		URL="https://fossil-scm.org/home/uv/$(curl -fsSL https://fossil-scm.org/home/juvlist | jq --raw-output '[ .[] | select(.name | contains ("linux-x64")) | .name ] | first')"
 
-	curl -fsSL "${URL}" | $SUDO tar -xz --directory=/usr/local/bin
+		curl -fsSL "${URL}" | $SUDO tar -xz --directory=/usr/local/bin
 
-	$SUDO mkdir -p /usr/local/share/zsh/site-functions/
-	curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | $SUDO dd of=/usr/local/share/zsh/site-functions/_fossil
+		$SUDO mkdir -p /usr/local/share/zsh/site-functions/
+		curl -fsSL "https://fossil-scm.org/home/raw/838a7f1b39e81ee0c06cfa959e6e97f6152019b04e10aab719c6fb118b415253?at=fossil-autocomplete.zsh" | $SUDO dd of=/usr/local/share/zsh/site-functions/_fossil
+	fi
 }
 
 install_kitty_terminfo() {
@@ -196,7 +209,7 @@ install_shellcheck() {
 	TEMP=$(mktemp -d /tmp/ccat-XXXXXX)
 
 	cd "${TEMP}"
-	curl -L $DL | tar xJ --strip-components=1
+	curl -L "$DL" | tar xJ --strip-components=1
 	$SUDO mv shellcheck /usr/local/bin
 
 	cd -
@@ -212,7 +225,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl diffutils findutils fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make nethogs moreutils pass patch procps pv qrencode ripgrep rsync ruby sshpass sl sqlite sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
+	PACKAGES="$@ bash-completion aria2 bat byobu bzip2 ctags curl diffutils fd-find findutils fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make nethogs moreutils pass patch procps pv qrencode ripgrep rsync ruby sshpass sl sqlite sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
 }
 
 install_packages() {
@@ -250,12 +263,12 @@ install_packages() {
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
 		if [ "$ID" = "fedora" ]; then
 			if [ "VARIANT_ID" = "silverblue" ]; then
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tig tmux virt-what zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 bat byobu ctags fd-find fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tig tmux virt-what zsh zstd doas
 			else
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 bat byobu ctags fd-find fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd doas
 			fi
 		else
-			$SUDO rpm-ostree install ---idempotent --apply-live aria2 byobu ctags fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd
+			$SUDO rpm-ostree install ---idempotent --apply-live aria2 bat byobu ctags fd-find fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd
 		fi
 		;;
 
@@ -313,7 +326,7 @@ install_neofetch_from_sources() {
 	TEMP_DIR=$(mktemp -d /tmp/neofetch-XXXXXX)
 	mkdir --parents "${TEMP_DIR}"
 
-	curl -L $DL | tar xz --strip-components=1 --directory "${TEMP_DIR}"
+	curl -L "$DL" | tar xz --strip-components=1 --directory "${TEMP_DIR}"
 
 	cd "${TEMP_DIR}"
 	$SUDO make install PREFIX=/usr/local MANDIR=/usr/local/man
