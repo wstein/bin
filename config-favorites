@@ -2,4 +2,4 @@
 
 set -eu
 
-gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed 's/\]$//'), 'brave-browser.desktop', 'kitty.desktop', 'code.desktop']"
+gsettings set org.gnome.shell favorite-apps "['brave-browser.desktop', 'org.gnome.Nautilus.desktop', 'code.desktop', 'kitty.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Software.desktop']"
