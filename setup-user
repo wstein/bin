@@ -5,6 +5,7 @@ set -eu
 main() {
 	echo "finishing user configuration..."
 
+	setup_config_folder
 	install_zsh_antigen
 	link_foreign_configurations
 	setup_gems
@@ -12,6 +13,24 @@ main() {
 	set_aliases
 	install_nvim_plugins
 	setup_zsh
+	setup_git
+	setup_bat
+}
+
+setup_config_folder() {
+	echo setting up .config folder...
+
+	# check to create ~/.config
+	! test -d $HOME/.config && mkdir $HOME/.config
+
+	cd "$HOME/.config"
+	git init
+	git remote add origin https://github.com/wstein/.config
+	git pull origin main
+	git symbolic-ref HEAD refs/heads/main # use main instead of master branch
+	git pull origin main
+	git branch --set-upstream-to=origin/main main
+	cd "$HOME"
 }
 
 install_nvim_plugins() {
@@ -76,6 +95,16 @@ setup_zsh() {
 
 	# install zsh plugins ;-)
 	TERM=xterm-256color zsh -il -c true
+}
+
+setup_git() {
+	git config --global --add init.defaultBranch main
+	git config --global --add merge.ff false
+	git config --global --add core.editor vim
+}
+
+setup_bat() {
+	bat cache --build
 }
 
 main "$@"
