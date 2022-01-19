@@ -23,14 +23,16 @@ setup_config_folder() {
 	# check to create ~/.config
 	! test -d $HOME/.config && mkdir $HOME/.config
 
-	cd "$HOME/.config"
-	git init
-	git remote add origin https://github.com/wstein/.config
-	git pull origin main
-	git symbolic-ref HEAD refs/heads/main # use main instead of master branch
-	git pull origin main
-	git branch --set-upstream-to=origin/main main
-	cd "$HOME"
+	if ! [ -d $HOME/.config/.git ]; then
+		cd "$HOME/.config"
+		git init
+		git remote add origin https://github.com/wstein/.config
+		git fetch origin main
+		git symbolic-ref HEAD refs/heads/main # use main instead of master branch
+		git pull origin main
+		git branch --set-upstream-to=origin/main main
+		cd "$HOME"
+	fi
 }
 
 install_nvim_plugins() {
