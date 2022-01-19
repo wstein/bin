@@ -10,7 +10,7 @@ sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
 sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/
 sudo dnf -y remove firefox
 sudo dnf -y install acpid cloud-init cloud-utils-growpart libosinfo
-sudo dnf -y install kitty toolbox buildah skopeo podman autokey-gtk remmina brave-browser dconf-editor dnfdragora firewall-config gcolor3 gnome-extensions-app gnome-shell-extension-pop-shell gparted xprop
+sudo dnf -y install kitty toolbox buildah skopeo podman autokey-gtk remmina brave-browser dconf-editor dnfdragora firewall-config gcolor3 gnome-extensions-app gnome-shell-extension-pop-shell gnome-tweaks gparted xprop
 
 # kvm: virt-manager bridge-utils
 
