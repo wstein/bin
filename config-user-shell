@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+
+
+setup_zsh () {
+        NEW_SHELL="$1:-zsh"
+
+        SUDO=$(command -v sudo || true)
+        CMD_CHSH=$(command -v lchsh || command -v chsh || true)
+
+        if [ -n "$CMD_CHSH" ]
+        then
+                command -v $NEW_SHELL | $SUDO $CMD_CHSH $(whoami) || true
+        fi
+}
+
+setup_zsh "$@"
