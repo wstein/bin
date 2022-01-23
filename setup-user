@@ -89,12 +89,6 @@ setup_gems() {
 }
 
 setup_zsh() {
-	CMD_CHSH=$(command -v lchsh || command -v chsh || true)
-
-	if [ -n "$CMD_CHSH" ]; then
-		command -v zsh | sudo $CMD_CHSH $(whoami) || true
-	fi
-
 	# install zsh plugins ;-)
 	TERM=xterm-256color zsh -il -c true
 }
