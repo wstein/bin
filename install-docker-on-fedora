@@ -1,0 +1,62 @@
+#!/usr/bin/env sh
+
+set -eu
+
+. /etc/os-release
+cat /etc/os-release
+echo
+echo ============================================
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo "$ID | ${VERSION_ID:- - } | ${PRETTY_NAME:- - }"
+echo ============================================
+echo
+
+main() {
+	# evaluates the package manager
+	PKG_MANAGER_PATH=$({ command -v apk || command -v apt || command -v dnf || command -v yum || command -v zypper || command -v pacman; })
+
+	# /usr/bin/dnf -> dnf
+	PKG_MANAGER=${PKG_MANAGER_PATH##*/}
+
+	case "$PKG_MANAGER" in
+	apk)
+		sudo apk add $PACKAGES
+		;;
+
+	apt)
+		apt update
+		sudo apt -y install $PACKAGES
+		;;
+
+	dnf)
+		sudo dnf -y install dnf-plugins-core
+		sudo dnf -y config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+		sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-compose
+		sudo systemctl enable --now docker
+		sudo usermod -aG docker $USER
+		;;
+
+	pacman)
+		sudo pacman -Sy --noconfirm $PACKAGES
+		;;
+
+	zypper)
+		sudo zypper install -y $PACKAGES
+		;;
+
+	*)
+		echo "Fatal Error: No supported package manager found!"
+		exit 1
+		;;
+
+	esac
+}
+
+main "$@"
