@@ -9,7 +9,7 @@ setup_zsh () {
 
         if [ -n "$CMD_CHSH" ]
         then
-                command -v $NEW_SHELL | $SUDO $CMD_CHSH $(whoami) || true
+                command -v "$NEW_SHELL" | $SUDO "$CMD_CHSH" "$(whoami)" || true
         fi
 }
 
