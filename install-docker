@@ -66,6 +66,14 @@ install_docker() {
 		$SUDO dnf -y install ${PACKAGES}
 		;;
 
+	pacman)
+		sudo pacman -Sy --noconfirm $PACKAGES
+		;;
+
+	zypper)
+		sudo zypper install -y $PACKAGES
+		;;
+
 	*)
 		echo "Fatal Error: No supported package manager found!"
 		exit 1
