@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_draw_io() {
+	echo
+	echo installing draw.io...
+	echo ---------------------
+
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/jgraph/drawio-desktop/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("rpm")) | .browser_download_url'
+	)
+
+	echo $DL
+	curl -o /tmp/drawio.rpm -fsSL "$DL"
+	sudo dnf -y install /tmp/drawio.rpm
+	rm -rf /tmp/drawio.rpm
+}
+
+install_draw_io
