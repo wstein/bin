@@ -2,37 +2,23 @@
 
 set -eu
 
-echo
-echo installing Tools for Fedora Workstation...
-echo ------------------------------------------
-
-install_drawio_desktop() {
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/jgraph/drawio-desktop/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("rpm")) | .browser_download_url'
-	)
-
-	curl -o /tmp/drawio.rpm -fsSL "$DL"
-	sudo dnf -y install /tmp/drawio.rpm
-	rm -rf /tmp/drawio.rpm
-}
-
 main() {
+	echo
+	echo installing Tools for Fedora Workstation...
+	echo ------------------------------------------
+
 	sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
 	sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/
 	sudo dnf -y remove firefox
 	sudo dnf -y install acpid cloud-init cloud-utils-growpart libosinfo
 	sudo dnf -y install libcanberra-gtk3 PackageKit-gtk3-module kitty task timew toolbox buildah skopeo podman autokey-gtk remmina brave-browser dconf-editor dnfdragora firewall-config gcolor3 gnome-extensions-app gnome-shell-extension-pop-shell gnome-tweaks gparted xprop
-
 	# kvm: virt-manager bridge-utils
-
-	install_drawio_desktop
 
 	# disable Wayland
 	sudo sed -i -r -e 's/^#WaylandEnable.*/WaylandEnable=false/' /etc/gdm/custom.conf
 
 	# Disable the zeroconf route
-	sudo sed -i -r -e '/^NOZEROCONF/d' -e '$NOZEROCONF=yes' /etc/sysconfig/network
+	sudo sed -i -r -e '/^NOZEROCONF/d' -e '$aNOZEROCONF=yes' /etc/sysconfig/network
 
 	# refer: https://docs.openstack.org/image-guide/fedora-image.html
 	# and    https://fabianlee.org/2020/03/14/kvm-testing-cloud-init-locally-using-kvm-for-a-centos-cloud-image/
