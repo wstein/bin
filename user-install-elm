@@ -1,0 +1,33 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	install_elm
+	install_elm_format
+}
+
+install_elm() {
+	echo installing elm...
+
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/elm/compiler/releases/latest |
+			jq --raw-output '.assets[] | select(.name == "binary-for-linux-64-bit.gz") .browser_download_url'
+	)
+
+	curl -fsSL "${DL}" | gzip -d >"${HOME}/.local/bin/elm"
+	chmod 755 "${HOME}/.local/bin/elm"
+}
+
+install_elm_format() {
+	echo installing elm-format...
+
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/avh4/elm-format/releases/latest |
+			jq --raw-output '.assets[] | select(.name | endswith("linux-x64.tgz")) .browser_download_url'
+	)
+
+	curl -fsSL "${DL}" | tar xz --directory "${HOME}/.local/bin"
+}
+
+main
