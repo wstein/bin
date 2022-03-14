@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+
+# fibonacci(n, prevprev, prev)
+fibonacci() {
+  if [ "$1" -lt 1 ]; then
+    echo "$2"
+  else
+    fibonacci "$(($1-1))" "$3" "$(($2+$3))"
+  fi
+}
+
+fibonacci "$1" 0 1
