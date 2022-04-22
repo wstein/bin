@@ -1,0 +1,50 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	check_environment
+	install_bat
+	update_mandb
+}
+
+install_bat() {
+	echo installing bat...
+
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sharkdp/bat/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("x86_64-unknown-linux-'"${LIBC_VARIANT}"'.tar.gz")) | .browser_download_url'
+	)
+
+	TMP_FOLDER="$(mktemp -d /tmp/bat-XXXXXXXX)"
+	mkdir -p "${TMP_FOLDER}"
+
+	curl -fsSL "${DL}" | tar -xz --strip=1 --directory="${TMP_FOLDER}"
+
+	mkdir -p ~/.local/bin ~/.local/man/man1 ~/.local/completion ~/.local/share/zsh/site-functions
+
+	mv "${TMP_FOLDER}"/bat ~/.local/bin
+	mv "${TMP_FOLDER}"/bat.1 ~/.local/man/man1 && gzip ~/.local/man/man1/bat.1
+	mv "${TMP_FOLDER}"/autocomplete/bat.zsh ~/.local/share/zsh/site-functions/_bat
+	mv "${TMP_FOLDER}"/autocomplete/bat.* ~/.local/completion
+
+	rm -rf ${TMP_FOLDER}
+
+	~/.local/bin/bat cache --build
+}
+
+check_environment() {
+	CURL_AUTH="${CURL_AUTH:-}" # initialize is not defined
+
+	if [ -f "/lib*/libc.musl*.so.1" ]; then
+		LIBC_VARIANT="musl"
+	else
+		LIBC_VARIANT="gnu"
+	fi
+}
+
+update_mandb() {
+	mandb ~/.local/man
+}
+
+main

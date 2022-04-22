@@ -34,7 +34,6 @@ main() {
 	install_yj
 	install_taskctl
 	install_fossil
-	install_bat
 	install_exa
 	install_neovim
 	install_shellcheck
@@ -133,14 +132,6 @@ install_exa() {
 	rm /tmp/exa.zip
 }
 
-install_bat() {
-	if false; then
-		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sharkdp/bat/releases/latest |
-				jq --raw-output '.assets[] | select(.name | contains("x86_64-unknown-linux-gnu")) .browser_download_url'
-		)
-	fi
-}
 
 install_sqlite() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
@@ -225,7 +216,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion aria2 bat byobu bzip2 ctags curl diffutils fd-find findutils fping fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make nethogs moreutils pass patch procps pv qrencode ripgrep rsync ruby sshpass sl sqlite sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
+	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl diffutils fd-find findutils fping fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make nethogs moreutils pass patch procps pv qrencode ripgrep rsync ruby sshpass sl sqlite sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
 }
 
 install_packages() {
@@ -263,12 +254,12 @@ install_packages() {
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
 		if [ "$ID" = "fedora" ]; then
 			if [ "VARIANT_ID" = "silverblue" ]; then
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 bat byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tig tmux virt-what zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop nethogs moreutils pass patch pv qrencode ripgrep ruby sl sqlite tig tmux virt-what zsh zstd doas
 			else
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 bat byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd doas
 			fi
 		else
-			$SUDO rpm-ostree install ---idempotent --apply-live aria2 bat byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd
+			$SUDO rpm-ostree install ---idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd
 		fi
 		;;
 
@@ -277,7 +268,7 @@ install_packages() {
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server kitty-terminfo
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "ol" ]  || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bat|fd-find|cloud-utils|ripgrep|fzf|moreutils)\>//g')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(fd-find|cloud-utils|ripgrep|fzf|moreutils)\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core openssh-server
 			install_fzf_from_github
 		elif [ "$ID" = "photon" ]; then
