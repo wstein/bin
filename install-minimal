@@ -82,7 +82,7 @@ install_csvq() {
 install_yj() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sclevine/yj/releases/latest |
-			jq --raw-output '.assets[] | select(.name == "yj-linux") | .browser_download_url'
+			jq --raw-output '.assets[] | select(.name == "yj-linux-amd64") | .browser_download_url'
 	)
 
 	sudo curl -L -o /usr/local/bin/yj $DL
