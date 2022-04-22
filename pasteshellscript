@@ -2,8 +2,7 @@
 
 set -eu
 
-echo "SUDO_COMMAND=$(command -v sudo)"
+echo 'SUDO=$(command -v sudo)'
 
 # remove trailing '>' and '$' | replace sudo with $SUDO
 sed -r -e 's/^[$>]\s?//' -e 's/\[?\s*\<sudo\>\s*\]?/$SUDO/g'
-
