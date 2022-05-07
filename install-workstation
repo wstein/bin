@@ -18,7 +18,9 @@ main() {
 	sudo sed -i -r -e 's/^#WaylandEnable.*/WaylandEnable=false/' /etc/gdm/custom.conf
 
 	# Disable the zeroconf route
-	sudo sed -i -r -e '/^NOZEROCONF/d' -e '$aNOZEROCONF=yes' /etc/sysconfig/network
+	if [ -f etc/sysconfig/network ]; then
+		sudo sed -i -r -e '/^NOZEROCONF/d' -e '$aNOZEROCONF=yes' /etc/sysconfig/network
+	fi
 
 	# refer: https://docs.openstack.org/image-guide/fedora-image.html
 	# and    https://fabianlee.org/2020/03/14/kvm-testing-cloud-init-locally-using-kvm-for-a-centos-cloud-image/
