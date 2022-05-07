@@ -98,4 +98,10 @@ setup_git() {
 	git config --global --add core.editor vim
 }
 
+setup_mc() {
+	mkdir -p ~/.local/share/mc/skins
+	curl -o ~/.local/share/mc/skins/dracula.ini https://raw.githubusercontent.com/dracula/midnight-commander/master/skins/dracula.ini
+	curl -o ~/.local/share/mc/skins/dracula256.ini https://raw.githubusercontent.com/dracula/midnight-commander/master/skins/dracula256.ini
+}
+
 main "$@"
