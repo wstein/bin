@@ -4,6 +4,7 @@
 gsettings set org.gnome.desktop.background picture-uri 'file:///usr/share/backgrounds/gnome/adwaita-timed.xml'
 gsettings set org.gnome.desktop.input-sources show-all-sources true
 gsettings set org.gnome.shell disable-user-extensions false
+gsettings set org.gnome.desktop.interface font-antialiasing 'rgba'
 
 # tile-by-default does not work at expected
 #gsettings set org.gnome.shell.extensions.pop-shell tile-by-default true
