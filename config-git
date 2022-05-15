@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+
+main() {
+	echo "User settings:"
+	echo "--------------"
+	echo
+
+	printf "Real name: "
+	read name
+
+	printf "Email: "
+	read email
+
+	git config --global core.editor vim
+	git config --global credential.helper cache "--timeout=$((10*60*60))"
+	git config --global init.defaultBranch "main"
+	git config --global merge.ff false
+	git config --global pull.rebase true
+	git config --global user.email "${email}"
+	git config --global user.name "${name}"
+}
+
+main "$@"
