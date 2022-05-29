@@ -14,6 +14,9 @@ main() {
 	sudo dnf -y install libcanberra-gtk3 PackageKit-gtk3-module kitty task timew toolbox buildah skopeo podman autokey-gtk remmina brave-browser dconf-editor dnfdragora firewall-config gcolor3 gnome-extensions-app gnome-shell-extension-pop-shell gnome-tweaks gparted xprop
 	# kvm: virt-manager bridge-utils
 
+	# not working on F36: busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart(\"Restarting…\")'
+	killall -HUP gnome-shell # <== so do it the hard way!
+
 	# disable Wayland
 	sudo sed -i -r -e 's/^#WaylandEnable.*/WaylandEnable=false/' /etc/gdm/custom.conf
 
