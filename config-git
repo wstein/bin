@@ -15,8 +15,9 @@ main() {
 	read -r EMAIL
 
 	git config --global --replace-all core.editor vim
+	git config --global --replace-all core.excludesfile "${HOME}/.config/git/gitignore"
 	git config --global --unset-all credential.helper
-	git config --global credential.helper cache "--timeout=$((10*60*60))"
+	git config --global credential.helper cache "--timeout=$((10 * 60 * 60))"
 	git config --global --replace-all init.defaultBranch "main"
 	git config --global --replace-all merge.ff false
 	git config --global --replace-all pull.rebase true
@@ -28,7 +29,7 @@ main() {
 	echo "-------------"
 	echo
 
-	git --no-pager  config --global --list | sort
+	git --no-pager config --global --list | sort
 }
 
 main "$@"
