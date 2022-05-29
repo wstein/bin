@@ -1,23 +1,34 @@
 #!/usr/bin/env sh
 
 main() {
-	echo "User settings:"
-	echo "--------------"
+	echo "Global settings:"
+	echo "----------------"
 	echo
 
-	printf "Real name: "
-	read name
+	OLD_NAME=$(git config --global --get user.name)
+	OLD_EMAIL=$(git config --global --get user.email)
 
-	printf "Email: "
-	read email
+	printf "Real name [%s]: " "${OLD_NAME}"
+	read -r NAME
 
-	git config --global core.editor vim
+	printf "Email [%s]: " "${OLD_EMAIL}"
+	read -r EMAIL
+
+	git config --global --replace-all core.editor vim
+	git config --global --unset-all credential.helper
 	git config --global credential.helper cache "--timeout=$((10*60*60))"
-	git config --global init.defaultBranch "main"
-	git config --global merge.ff false
-	git config --global pull.rebase true
-	git config --global user.email "${email}"
-	git config --global user.name "${name}"
+	git config --global --replace-all init.defaultBranch "main"
+	git config --global --replace-all merge.ff false
+	git config --global --replace-all pull.rebase true
+	git config --global --replace-all user.email "${EMAIL:-${OLD_EMAIL}}"
+	git config --global --replace-all user.name "${NAME:-${OLD_NAME}}"
+
+	echo
+	echo "New settings:"
+	echo "-------------"
+	echo
+
+	git --no-pager  config --global --list | sort
 }
 
 main "$@"

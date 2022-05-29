@@ -13,7 +13,6 @@ main() {
 	set_aliases
 	install_nvim_plugins
 	setup_zsh
-	setup_git
 }
 
 setup_config_folder() {
@@ -90,12 +89,6 @@ setup_gems() {
 setup_zsh() {
 	# install zsh plugins ;-)
 	TERM=xterm-256color zsh -il -c true
-}
-
-setup_git() {
-	git config --global --add init.defaultBranch main
-	git config --global --add merge.ff false
-	git config --global --add core.editor vim
 }
 
 setup_mc() {
