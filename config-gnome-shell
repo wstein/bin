@@ -15,7 +15,11 @@ gsettings set org.gnome.shell.extensions.pop-shell gap-inner 1
 gsettings set org.gnome.shell.extensions.pop-shell hint-color-rgba 'rgba(189,147,249,0.95)'
 gsettings set org.gnome.shell.extensions.pop-shell active-hint true
 
-gnome-extensions enable pop-shell@system76.com
+# enable extentions
+gnome-extensions enable pop-shell@system76.com 
+gnome-extensions enable apps-menu@gnome-shell-extensions.gcampax.github.com
+gnome-extensions enable places-menu@gnome-shell-extensions.gcampax.github.com
+gnome-extensions enable window-list@gnome-shell-extensions.gcampax.github.com
 
 # restart like Alt-F2 restart
 busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart("Restarting…")' >/dev/null
