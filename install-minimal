@@ -241,7 +241,7 @@ install_packages() {
 	apt)
 		$SUDO sed -i '/deb cdrom:/d' /etc/apt/sources.list # remove cdrom sources
 		$SUDO apt update
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<(iproute|libnsl)\>//g' -e 's/\<ctags\>/universal-ctags/')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<(iproute|libnsl)\>//g' -e 's/\<ctags\>/universal-ctags/' -e 's/\<net-snmp-utils\>/snmp/' -e 's/\<mkpasswd\>/libstring-mkpasswd-perl/')
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
