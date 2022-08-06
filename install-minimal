@@ -215,7 +215,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl diffutils fd-find findutils fping fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make mc net-snmp-utils nethogs mkpasswd moreutils pass patch procps pv qrencode ripgrep rsync ruby sshpass sl sqlite sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
+	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl diffutils fd-find findutils fping fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make mc mongoose net-snmp-utils nethogs mkpasswd moreutils pass patch procps pv qrencode ripgrep rlwrap rsync ruby sshpass sl sqlite socat sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
 }
 
 install_packages() {
@@ -253,12 +253,12 @@ install_packages() {
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
 		if [ "$ID" = "fedora" ]; then
 			if [ "VARIANT_ID" = "silverblue" ]; then
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop mc nethogs net-snmp-utils mkpasswd moreutils pass patch pv qrencode ripgrep ruby sl sqlite tig tmux virt-what zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop mc mongoose nethogs net-snmp-utils mkpasswd moreutils pass patch pv qrencode ripgrep rlwrap ruby sl sqlite socat tig tmux virt-what zsh zstd doas
 			else
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make mkpasswd man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make mkpasswd mongoose man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep rlwrap ruby sshpass sl socat sqlite tig tmux unzip virt-what wget zip zsh zstd doas
 			fi
 		else
-			$SUDO rpm-ostree install ---idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make mkpasswd man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep ruby sshpass sl sqlite tig tmux unzip virt-what wget zip zsh zstd
+			$SUDO rpm-ostree install ---idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make mkpasswd man-db man-pages mongoose nethogs moreutils pass patch pv qrencode ripgrep rlwrap ruby sshpass sl socat sqlite tig tmux unzip virt-what wget zip zsh zstd
 		fi
 		;;
 
