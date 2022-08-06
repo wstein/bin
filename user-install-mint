@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+
+set -eu
+
+install_mint() {
+	wget --no-verbose -O ~/.local/bin/mint https://mint-lang.s3-eu-west-1.amazonaws.com/mint-master-linux
+	chmod +x ~/.local/bin/mint
+}
+
+install_mint
+
