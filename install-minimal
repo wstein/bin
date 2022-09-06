@@ -267,7 +267,7 @@ install_packages() {
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server kitty-terminfo
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "ol" ] || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(fd-find|cloud-utils|ripgrep|fzf|moreutils)\>//g')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(fd-find|cloud-utils|ripgrep|fzf|moreutils|mongoose|mkpasswd)\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core openssh-server
 			install_fzf_from_github
 		elif [ "$ID" = "photon" ]; then
