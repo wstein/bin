@@ -9,7 +9,7 @@ main() {
 	install_zsh_antigen
 	link_foreign_configurations
 	setup_gems
-	install_asdf
+	#install_asdf
 	set_aliases
 	install_nvim_plugins
 	setup_zsh
@@ -87,6 +87,11 @@ setup_gems() {
 }
 
 setup_zsh() {
+	if [ -f "${HOME}/.terminfo/x/xterm-kitty" ]; then
+		# download xterm-kitty v0.26.2 from github and install it in user folder
+		curl -fsSL --create-dirs -o "${HOME}/.terminfo/x/xterm-kitty" "https://raw.githubusercontent.com/kovidgoyal/kitty/v0.26.2/terminfo/x/xterm-kitty"
+	fi
+
 	# install zsh plugins ;-)
 	TERM=xterm-256color zsh -il -c true
 }
