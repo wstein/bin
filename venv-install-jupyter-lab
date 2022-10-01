@@ -56,7 +56,7 @@ install_jupyterlab_in_wenv() {
 	. jupyter-venv/bin/activate
 
 	echo "installing jupyterlab..."
-	pip3 install --quiet --upgrade pip wheel setuptools jupyterlab JLDracula bash_kernel nbconflux html5lib
+	pip3 install --quiet --upgrade pip wheel setuptools jupyterlab bash_kernel nbconflux html5lib https://github.com/wstein/jupyterlab-dracula-theme/releases/download/v0.1.0/JLDracula-0.1.0-py3-none-any.whl
 
 	echo "installing bash kernel..."
 	python3 -m bash_kernel.install --sys-prefix
