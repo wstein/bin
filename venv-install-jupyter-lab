@@ -1,65 +1,73 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # This script is used to install jupyter-lab in a virtual environment (./jupyter-venv)
 
-set -eu
+set -eu -o pipefail
 
 main() {
 	check_python_version '3.7'
 	install_jupyterlab_in_wenv
-	echo
-	echo "Jupyter-lab installed successfully"
-	echo "----------------------------------"
-	echo
-	echo "To activate the virtual environment, and start jupyter-lab, run:"
-	echo "> . ./jupyter-venv/bin/activate"
-	echo "> jupyter-lab [--ip=0.0.0.0] [--no-browser] [WORKDIR]"
-	echo
-	echo "To remove the virtual environment, delete the 'jupyter-venv' directory"
-	echo
-	echo "If you also want to remove the jupyter-lab configuration,"
-	echo "delete the '~/.jupyter' and '~/.local/share/jupyter' directories!"
-	echo
+	Info
+	Info "Jupyter-lab installed successfully"
+	Info "----------------------------------"
+	Info
+	Info "To activate the virtual environment, and start jupyter-lab, run:"
+	Info "> . ./jupyter-venv/bin/activate"
+	Info "> jupyter-lab [--ip=0.0.0.0] [--no-browser] [WORKDIR]"
+	Info
+	Info "To remove the virtual environment, delete the 'jupyter-venv' directory"
+	Info
+	Info "If you also want to remove the jupyter-lab configuration,"
+	Info "delete the '~/.jupyter' and '~/.local/share/jupyter' directories!"
+	Info
 }
 
 # $1: python version (e.g. 3.7)
 check_python_version() {
-	echo "Checking if python version >= $1 is installed..."
+	Info "Checking if python version >= $1 is installed..."
 	if ! command -v python3 >/dev/null 2>&1; then
-		echo "Fatal error: python3 command not found, please install python3 (Version $1 or higher) first!"
+		Info "Fatal error: python3 command not found, please install python3 (Version $1 or higher) first!"
 		exit 1
 	fi
 
 	INSTALLED_PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
 	if ! python3 -c "import sys; exit(0) if list(map(int, sys.version_info[:2])) >= list(map(int, '$1'.split('.')[0:2])) else exit(1)"; then
-		echo "Fatal error: python3 version ${INSTALLED_PYTHON_VERSION} is too old,"
-		echo "please install python3 (Version $1 or higher) first!"
+		Info "Fatal error: python3 version ${INSTALLED_PYTHON_VERSION} is too old,"
+		Info "please install python3 (Version $1 or higher) first!"
 		exit 1
 	fi
 
-	echo "Python version ${INSTALLED_PYTHON_VERSION} is installed - OK"
+	Info "Python version ${INSTALLED_PYTHON_VERSION} is installed - OK"
 }
 
 install_jupyterlab_in_wenv() {
-	echo
-	echo "Installing jupyterlab..."
-	echo "------------------------"
-	echo
+	Info
+	Info "Installing jupyterlab..."
+	Info "------------------------"
+	Info
 
-	echo "creating virtual environment..."
+	Info "Creating virtual environment..."
 	if ! python3 -m venv jupyter-venv; then
-		echo "Failed to create virtual environment!"
+		Info "Failed to create virtual environment!"
 		exit 1
 	fi
 
-	echo "activating virtual environment..."
+	Info "activating virtual environment..."
 	# shellcheck disable=SC1091
 	. jupyter-venv/bin/activate
 
-	echo "installing jupyterlab..."
-	pip3 install --quiet --upgrade pip wheel setuptools jupyterlab bash_kernel nbconflux html5lib https://github.com/wstein/jupyterlab-dracula-theme/releases/download/v0.1.0/JLDracula-0.1.0-py3-none-any.whl
+	Info "Installing jupyterlab..."
+	pip3 install --quiet --upgrade pip wheel setuptools jupyterlab bash_kernel sshkernel nbconflux html5lib https://github.com/wstein/jupyterlab-dracula-theme/releases/download/v0.1.0/JLDracula-0.1.0-py3-none-any.whl
 
-	echo "installing bash kernel..."
+	Info "Installing kernels..."
 	python3 -m bash_kernel.install --sys-prefix
+    python3 -m sshkernel install --sys-prefix
+
+	Info "Successfully installed jupyterlab"
+}
+
+# $1: Message string
+Info() {
+	echo "${1:-}"
 }
 
 main "$@"
