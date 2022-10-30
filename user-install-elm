@@ -10,12 +10,7 @@ main() {
 install_elm() {
 	echo installing elm...
 
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/elm/compiler/releases/latest |
-			jq --raw-output '.assets[] | select(.name == "binary-for-linux-64-bit.gz") .browser_download_url'
-	)
-
-	curl -fsSL "${DL}" | gzip -d >"${HOME}/.local/bin/elm"
+	curl -fsSL https://github.com/elm/compiler/releases/latest/download/binary-for-linux-64-bit.gz | gzip -d >"${HOME}/.local/bin/elm"
 	chmod 755 "${HOME}/.local/bin/elm"
 }
 
