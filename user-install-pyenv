@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -eu -o pipefail
+
+main() {
+	install_pyenv
+	create_symlink
+}
+
+install_pyenv() {
+	curl -fsSL https://pyenv.run | bash
+}
+
+create_symlink() {
+	ln -fs ~/.pyenv/bin/pyenv ~/.local/bin/pyenv
+}
+
+# shellcheck source=$HOME/.pyenv/bin/pyenv-init
+#. "${PYENV_ROOT:-$HOME/.pyenv}"/bin/pyenv-init - > /dev/null 2>&1
+
+main "$@"
