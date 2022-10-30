@@ -11,7 +11,7 @@ main() {
 	sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/
 	sudo dnf -y remove firefox
 	sudo dnf -y install acpid cloud-init cloud-utils-growpart libosinfo
-	sudo dnf -y install libcanberra-gtk3 PackageKit-gtk3-module kitty task timew toolbox buildah skopeo podman autokey-gtk remmina brave-browser dconf-editor dnfdragora firewall-config gcolor3 gnome-extensions-app gnome-shell-extension-pop-shell gnome-tweaks gparted piper xprop p7zip-gui
+	sudo dnf -y install libcanberra-gtk3 PackageKit-gtk3-module kitty task timew toolbox buildah skopeo podman autokey-gtk remmina brave-browser dconf-editor dnfdragora firewall-config gcolor3 gnome-extensions-app gnome-shell-extension-pop-shell gnome-tweaks gparted piper xprop p7zip-gui xclip inxi
 	# kvm: virt-manager bridge-utils
 
 	# not working on F36: busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart(\"Restarting…\")'
