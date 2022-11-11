@@ -33,6 +33,14 @@ install_bat() {
 	~/.local/bin/bat cache --build
 }
 
+
+install_taskctl() {
+	echo installing taskctl...
+	
+	wget -O ~/.local/bin/taskctl https://github.com/taskctl/taskctl/releases/latest/download/taskctl_linux_amd64 &&\
+	chmod +x ~/.local/bin/taskctl
+}
+
 check_environment() {
 	CURL_AUTH="${CURL_AUTH:-}" # initialize is not defined
 
