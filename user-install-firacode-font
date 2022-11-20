@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 
+NERDFONT_VERSION='v2.2.1'
 set -eu
 
 # modified installscript
@@ -20,7 +21,7 @@ setup_firacode_font() {
 	for weight in Bold Light Medium Regular Retina SemiBold; do
 		category="Mono Windows Compatible" # or for pure non Windows environments "Mono"
 		file_path="${HOME}/.local/share/fonts/FiraCode-${weight}-NF-Win.ttf"
-		file_url="https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/FiraCode/${weight}/complete/Fira Code ${weight} Nerd Font Complete ${category}.ttf"
+		file_url="https://github.com/ryanoasis/nerd-fonts/raw/${NERDFONT_VERSION}/patched-fonts/FiraCode/${weight}/complete/Fira Code ${weight} Nerd Font Complete ${category}.ttf"
 
 		file_url=$(echo $file_url | sed 's/ /%20/g')  # replace <space> with %20
 
