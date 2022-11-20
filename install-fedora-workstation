@@ -1,0 +1,13 @@
+!/usr/bin/env sh
+
+set -eu
+
+sudo systemctl set-default graphical.target
+sudo dnf install '@Fedora Workstation' --exclude firefox
+
+echo "Successfully installed Fedora Workstation!"
+echo
+echo "Start Gnome-Shell now? [Y/n]: " && read -r answer
+if [ "$answer" = "Y" ] || [ "$answer" = "y" ] || [ "$answer" = "" ]; then
+    sudo init 5
+fi
