@@ -15,18 +15,29 @@ main() {
 	# kvm: virt-manager bridge-utils
 
 	# not working on F36: busctl --user call org.gnome.Shell /org/gnome/Shell org.gnome.Shell Eval s 'Meta.restart(\"Restarting…\")'
-	killall -HUP gnome-shell # <== so do it the hard way!
+	#killall -HUP gnome-shell # <== so do it the hard way! Not working since Fedora 37
 
-	# disable Wayland
+	echo Disable Wayland...
 	sudo sed -i -r -e 's/^#WaylandEnable.*/WaylandEnable=false/' /etc/gdm/custom.conf
 
-	# Disable the zeroconf route
 	if [ -f etc/sysconfig/network ]; then
+		echo Disable the zeroconf route...
 		sudo sed -i -r -e '/^NOZEROCONF/d' -e '$aNOZEROCONF=yes' /etc/sysconfig/network
 	fi
 
 	# refer: https://docs.openstack.org/image-guide/fedora-image.html
 	# and    https://fabianlee.org/2020/03/14/kvm-testing-cloud-init-locally-using-kvm-for-a-centos-cloud-image/
+
+	# ask to reboot for the changes to take effect
+	echo ------------------------------------------
+	echo Please reboot to complete the installation
+	echo ------------------------------------------
+
+	printf "reboot now? [y/N]: " && read -r answer
+	case $answer in
+		[yY]* ) sudo reboot;;
+		* ) echo "reboot later";;
+	esac
 }
 
 main
