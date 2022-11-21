@@ -3,15 +3,74 @@
 set -eu
 
 main() {
-	sudo dnf install 'dnf-command(config-manager)'
-	
-	sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
-	sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/
+	check_to_install_config_manager
 
-	sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-	sudo dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/vscode/
+	ask_to_add_repo "Brave browser" \
+		"https://brave-browser-rpm-release.s3.brave.com/x86_64/" \
+		"https://brave-browser-rpm-release.s3.brave.com/brave-core.asc" \
+		"brave-browser"
 
-	sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+	# https://github.com/crystal-lang/crystal/wiki/All-required-libraries#fedora
+	ask_to_add_repo "Crystal lang" \
+		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_36/devel:languages:crystal.repo" \
+		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_36/repodata/repomd.xml.key" \
+		"crystal gmp-devel libbsd-devel libedit-devel libevent-devel libxml2-devel libyaml-devel llvm-devel openssl-devel pcre-devel zlib-devel"
+
+	ask_to_add_repo "Docker CE" \
+		"https://download.docker.com/linux/fedora/docker-ce.repo" \
+		"https://download.docker.com/linux/fedora/gpg" \
+		"docker-ce docker-ce-cli containerd.io"
+
+	ask_to_add_repo "Google Chrome" \
+		"https://dl.google.com/linux/chrome/rpm/stable/x86_64/" \
+		"https://dl.google.com/linux/linux_signing_key.pub" \
+		"google-chrome-stable libglvnd-glx PackageKit-gtk3-module"
+
+	ask_to_add_repo "VS Code" \
+		"https://packages.microsoft.com/yumrepos/vscode/" \
+		"https://packages.microsoft.com/keys/microsoft.asc" \
+		"code"
+}
+
+# $1: repo name
+# $2: repo url
+# $3: repo gpg key url
+# $4: package(s)
+ask_to_add_repo() {
+	printf "Do you want to install the '%s' repository? [y/N] " "$1" && read -r answer
+	case "$answer" in
+	[yY][eE][sS] | [yY])
+		test -z "${3:-}" || sudo rpm --import "$3"
+		sudo dnf config-manager --add-repo "$2"
+		;;
+	*)
+		return 0
+		;;
+	esac
+
+	printf "Do you also want to install '%s'? [Y/n] " "$1" && read -r answer
+	case "$answer" in
+	[yY][eE][sS] | [yY] | "")
+		# shellcheck disable=SC2086
+		sudo dnf -y --quiet install $4
+		;;
+	esac
+}
+
+check_to_install_config_manager() {
+	if [ -z "$(rpm -qa dnf-plugins-core)" ]; then
+		printf "dnf-plugins-core is not installed, do you want to install it now? [Y/n] " && read -r answer
+		case "$answer" in
+		[yY][eE][sS] | [yY] | "")
+			echo "Installing dnf config-manager..."
+			sudo dnf -y --quiet install dnf-plugins-core
+			;;
+		*)
+			echo "Aborting..."
+			exit 1
+			;;
+		esac
+	fi
 }
 
 main "$@"
