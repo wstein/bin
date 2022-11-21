@@ -8,14 +8,14 @@ main() {
 	OLD_EMAIL=$(git config --global --get user.email)
 
 	# determine real Name
-	OLD_NAME=$(git config --global --get user.name)
-	LINUX_USER_NAME=$(getent passwd $(whoami) | cut -d: -f 5 | cut -d, -f1)
-	OLD_NAME=${OLD_NAME:-${LINUX_USER_NAME}}
+	OLD_NAME="$(git config --global --get user.name)"
+	LINUX_USER_NAME="$(getent passwd "$(whoami)" | cut -d: -f 5 | cut -d, -f1)"
+	OLD_NAME="${OLD_NAME:-${LINUX_USER_NAME}}"
 
-	printf "Real name [%s]: " "${OLD_NAME}"
+	printf "Real name [%s] " "${OLD_NAME}"
 	read -r NAME
 
-	printf "Email [%s]: " "${OLD_EMAIL}"
+	printf "Email [%s] " "${OLD_EMAIL}"
 	read -r EMAIL
 
 	git config --global --replace-all core.editor vim

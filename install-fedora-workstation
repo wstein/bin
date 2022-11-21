@@ -1,4 +1,4 @@
-!/usr/bin/env sh
+#!/usr/bin/env sh
 
 set -eu
 
@@ -7,7 +7,11 @@ sudo dnf install '@Fedora Workstation' --exclude firefox
 
 echo "Successfully installed Fedora Workstation!"
 echo
-echo "Start Gnome-Shell now? [Y/n]: " && read -r answer
-if [ "$answer" = "Y" ] || [ "$answer" = "y" ] || [ "$answer" = "" ]; then
-    sudo init 5
-fi
+echo "Start Gnome-Shell now? [Y/n] " && read -r answer
+case "$answer" in
+[yY][eE][sS] | [yY] | "")
+	sudo init 5
+	;;
+esac
+
+# openssl-devel zlib-devel

@@ -33,10 +33,14 @@ main() {
 	echo Please reboot to complete the installation
 	echo ------------------------------------------
 
-	printf "reboot now? [y/N]: " && read -r answer
-	case $answer in
-		[yY]* ) sudo reboot;;
-		* ) echo "reboot later";;
+	printf "reboot now? [y/N] " && read -r answer
+	case "$answer" in
+	[yY][eE][sS] | [yY])
+		sudo reboot
+		;;
+	*)
+		echo "reboot later"
+		;;
 	esac
 }
 
