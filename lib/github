@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+
+# $1: Github url (e.g. https://github.com/microsoft/vscode/)
+gh_latest_version() {
+	echo "$(curl -fsSL "${1%/}/releases/latest" | grep -E -o "${1%/}/releases/tag/[^&/\"]+" | head -1 | sed 's~.*\/~~')"
+}
