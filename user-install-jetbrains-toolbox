@@ -1,20 +1,81 @@
 #!/usr/bin/env sh
 
+# This script installs JetBrains Toolbox, which is a tool to manage JetBrains IDEs.
+# https://www.jetbrains.com/toolbox-app/
+
 set -eu
 
-install_jetbrains_toolbox() {
-	echo "Installing Jetbrains Toolbox..."
+SCRIPTS_DIR="${HOME}/.local/bin"
+INSTALL_DIR="${HOME}/.local/share/JetBrains/Toolbox"
 
-	test -d .local/share/JetBrains/Toolbox || mkdir --parents .local/share/JetBrains/Toolbox
+install_jetbrains_toolbox() {
+	echo "Jetbrains Toolbox Installer"
+	echo "---------------------------"
+	echo
+
+	ask_for_confirmation "Installing JetBrains Toolbox to ${INSTALL_DIR}."
+	create_directories
+	download_toolbox_and_install_it
+	create_settings_file
+	start_toolbox
+}
+
+create_directories() {
+	echo "Creating directories..."
+
+	mkdir -p "${SCRIPTS_DIR}" "${INSTALL_DIR}"
+}
+
+# $1 - The message to display.
+ask_for_confirmation() {
+	echo "$1"
+	printf "Do you want to continue? [Y/n] "
+	read -r answer
+
+	case "${answer}" in
+	[yY] | [yY][eE][sS] | "") ;;
+
+	*)
+		echo "Aborting..."
+		exit 1
+		;;
+	esac
+}
+
+download_toolbox_and_install_it() {
+	echo "Determining download link..."
 
 	DL_LINK=$(curl -fsSL "https://data.services.jetbrains.com/products/releases?code=TBA&latest=true&type=release" | jq -r ".TBA[0].downloads.linux.link")
-	TMP_DIR=$(mktemp -d /tmp/jetbrains-XXXXXX)
 
-	echo "Downloading $DL_LINK..."
-	curl -L "$DL_LINK" | tar -xz --strip-components=1 -C "$TMP_DIR"
+	echo "Downloading ${DL_LINK}..."
+	curl -fsSL "${DL_LINK}" | tar -xz --strip-components=1 -C "${INSTALL_DIR}"/bin
 
-	# jetbrains-toolbox will automatically copy toolbox to ~/.local/share/...
-	("$TMP_DIR/jetbrains-toolbox" &)
+	echo "Creating symlink..."
+	ln -fs "${INSTALL_DIR}"/bin/jetbrains-toolbox "${SCRIPTS_DIR}"/jetbrains-toolbox
+}
+
+create_settings_file() {
+	echo "Creating settings file..."
+
+	cat <<-EOF >"${INSTALL_DIR}"/.settings.json
+		{
+			"autostart": false,
+			"install_location": "${INSTALL_DIR}",
+			"channel_rollback_max_history": 1,
+			"shell_scripts": {
+				"location": "${SCRIPTS_DIR}"
+			},
+			"tools": {
+				"localize_tools": true
+			}
+		}
+	EOF
+}
+
+start_toolbox() {
+	echo "Starting JetBrains Toolbox..."
+
+	("${SCRIPTS_DIR}"/jetbrains-toolbox &) >/dev/null 2>&1
 }
 
 install_jetbrains_toolbox "$@"
