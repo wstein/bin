@@ -1,0 +1,182 @@
+#!/bin/sh
+
+usage() {
+    echo "Usage: "
+    echo "  ${0##*/} <ip address>/<subnet mask>"
+    echo "  ${0##*/} <start ip address> <end ip address>"
+    echo
+    echo "Example:"
+    echo "  ${0##*/} 192.168.1.1/24"
+    echo "  ${0##*/} 192.168.1.1 192.168.1.254"
+}
+
+ipscan() {
+    # iterate on each line of `fping -gs "$@" 2>/dev/null`
+    fping -gs "$@" 2>/dev/null | while read -r LINE; do
+        IP=$(echo "${LINE}" | grep -E -o "${IP_REGEX}")
+        STATUS=$(echo "${LINE}" | grep -E -o "alive|unreachable")
+        HOSTNAME=$(dig +short -x "${IP}")
+        # remove trailing dot from hostname
+        HOSTNAME="${HOSTNAME%.}"
+
+        case "${STATUS}" in
+        alive|unreachable)
+            print_status "${IP}" "${HOSTNAME}" "${STATUS}"
+            ;;
+        *)
+            echo "$LINE"
+            ;;
+        esac
+    done | column -t | sort -n -t . -k1,1 -k2,2 -k 3,3 -k4,4
+}
+
+main() {
+    check_cli_tools dig fping ip grep
+
+    if check_args "$@"; then
+        ipscan "$@"
+    else
+        # shellcheck disable=SC2046
+        ipscan $(read_args_from_stdin)
+    fi
+}
+
+# $1 = ip address
+# $2 = hostname
+# $3 = status
+print_status() {
+    case "$3" in
+    alive)
+        printf "${GREEN}%s\tonline\t%s${RESET}\n" "$1" "${2:--}"
+        ;;
+    unreachable)
+        printf "${RED}%s\toffline\t%s${RESET}\n" "$1" "${2:--}"
+        ;;
+    esac
+}
+
+# $1..$n = tools to check to be available
+check_cli_tools() {
+    for tool in "$@"; do
+        if ! command -v "${tool}" >/dev/null 2>&1; then
+            missing_tools="${missing_tools} ${tool}"
+        fi
+    done
+
+    if [ -n "${missing_tools}" ]; then
+        echo "Error: The following tools are not installed:"
+        for tool in ${missing_tools}; do
+            echo "  - ${tool}"
+        done
+        echo
+        echo "Please install them first!"
+        exit 1
+    fi
+}
+
+# returns 0 if the arguments are valid
+# returns 1 if no arguments are provided
+# prinst an error and exits the script if the arguments are invalid
+check_args() {
+    if [ $# -eq 0 ]; then
+        printf "No arguments provided, do you want to enter them manually? [Y/n] "
+        read -r input
+        input="${input:-y}"
+        case "${input}" in
+        [yY][eE][sS] | [yY])
+            return 1
+            ;;
+        *)
+            usage
+            exit 1
+            ;;
+        esac
+    fi
+
+    if [ $# -gt 2 ]; then
+        echo "Error: Too many arguments provided"
+    # Only one arg than it must be <ip address>/<subnet mask>
+    elif [ $# -eq 1 ] && ! check_ip_mask "$1"; then
+        echo "Error: Not a valid ip/mask"
+        echo
+        usage
+        exit 1
+    # Two args than it must be <start ip address> <end ip address>
+    elif [ $# -eq 2 ] && ! { check_ip "$1" && check_ip "$2"; }; then
+        echo "Error: Not a valid ip address range"
+        echo
+        usage
+        exit 1
+    fi
+}
+
+read_args_from_stdin() {
+    # determine active ip range
+    ip_mask="$(ip -o -4 addr list | grep -E -v " lo|scope host" | awk '{print $4}' | head -n 1)"
+
+    while true; do
+        printf "Enter the start ip address or ip address with subnet mask? [%s] " "${ip_mask}" >&2
+        read -r input >&2
+        input="${input:-${ip_mask}}"
+
+        if check_ip_mask "${input}"; then
+            echo "${input}"
+            return 0
+        fi
+
+        if ! check_ip "${input}"; then
+            echo "Error: Invalid ip address provided" >&2
+            echo >&2
+            continue
+        fi
+
+        start_ip="${input}"
+        printf "Enter the end ip address? " >&2
+        read -r end_ip >&2
+
+        if check_ip "${end_ip}"; then
+            echo "${start_ip} ${end_ip}"
+            return 0
+        fi
+
+        echo "Error: Invalid ip address provided" >&2
+        echo >&2
+    done
+}
+
+# $1 = ip address with subnet mask
+check_ip_mask() {
+    echo "$1" | grep -Eq -c "^${IP_MASK_REGEX}$"
+    return "$?"
+}
+
+# $1 = ip address
+check_ip() {
+    echo "$1" | grep -Eq -c "^${IP_REGEX}$"
+    return "$?"
+}
+
+#               0 .. 249,                 250..255
+OCTET_REGEX="(([1-9]|1[0-9]|2[0-4])?[0-9]|2[5][0-5])"
+
+#           octet.octet.octet.  octet
+IP_REGEX="(${OCTET_REGEX}\.){3}${OCTET_REGEX}"
+
+#            0 .. 29,   30..32
+MASK_REGEX="([12]?[0-9]|3[0-2])"
+
+#                      ip  /  mask
+IP_MASK_REGEX="${IP_REGEX}/${MASK_REGEX}"
+
+# check if we are running in a terminal
+if [ -t 1 ]; then
+    RED="\e[31m"
+    GREEN="\e[32m"
+    RESET="\e[0m"
+else
+    RED=""
+    GREEN=""
+    RESET=""
+fi
+
+main "$@"
