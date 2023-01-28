@@ -7,39 +7,47 @@ set -eu
 main() {
 	check_to_install_config_manager
 
-	ask_to_add_repo "Brave browser" \
+	setup_repo_and_install "Brave browser" \
 		"https://brave-browser-rpm-release.s3.brave.com/x86_64/" \
 		"https://brave-browser-rpm-release.s3.brave.com/brave-core.asc" \
 		"brave-browser"
 
 	# https://github.com/crystal-lang/crystal/wiki/All-required-libraries#fedora
-	ask_to_add_repo "Crystal lang" \
+	setup_repo_and_install "Crystal lang" \
 		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_${VERSION_ID}/devel:languages:crystal.repo" \
 		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_${VERSION_ID}/repodata/repomd.xml.key" \
 		"crystal gmp-devel libbsd-devel libedit-devel libevent-devel libxml2-devel libyaml-devel llvm-devel openssl-devel pcre-devel zlib-devel"
 
-	ask_to_add_repo "Docker CE" \
+	setup_repo_and_install "Docker CE" \
 		"https://download.docker.com/linux/fedora/docker-ce.repo" \
 		"https://download.docker.com/linux/fedora/gpg" \
 		"docker-ce docker-ce-cli containerd.io"
 
-	ask_to_add_repo "Google Chrome" \
+	setup_repo_and_install "Google Chrome" \
 		"https://dl.google.com/linux/chrome/rpm/stable/x86_64/" \
 		"https://dl.google.com/linux/linux_signing_key.pub" \
 		"google-chrome-stable libglvnd-glx PackageKit-gtk3-module"
 
-	ask_to_add_repo "VS Code" \
+	setup_repo_and_install "VS Code" \
 		"https://packages.microsoft.com/yumrepos/vscode/" \
 		"https://packages.microsoft.com/keys/microsoft.asc" \
 		"code"
 }
 
-# $1: repo name
+# $1: product name
 # $2: repo url
 # $3: repo gpg key url
 # $4: package(s)
-ask_to_add_repo() {
-	printf "Do you want to install the '%s' repository? [y/N] " "$1" && read -r answer
+setup_repo_and_install() {
+	setup_repo "$1" "$2" "$3"
+	install_packages "$1" "$4"
+}
+
+# $1: product name
+# $2: repo url
+# $3: repo gpg key url
+setup_repo() {
+	printf "Do you want to setup the '%s' repository? [y/N] " "$1" && read -r answer
 	case "$answer" in
 	[yY][eE][sS] | [yY])
 		test -z "${3:-}" || sudo rpm --import "$3"
@@ -49,7 +57,11 @@ ask_to_add_repo() {
 		return 0
 		;;
 	esac
+}
 
+# $1: product name
+# $2: package(s)
+install_packages() {
 	printf "Do you also want to install '%s'? [Y/n] " "$1" && read -r answer
 	case "$answer" in
 	[yY][eE][sS] | [yY] | "")
