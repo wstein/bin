@@ -27,14 +27,11 @@ SUDO=$(command -v sudo || true)
 main() {
 	get_packages_to_install "$@"
 	install_packages
-	install_neofetch_from_sources
 	install_git_extras_from_sources
 	install_csvq
 	install_oq
 	install_yj
 	install_fossil
-	install_exa
-	install_neovim
 	install_shellcheck
 	install_kitty_terminfo
 	check_katacoda_and_setup_code_server
@@ -96,41 +93,6 @@ install_yj() {
 # 	curl -L "$DL" | $SUDO tar xz --strip-components=1 --directory /usr/local/bin
 # }
 
-install_neovim() {
-	if [ "${PKG_MANAGER}" = "apk" ]; then
-		# github build does not work for aline linux
-		$SUDO apk --no-cache add $PACKAGES libnsl neovim
-	else
-		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/neovim/neovim/releases/latest |
-				jq --raw-output '.assets[] | select(.name == "nvim-linux64.tar.gz") .browser_download_url'
-		)
-
-		curl -L "$DL" | $SUDO tar xz --strip-components=1 --directory /usr/local/
-	fi
-
-	# create symbolic link vim -> nvim
-	$SUDO ln -fs /usr/local/bin/nvim /usr/local/bin/vim
-}
-
-install_exa() {
-	if [ "${PKG_MANAGER}" = "apk" ]; then
-		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/ogham/exa/releases/latest |
-				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-musl-v")) .browser_download_url'
-		)
-	else
-		DL=$(
-			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/ogham/exa/releases/latest |
-				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-v")) .browser_download_url'
-		)
-	fi
-
-	curl -L -o /tmp/exa.zip "$DL"
-	$SUDO unzip -o -d /usr/local /tmp/exa.zip
-	rm /tmp/exa.zip
-}
-
 install_sqlite() {
 	if [ "${PKG_MANAGER}" = "apk" ]; then
 		apk --no-cache add sqlite
@@ -138,7 +100,7 @@ install_sqlite() {
 		DL="https://sqlite.org/$(curl -fsSL https://sqlite.org/download.html | grep -E -o "2[0-9]{3}[/]sqlite-tools-linux-x86-.*[.]zip")"
 	fi
 
-	curl -L -o /tmp/sqlite.zip $DL
+	curl -L -o /tmp/sqlite.zip "${DL}"
 	$SUDO unzip -d /usr/local/bin -j /tmp/sqlite.zip
 	rm /tmp/sqlite.zip
 }
@@ -149,7 +111,7 @@ install_oq() {
 			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
 	)
 
-	curl -fsSL $DL | $SUDO dd of=/usr/local/bin/oq
+	curl -fsSL "${DL}" | $SUDO dd of=/usr/local/bin/oq
 	$SUDO chmod +x /usr/local/bin/oq
 }
 
@@ -201,7 +163,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl diffutils fd-find findutils fping fzf git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lz4 lzip lzop make mc mongoose net-snmp-utils nethogs mkpasswd moreutils pass patch procps pv qrencode ripgrep rlwrap rsync ruby sshpass sl sqlite socat sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
+	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl diffutils fd-find findutils fping git gnupg googler cloud-utils gzip htop iproute iptraf-ng jq libnsl lighttpd lz4 lzip lzop make mc net-snmp-utils nethogs mkpasswd moreutils pass patch procps pv qrencode ripgrep rlwrap rsync ruby sshpass sl sqlite socat sudo tar tig tmux unzip util-linux virt-what wget xz zip zsh zstd"
 }
 
 install_packages() {
@@ -213,7 +175,7 @@ install_packages() {
 
 	case "${PKG_MANAGER}" in
 	apk)
-		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<qrencode\>/libqrencode/' -e 's/\<fd-find\>/fd/' -e 's/\<lzop\>/lzo/' -e 's/\<(iproute|googler)\>//g')
+		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<net-snmp-utils\>/net-snmp-tools/' -e 's/\<qrencode\>/libqrencode/' -e 's/\<fd-find\>/fd/' -e 's/\<lzop\>/lzo/' -e 's/\<(iproute|googler)\>//g')
 		$SUDO apk --no-cache update
 		$SUDO apk --no-cache add $PACKAGES doas libffi gcompat shadow bash
 		;;
@@ -239,23 +201,22 @@ install_packages() {
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(bash|bash-completion)\>//g')
 		if [ "$ID" = "fedora" ]; then
 			if [ "VARIANT_ID" = "silverblue" ]; then
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq lz4 lzip lzop mc mongoose nethogs net-snmp-utils mkpasswd moreutils pass patch pv qrencode ripgrep rlwrap ruby sl sqlite socat tig tmux virt-what zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping git googler cloud-utils htop iptraf-ng jq lighttpd lz4 lzip lzop mc nethogs net-snmp-utils mkpasswd moreutils pass patch pv qrencode ripgrep rlwrap ruby sl sqlite socat tig tmux virt-what zsh zstd doas
 			else
-				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng libnsl lz4 lzip lzop make mkpasswd mongoose man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep rlwrap ruby sshpass sl socat sqlite tig tmux unzip virt-what wget zip zsh zstd doas
+				$SUDO rpm-ostree install --idempotent --apply-live aria2 byobu ctags fd-find fping git googler cloud-utils htop iptraf-ng libnsl lighttpd lz4 lzip lzop make mkpasswd man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep rlwrap ruby sshpass sl socat sqlite tig tmux unzip virt-what wget zip zsh zstd doas
 			fi
 		else
-			$SUDO rpm-ostree install ---idempotent --apply-live aria2 byobu ctags fd-find fping fzf git googler cloud-utils htop iptraf-ng jq libnsl lz4 lzip lzop make mkpasswd man-db man-pages mongoose nethogs moreutils pass patch pv qrencode ripgrep rlwrap ruby sshpass sl socat sqlite tig tmux unzip virt-what wget zip zsh zstd
+			$SUDO rpm-ostree install ---idempotent --apply-live aria2 byobu ctags fd-find fping git googler cloud-utils htop iptraf-ng jq libnsl lighttpd lz4 lzip lzop make mkpasswd man-db man-pages nethogs moreutils pass patch pv qrencode ripgrep rlwrap ruby sshpass sl socat sqlite tig tmux unzip virt-what wget zip zsh zstd
 		fi
 		;;
 
-	dnf | yum | rpm-ostree)
+	dnf | yum)
 		if [ "$ID" = "fedora" ]; then
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core doas openssh-server kitty-terminfo
 		elif [ "$ID" = "almalinux" ] || [ "$ID" = "centos" ] || [ "$ID" = "ol" ] || [ "$ID" = "rhel" ] || [ "$ID" = "rocky" ]; then
 			$SUDO $PKG_MANAGER -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-${VERSION_MAJOR}.noarch.rpm
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(fd-find|cloud-utils|ripgrep|fzf|moreutils|mongoose|mkpasswd)\>//g')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(fd-find|cloud-utils|ripgrep|moreutils|mkpasswd)\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core openssh-server
-			install_fzf_from_github
 		elif [ "$ID" = "photon" ]; then
 			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(ripgrep|procps|sl|qrencode|htop|bash-completion)\>//g')
 			$SUDO $PKG_MANAGER -y install $PACKAGES $PKG_MANAGER-plugins-core vim openssh-server
@@ -291,27 +252,6 @@ install_git_extras_from_sources() {
 	$SUDO make install
 	cd ~
 	rm -rf $TEMP_DIR
-}
-
-install_neofetch_from_sources() {
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/dylanaraps/neofetch/releases/latest |
-			jq --raw-output '.tarball_url'
-	)
-
-	TEMP_DIR=$(mktemp -d /tmp/neofetch-XXXXXX)
-	mkdir --parents "${TEMP_DIR}"
-
-	curl -L "$DL" | tar xz --strip-components=1 --directory "${TEMP_DIR}"
-
-	cd "${TEMP_DIR}"
-	$SUDO make install PREFIX=/usr/local MANDIR=/usr/local/man
-	cd ~
-	rm -rf $TEMP_DIR
-}
-
-install_fzf_from_github() {
-	curl -L "https://raw.githubusercontent.com/junegunn/fzf/master/install" | bash
 }
 
 main "$@"

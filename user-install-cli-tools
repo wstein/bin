@@ -3,42 +3,23 @@
 set -eu
 
 main() {
+	create_target_dirs
 	check_environment
 	install_bat
+	install_exa
+	install_fzf
+	install_neofetch
+	install_taskctl
 	update_mandb
 }
 
-install_bat() {
-	echo installing bat...
-
-	DL=$(
-		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sharkdp/bat/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("x86_64-unknown-linux-'"${LIBC_VARIANT}"'.tar.gz")) | .browser_download_url'
-	)
-
-	TMP_FOLDER="$(mktemp -d /tmp/bat-XXXXXXXX)"
-	mkdir -p "${TMP_FOLDER}"
-
-	curl -fsSL "${DL}" | tar -xz --strip=1 --directory="${TMP_FOLDER}"
-
-	mkdir -p ~/.local/bin ~/.local/man/man1 ~/.local/completion ~/.local/share/zsh/site-functions
-
-	mv "${TMP_FOLDER}"/bat ~/.local/bin
-	mv "${TMP_FOLDER}"/bat.1 ~/.local/man/man1 && gzip ~/.local/man/man1/bat.1
-	mv "${TMP_FOLDER}"/autocomplete/bat.zsh ~/.local/share/zsh/site-functions/_bat
-	mv "${TMP_FOLDER}"/autocomplete/bat.* ~/.local/completion
-
-	rm -rf ${TMP_FOLDER}
-
-	~/.local/bin/bat cache --build
-}
-
-
-install_taskctl() {
-	echo installing taskctl...
-	
-	wget -O ~/.local/bin/taskctl https://github.com/taskctl/taskctl/releases/latest/download/taskctl_linux_amd64 &&\
-	chmod +x ~/.local/bin/taskctl
+create_target_dirs() {
+	mkdir -p \
+		~/.local/bin \
+		~/.local/share/man/man1 \
+		~/.local/share/man/man5 \
+		~/.local/share/completion \
+		~/.local/share/zsh/site-functions
 }
 
 check_environment() {
@@ -51,8 +32,90 @@ check_environment() {
 	fi
 }
 
+install_bat() {
+	echo installing bat...
+
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sharkdp/bat/releases/latest |
+			jq --raw-output '.assets[] | select(.name | contains("x86_64-unknown-linux-'"${LIBC_VARIANT}"'.tar.gz")) | .browser_download_url'
+	)
+
+	TEMP_DIR="$(mktemp -d /tmp/bat-XXXXXXXX)"
+	mkdir -p "${TEMP_DIR}"
+
+	curl -fsSL "${DL}" | tar -xz --strip=1 --directory="${TEMP_DIR}"
+
+	mv "${TEMP_DIR}"/bat ~/.local/bin
+	mv "${TEMP_DIR}"/bat.1 ~/.local/share/man/man1 && gzip -f ~/.local/share/man/man1/bat.1
+	mv "${TEMP_DIR}"/autocomplete/bat.zsh ~/.local/share/zsh/site-functions/_bat
+	mv "${TEMP_DIR}"/autocomplete/bat.* ~/.local/share/completion
+
+	rm -rf "${TEMP_DIR}"
+
+	~/.local/bin/bat cache --build
+}
+
+install_exa() {
+	echo installing exa...
+
+	if [ "${LIBC_VARIANT}" = "musl" ]; then
+		DL=$(
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/ogham/exa/releases/latest |
+				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-musl-v")) .browser_download_url'
+		)
+	else
+		DL=$(
+			curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/ogham/exa/releases/latest |
+				jq --raw-output '.assets[] | select(.name | contains("linux-x86_64-v")) .browser_download_url'
+		)
+	fi
+
+	TEMP_DIR=$(mktemp -d /tmp/exa.XXXXXX)
+	cd "${TEMP_DIR}"
+	curl -fsSL -o exa.zip "$DL"
+	unzip -o exa.zip
+	mv bin/exa ~/.local/bin
+	mv man/exa.1 ~/.local/share/man/man1/
+	mv man/exa_colors.5 ~/.local/share/man/man5/
+	mv completions/exa.zsh ~/.local/share/zsh/site-functions/_exa
+	mv completions/exa.fish ~/.local/share/completion/exa.fish
+	mv completions/exa.bash ~/.local/share/completion/exa
+	cd -
+	rm -rf "${TEMP_DIR}"
+}
+
+install_fzf() {
+	cd ~/.local
+	curl -L "https://raw.githubusercontent.com/junegunn/fzf/master/install" | bash
+	cd -
+}
+
 update_mandb() {
-	mandb ~/.local/man
+	! command -v mandb || mandb ~/.local/share/man
+}
+
+install_neofetch() {
+	echo installing neofetch...
+
+	TEMP_DIR=$(mktemp -d /tmp/neofetch.XXXXXX)
+	curl -fsSL https://github.com/dylanaraps/neofetch/archive/refs/heads/master.tar.gz | tar -xz --strip=1 --directory="${TEMP_DIR}"
+
+	cd "$TEMP_DIR"
+	make install PREFIX=~/.local
+	cd -
+	rm -rf "$TEMP_DIR"
+}
+
+install_taskctl() {
+	echo installing taskctl...
+
+	TEMP_DIR=$(mktemp -d /tmp/taskctl.XXXXXX)
+	curl -fsSL https://github.com/taskctl/taskctl/releases/download/1.4.2/taskctl_1.4.2_linux_amd64.tar.gz | tar xvz --directory="${TEMP_DIR}"
+
+	mv "${TEMP_DIR}"/taskctl ~/.local/bin
+	mv "${TEMP_DIR}"/autocomplete/* ~/.local/share/completion/
+
+	rm -rf "$TEMP_DIR"
 }
 
 main
