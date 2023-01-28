@@ -2,6 +2,8 @@
 
 set -eu
 
+. /etc/os-release
+
 main() {
 	check_to_install_config_manager
 
@@ -12,8 +14,8 @@ main() {
 
 	# https://github.com/crystal-lang/crystal/wiki/All-required-libraries#fedora
 	ask_to_add_repo "Crystal lang" \
-		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_36/devel:languages:crystal.repo" \
-		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_36/repodata/repomd.xml.key" \
+		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_${VERSION_ID}/devel:languages:crystal.repo" \
+		"https://download.opensuse.org/repositories/devel:languages:crystal/Fedora_${VERSION_ID}/repodata/repomd.xml.key" \
 		"crystal gmp-devel libbsd-devel libedit-devel libevent-devel libxml2-devel libyaml-devel llvm-devel openssl-devel pcre-devel zlib-devel"
 
 	ask_to_add_repo "Docker CE" \
