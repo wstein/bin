@@ -65,8 +65,10 @@ create_settings_file() {
 			"shell_scripts": {
 				"location": "${SCRIPTS_DIR}"
 			},
-			"tools": {
-				"localize_tools": true
+			"network": {
+				"keystore": {
+					"location": "/etc/pki/java/cacerts"
+				}
 			}
 		}
 	EOF
