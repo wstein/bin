@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+
+set -eu
+
+# This script is used to install the ruby development environment
+# on a fresh Fedora 37 system.
+
+# Ugrade the system
+sudo dnf -y update
+
+# Install the Ruby environment tool rbenv
+sudo dnf install -y rbenv
+
+# Install the latest Ruby version
+rbenv install 3.1.2
+
+# Set the latest Ruby version as the default
+rbenv global 3.1.2
+
+
