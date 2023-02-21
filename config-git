@@ -25,6 +25,7 @@ main() {
 	git config --global --replace-all init.defaultBranch "main"
 	git config --global --replace-all merge.ff false
 	git config --global --replace-all pull.rebase true
+	git config --global --replace-all rebase.autoStash true
 	git config --global --replace-all user.email "${EMAIL:-${OLD_EMAIL}}"
 	git config --global --replace-all user.name "${NAME:-${OLD_NAME}}"
 
