@@ -16,8 +16,8 @@ install_jetbrains_tool() {
 	JB_DIR="$HOME/.local/share/JetBrains"
 	PRODUCT_DIR="${JB_DIR}/${Product}${MAJOR_VERSION}"
 
-	test -d "${HOME}/.local/bin" || mkdir --parents "${HOME}/.local/bin"
-	test -d "${PRODUCT_DIR}" || mkdir --parents "${PRODUCT_DIR}"
+	test -d "${HOME}/.local/bin" || mkdir -p "${HOME}/.local/bin"
+	test -d "${PRODUCT_DIR}" || mkdir -p "${PRODUCT_DIR}"
 
 	echo "Downloading ${DL_LINK}..."
 	curl -L "${DL_LINK}" | tar -xz --strip-components=1 -C "${PRODUCT_DIR}"

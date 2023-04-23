@@ -12,8 +12,8 @@ install_visual_paradigm() {
 	VP_DIR="${HOME}/.local/share/Visual_Paradigm"
 	TMP_DIR=$(mktemp -d /tmp/${PRODUCT}-XXXXXX)
 
-	test -d "${HOME}/.local/bin" || mkdir --parents "${HOME}/.local/bin"
-	test -d "${VP_DIR}" || mkdir --parents "${VP_DIR}"
+	test -d "${HOME}/.local/bin" || mkdir -p "${HOME}/.local/bin"
+	test -d "${VP_DIR}" || mkdir -p "${VP_DIR}"
 
 	echo "Downloading ${DL_LINK}..."
 	curl -L "${DL_LINK}" >${TMP_DIR}/vp.sh

@@ -44,7 +44,7 @@ set_aliases() {
 }
 
 link_foreign_configurations() {
-	[ -d $HOME/.local/share/JetBrains/Toolbox/ ] || mkdir --parents $HOME/.local/share/JetBrains/Toolbox/
+	[ -d $HOME/.local/share/JetBrains/Toolbox/ ] || mkdir -p $HOME/.local/share/JetBrains/Toolbox/
 	ln -sf $HOME/.config/JetBrains/Toolbox/.settings.json $HOME/.local/share/JetBrains/Toolbox/
 
 	ln -sf $HOME/.config/.byobu $HOME/
@@ -68,7 +68,7 @@ myalias() {
 
 install_zsh_antigen() {
 	echo "setting up Zsh Antigen..."
-	[ -d ~/.local/bin ] || mkdir --parents ~/.local/bin
+	[ -d ~/.local/bin ] || mkdir -p ~/.local/bin
 	curl https://raw.githubusercontent.com/zsh-users/antigen/master/bin/antigen.zsh >~/.local/bin/antigen.zsh
 }
 
