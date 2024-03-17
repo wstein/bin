@@ -8,7 +8,7 @@ main() {
 	setup_config_folder
 	install_zsh_antigen
 	link_foreign_configurations
-	setup_gems
+	#setup_gems
 	#install_asdf
 	set_aliases
 	install_nvim_plugins
