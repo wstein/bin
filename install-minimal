@@ -163,7 +163,7 @@ set_max_user_watches() {
 }
 
 get_packages_to_install() {
-	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl darkhttpd diffutils fd-find findutils fping git gnupg googler cloud-utils gzip htop inotify-tools iproute iptraf-ng jq libnsl lshw lz4 lzip lzop make mc net-snmp-utils nethogs mkpasswd moreutils pass patch procps pv qrencode ripgrep rlwrap rsync ruby sshpass sl sqlite socat sudo strace tar tig tmux unzip util-linux virt-what wget xmlstarlet xz zip zsh zstd"
+	PACKAGES="$@ bash-completion aria2 byobu bzip2 ctags curl darkhttpd diffutils exa fd-find findutils fping fzf git gnupg googler cloud-utils gzip htop inotify-tools iproute iptraf-ng jq libnsl lshw lz4 lzip lzop make mc net-snmp-utils nethogs mkpasswd moreutils pass patch procps pv qrencode ripgrep rlwrap rsync ruby sshpass sl sqlite socat sudo strace tar tig tmux unzip util-linux virt-what wget xmlstarlet xz zip zsh zstd"
 }
 
 install_packages() {
