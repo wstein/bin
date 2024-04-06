@@ -25,4 +25,4 @@ install_elm_format() {
 	curl -fsSL "${DL}" | tar xz --directory "${HOME}/.local/bin"
 }
 
-main
+main "$@"
