@@ -34,28 +34,7 @@ main() {
 	install_fossil
 	install_shellcheck
 	install_kitty_terminfo
-	check_katacoda_and_setup_code_server
 	set_max_user_watches
-}
-
-check_katacoda_and_setup_code_server() {
-	if [ -d /opt/.katacodacode ]; then
-		echo "Setting up code server..."
-
-		[ -d /opt/.katacodacode/user-data/User ] || $SUDO mkdir -p /opt/.katacodacode/user-data/User
-
-		# (replace) vscode setting with link
-		[ -f /opt/.katacodacode/user-data/User/settings.json ] && $SUDO rm /opt/.katacodacode/user-data/User/settings.json
-		$SUDO wget -P /opt/.katacodacode/user-data/User https://raw.githubusercontent.com/wstein/.config/main/Code/User/settings.json
-
-		# remove/replace incompatible extensions
-		$SUDO sed -i \
-			-e '/ms-vscode-remote.remote-/d' \
-			-e '/adamhartford.vscode-base64/d' \
-			-e '/DavidAnson.vscode-markdownlint/d' \
-			-e 's/CoenraadS.bracket-pair-colorizer-2/CoenraadS.bracket-pair-colorizer/' \
-			~/.config/.vscode/extensions.json
-	fi
 }
 
 install_csvq() {
