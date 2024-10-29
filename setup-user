@@ -15,7 +15,8 @@ main() {
 	set_aliases
 	install_nvim_plugins
 	setup_zsh
-	check_katacoda_and_setup_code_server
+	check_and_setup_code_server /opt/.katacodacode/user-data User
+	check_and_setup_code_server /home/codespace/.vscode-remote/data Machine
 }
 
 setup_config_folder() {
@@ -36,15 +37,17 @@ setup_config_folder() {
 	fi
 }
 
-check_katacoda_and_setup_code_server() {
-	if [ -d /opt/.katacodacode ]; then
-		echo "Setting up code server..."
+# $1: Code Server data folder
+# $2: User or Machine
+check_and_setup_code_server() {
+	if [ -d "$1" ]; then
+		echo "Setting up code server '$1'..."
 
-		[ -d /opt/.katacodacode/user-data/User ] || $SUDO mkdir -p /opt/.katacodacode/user-data/User
+		[ -d "$1" ] || $SUDO mkdir -p "$1/$2"
 
 		# (replace) vscode setting with link
-		[ -f /opt/.katacodacode/user-data/User/settings.json ] && $SUDO rm /opt/.katacodacode/user-data/User/settings.json
-		$SUDO wget -P /opt/.katacodacode/user-data/User https://raw.githubusercontent.com/wstein/.config/main/Code/User/settings.json
+		[ -f "$1/$2/settings.json" ] && $SUDO rm "$1/$2/settings.json"
+		$SUDO ln -s "$HOME/.config/Code/User/settings.json" "$1/$2/settings.json"
 
 		# remove/replace incompatible extensions
 		$SUDO sed -i \
