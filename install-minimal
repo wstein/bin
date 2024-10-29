@@ -25,22 +25,39 @@ echo
 SUDO=$(command -v sudo || true)
 
 main() {
+	determine_cpu_arch
 	get_packages_to_install "$@"
 	install_packages
 	install_git_extras_from_sources
 	install_csvq
 	install_oq
 	install_yj
-	install_fossil
 	install_shellcheck
 	install_kitty_terminfo
 	set_max_user_watches
 }
 
+determine_cpu_arch() {
+	case "$(uname -m)" in
+	aarch64)
+		ARCH0="aarch64"
+		ARCH1="arm64"
+		;;
+	x86_64)
+		ARCH0="x86_64"
+		ARCH1="amd64"
+		;;
+	*)
+		echo "Fatal Error: Unsupported CPU architecture!"
+		exit 1
+		;;
+	esac
+}
+
 install_csvq() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/mithrandie/csvq/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-amd")) | .browser_download_url'
+			jq --raw-output '.assets[] | select(.name | contains("linux-'${ARCH1}'")) | .browser_download_url'
 	)
 
 	TEMP=$(mktemp -d /tmp/csvq-XXXXXX)
@@ -56,42 +73,25 @@ install_csvq() {
 install_yj() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/sclevine/yj/releases/latest |
-			jq --raw-output '.assets[] | select(.name == "yj-linux-amd64") | .browser_download_url'
+			jq --raw-output '.assets[] | select(.name == "yj-linux-'${ARCH1}'") | .browser_download_url'
 	)
 
 	sudo curl -L -o /usr/local/bin/yj $DL
 	sudo chmod +x /usr/local/bin/yj
 }
 
-# install_ccat() {
-# 	DL=$(
-# 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/owenthereal/ccat/releases/latest |
-# 			jq --raw-output '.assets[] | select(.name | contains("linux-amd64")) .browser_download_url'
-# 	)
-
-# 	curl -L "$DL" | $SUDO tar xz --strip-components=1 --directory /usr/local/bin
-# }
-
-install_sqlite() {
-	if [ "${PKG_MANAGER}" = "apk" ]; then
-		apk --no-cache add sqlite
-	else
-		DL="https://sqlite.org/$(curl -fsSL https://sqlite.org/download.html | grep -E -o "2[0-9]{3}[/]sqlite-tools-linux-x86-.*[.]zip")"
-	fi
-
-	curl -L -o /tmp/sqlite.zip "${DL}"
-	$SUDO unzip -d /usr/local/bin -j /tmp/sqlite.zip
-	rm /tmp/sqlite.zip
-}
-
 install_oq() {
 	DL=$(
 		curl -fsSL -H "Accept: application/vnd.github.v3+json" -H "${CURL_AUTH}" https://api.github.com/repos/Blacksmoke16/oq/releases/latest |
-			jq --raw-output '.assets[] | select(.name | contains("linux-x86_64")) .browser_download_url'
+			jq --raw-output '.assets[] | select(.name | contains("linux-'${ARCH0}'")) .browser_download_url'
 	)
 
-	curl -fsSL "${DL}" | $SUDO dd of=/usr/local/bin/oq
-	$SUDO chmod +x /usr/local/bin/oq
+	if [ -z "$DL" ]; then
+		echo "Warning: Could not find a suitable "oq" release for your platform."
+	else
+		curl -fsSL "${DL}" | $SUDO dd of=/usr/local/bin/oq
+		$SUDO chmod +x /usr/local/bin/oq
+	fi
 }
 
 install_fossil() {
