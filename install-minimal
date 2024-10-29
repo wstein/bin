@@ -171,7 +171,7 @@ install_packages() {
 		PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<xz\>/xz-utils/' -e 's/\<(iproute|libnsl|darkhttpd|eza)\>//g' -e 's/\<ctags\>/universal-ctags/' -e 's/\<net-snmp-utils\>/snmp/' -e 's/\<mkpasswd\>/libstring-mkpasswd-perl/')
 		$SUDO apt -y install --no-install-recommends software-properties-common
 		if [ "$ID" = "ubuntu" ] && [ "$VERSION_MAJOR" -lt "18" -o "$VERSION_ID" = "18.04" ]; then
-			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<ripgrep\>//')
+			PACKAGES=$(echo $PACKAGES | sed -r -e 's/\<(ripgrep|fzf|fd-find|lz4|universal-ctags)\>//g')
 		fi
 		$SUDO apt -y install $PACKAGES bsdmainutils apt-file sqlite3-pcre
 		;;

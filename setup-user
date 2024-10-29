@@ -2,6 +2,8 @@
 
 set -eu
 
+SUDO="$(command -v sudo >/dev/null)"
+
 main() {
 	echo "finishing user configuration..."
 
