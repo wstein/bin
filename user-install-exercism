@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+
+set -eu
+
+main() {
+	determine_platform
+	install_exercism
+}
+
+determine_platform() {
+	case "$(uname -s)" in
+	Linux)
+		PLATFORM="linux"
+		;;
+	Darwin)
+		PLATFORM="darwin"
+		;;
+	*)
+		echo "Fatal Error: Unsupported OS!"
+		exit 1
+		;;
+	esac
+
+	case "$(uname -m)" in
+	aarch64)
+		PLATFORM="${PLATFORM}-arm64"
+		;;
+	x86_64)
+		PLATFORM="${PLATFORM}-x86_64"
+		;;
+	*)
+		echo "Fatal Error: Unsupported CPU architecture!"
+		exit 1
+		;;
+	esac
+}
+
+install_exercism() {
+	echo installing exercism...
+
+	DL=$(
+		curl -fsSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/exercism/cli/releases/latest |
+			jq --raw-output '.assets[] | select(.name | endswith("'${PLATFORM}'.tar.gz")) .browser_download_url'
+	)
+
+	curl -fsSL "${DL}" | tar xz --directory "${HOME}/.local/bin"
+}
+
+main "$@"
