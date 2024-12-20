@@ -32,6 +32,11 @@ main() {
 		"https://packages.microsoft.com/yumrepos/vscode/" \
 		"https://packages.microsoft.com/keys/microsoft.asc" \
 		"code"
+
+	setup_repo_and_install "Hashicorp Terraform" \
+		"https://rpm.releases.hashicorp.com/fedora/hashicorp.repo" \
+		"https://rpm.releases.hashicorp.com/gpg" \
+		"terraform"
 }
 
 # $1: product name
@@ -39,19 +44,12 @@ main() {
 # $3: repo gpg key url
 # $4: package(s)
 setup_repo_and_install() {
-	setup_repo "$1" "$2" "$3"
-	install_packages "$1" "$4"
-}
-
-# $1: product name
-# $2: repo url
-# $3: repo gpg key url
-setup_repo() {
 	printf "Do you want to setup the '%s' repository? [y/N] " "$1" && read -r answer
 	case "$answer" in
 	[yY][eE][sS] | [yY])
 		test -z "${3:-}" || sudo rpm --import "$3"
-		sudo dnf config-manager --add-repo "$2"
+		sudo dnf config-manager addrepo --from-repofile "$2"
+		install_packages "$1" "$4"
 		;;
 	*)
 		return 0
@@ -66,7 +64,7 @@ install_packages() {
 	case "$answer" in
 	[yY][eE][sS] | [yY] | "")
 		# shellcheck disable=SC2086
-		sudo dnf -y --quiet install $4
+		sudo dnf -y --quiet install $2
 		;;
 	esac
 }
@@ -77,7 +75,7 @@ check_to_install_config_manager() {
 		case "$answer" in
 		[yY][eE][sS] | [yY] | "")
 			echo "Installing dnf config-manager..."
-			sudo dnf -y --quiet install dnf-plugins-core
+			sudo dnf -y --quiet --setopt=install_weak_deps=0 install dnf-plugins-core
 			;;
 		*)
 			echo "Aborting..."
