@@ -75,7 +75,7 @@ check_to_install_config_manager() {
 		case "$answer" in
 		[yY][eE][sS] | [yY] | "")
 			echo "Installing dnf config-manager..."
-			sudo dnf -y --quiet install dnf-plugins-core
+			sudo dnf -y --quiet --setopt=install_weak_deps=0 install dnf-plugins-core
 			;;
 		*)
 			echo "Aborting..."
