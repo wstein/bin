@@ -64,7 +64,7 @@ install_packages() {
 	case "$answer" in
 	[yY][eE][sS] | [yY] | "")
 		# shellcheck disable=SC2086
-		sudo dnf -y --quiet install $4
+		sudo dnf -y --quiet install $2
 		;;
 	esac
 }
