@@ -13,7 +13,6 @@ main() {
 	#setup_gems
 	#install_asdf
 	set_aliases
-	install_nvim_plugins
 	setup_zsh
 	check_and_setup_code_server /opt/.katacodacode/user-data User
 	check_and_setup_code_server /home/codespace/.vscode-remote/data Machine
@@ -57,12 +56,6 @@ check_and_setup_code_server() {
 			-e 's/CoenraadS.bracket-pair-colorizer-2/CoenraadS.bracket-pair-colorizer/' \
 			~/.config/.vscode/extensions.json
 	fi
-}
-
-install_nvim_plugins() {
-	# download plug plugin
-	curl -fsSL --create-dirs -o $HOME/.local/share/nvim/site/autoload/plug.vim https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-	nvim '+PlugInstall | q | q'
 }
 
 set_aliases() {
