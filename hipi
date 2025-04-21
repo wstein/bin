@@ -22,8 +22,24 @@
 # @example Customize formatting with 3 digits per group, 4 columns per block
 #   $ hipi --group-size 3 --block-cols 4
 #
-# @author Werner Stein
-# @version 1.2.0
+# @example Customize digit grouping
+#   $ hipi -g 3 --bc 4
+#
+# @example Grid layout customization
+#   $ hipi -c 3 -r 2 --cs 5
+#
+# Format Hierarchy:
+# 1. Digits: Individual digits grouped by size (-g, --group-size)
+# 2. Blocks: Groups arranged in columns/rows (--bc/--br)
+# 3. Grid: Blocks arranged in columns/rows (-c/-r)
+#
+# Spacing Options:
+# - Between groups: --gs (group_spacing)
+# - Between lines: --ls (line_spacing)
+# - Between columns: --cs (col_spacing)
+# - Between rows: --rs (row_spacing)
+#
+# @version 1.3.1
 
 require 'bigdecimal'
 require 'bigdecimal/math'
@@ -36,8 +52,14 @@ require 'optparse'
 # @attr [Integer] block_rows Number of rows in each block
 # @attr [Integer] grid_cols Number of columns in the output grid
 # @attr [Integer] grid_rows Number of rows in the output grid
+# @attr [Integer] group_spacing Number of spaces between digit groups
+# @attr [Integer] line_spacing Number of empty lines between rows within blocks
+# @attr [Integer] col_spacing Number of spaces between columns in the grid
+# @attr [Integer] row_spacing Number of empty lines between grid rows
 PiOptions = Struct.new(:group_size, :block_cols,
                        :block_rows, :grid_cols, :grid_rows,
+                       :group_spacing, :line_spacing,
+                       :col_spacing, :row_spacing,
                        keyword_init: true)
 
 # Computes and formats π with high precision using BigDecimal
@@ -76,12 +98,9 @@ class HighPrecisionPiFormatter
   # Generates a header displaying information about the calculation
   # @return [String] A formatted header
   def generate_header
-    title = "Mathematical Representation of π (pi) to #{calculate_precision} decimal places"
-    [
-      "=" * title.length,
-      title,
-      "=" * title.length,
-    ].join("\n")
+    title = "Tabular Representation of π (pi) to #{calculate_precision} decimal places"
+    line = '=' * title.length
+    [line, title, line].join("\n")
   end
 
   # Calculates Pi to the required precision plus a buffer for rounding safety.
@@ -170,20 +189,33 @@ class HighPrecisionPiFormatter
       blocks << formatted_rows.join("\n")
     end
 
-    # Step 6: Join blocks with extra vertical space
-    blocks.join("\n\n")
+    # Step 6: Join blocks with appropriate row spacing
+    row_separator = "\n" * (@options.row_spacing + 1)
+    blocks.join(row_separator)
   end
 
   # Formats each row of digit groups with proper spacing
   # @param rows [Array<Array<String>>] Rows of digit groups
   # @return [Array<String>] Formatted rows with proper spacing
   def format_rows(rows)
-    rows.map do |row|
+    formatted_rows = rows.map do |row|
       if @options.grid_cols > 1
         format_row_with_segments(row)
       else
-        row.join(' ')
+        row.join(' ' * @options.group_spacing)
       end
+    end
+
+    # Add line spacing between rows if requested
+    if @options.line_spacing.positive?
+      result = []
+      formatted_rows.each_with_index do |row, index|
+        result << row
+        result.concat([' ' * 5] * @options.line_spacing) unless index == formatted_rows.size - 1
+      end
+      result
+    else
+      formatted_rows
     end
   end
 
@@ -192,54 +224,82 @@ class HighPrecisionPiFormatter
   # @return [String] Formatted row with segment spacing
   def format_row_with_segments(row)
     row.each_slice(@options.block_cols)
-       .map { |segment| segment.join(' ') }
-       .join('   ')
+       .map { |segment| segment.join(' ' * @options.group_spacing) }
+       .join(' ' * @options.col_spacing)
   end
 end
 
 # Parses command-line options and returns configuration
 # @return [PiOptions] An object containing the parsed command-line options
 def parse_options
-  options = PiOptions.new
-  # Default configuration values
-  options.group_size = 2
-  options.block_cols = 5
-  options.block_rows = 5
-  options.grid_cols = 5
-  options.grid_rows = 4
+  # Initialize with default configuration
+  opts = PiOptions.new(
+    {
+      group_size: 2,
+      block_cols: 5,
+      block_rows: 5,
+      grid_cols: 5,
+      grid_rows: 4,
+      group_spacing: 1,
+      line_spacing: 0,
+      col_spacing: 3,
+      row_spacing: 1
+    }
+  )
 
-  OptionParser.new do |opts|
-    opts.banner = "Usage: #{$PROGRAM_NAME} [options]"
+  parser = OptionParser.new do |o|
+    o.banner = "Usage: #{$PROGRAM_NAME} [options]"
 
-    opts.separator "\nDigit Grouping:"
-    opts.on('--group-size N', Integer, 'Digits per group (default: 2)') do |n|
-      options.group_size = n if n.positive?
+    o.separator "\nDigit Grouping:"
+    o.on('-g N', '--group-size N', Integer, "Digits per group (default: #{opts.group_size})") do |n|
+      opts.group_size = n if n.positive?
     end
 
-    opts.separator "\nBlock Layout:"
-    opts.on('--block-cols N', Integer, 'Groups per column in a block (default: 5)') do |n|
-      options.block_cols = n if n.positive?
+    o.separator "\nBlock Layout:"
+    o.on('--bc N', '--block-cols N', Integer,
+         "Groups per column in a block (default: #{opts.block_cols})") do |n|
+      opts.block_cols = n if n.positive?
     end
-    opts.on('--block-rows N', Integer, 'Rows per block (default: 5)') do |n|
-      options.block_rows = n if n.positive?
+    o.on('--br N', '--block-rows N', Integer, "Rows per block (default: #{opts.block_rows})") do |n|
+      opts.block_rows = n if n.positive?
+    end
+    o.on('--gs N', '--group-spacing N', Integer, "Spaces between digit groups (default: #{opts.group_spacing})") do |n|
+      opts.group_spacing = n if n >= 0
+    end
+    o.on('--ls N', '--line-spacing N', Integer, "Empty lines between rows (default: #{opts.line_spacing})") do |n|
+      opts.line_spacing = n if n >= 0
     end
 
-    opts.separator "\nGrid Layout:"
-    opts.on('--grid-cols N', Integer, 'Block columns in grid (default: 5)') do |n|
-      options.grid_cols = n if n.positive?
+    o.separator "\nGrid Layout:"
+    o.on('-c N', '--grid-cols N', Integer, "Block columns in grid (default: #{opts.grid_cols})") do |n|
+      opts.grid_cols = n if n.positive?
     end
-    opts.on('--grid-rows N', Integer, 'Block rows in grid (default: 4)') do |n|
-      options.grid_rows = n if n.positive?
+    o.on('-r N', '--grid-rows N', Integer, "Block rows in grid (default: #{opts.grid_rows})") do |n|
+      opts.grid_rows = n if n.positive?
+    end
+    o.on('--cs N', '--col-spacing N', Integer, "Spaces between columns in grid (default: #{opts.col_spacing})") do |n|
+      opts.col_spacing = n if n >= 0
+    end
+    o.on('--rs N', '--row-spacing N', Integer, "Empty lines between grid rows (default: #{opts.row_spacing})") do |n|
+      opts.row_spacing = n if n >= 0
     end
 
-    opts.separator "\nHelp:"
-    opts.on_tail('-h', '--help', 'Show this message') do
-      puts opts
+    o.separator "\nHelp:"
+    o.on_tail('-h', '--help', 'Show this message') do
+      puts o
       exit
     end
-  end.parse!
+  end
 
-  options
+  begin
+    parser.parse!
+  rescue OptionParser::InvalidOption => e
+    puts parser.help
+    warn "\nError: #{e.message}"
+    exit 1
+  end
+
+  opts
 end
 
 # Main execution logic
