@@ -1,0 +1,215 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# High Precision Pi Formatter
+#
+# A utility script for computing and formatting π (pi) with arbitrary precision.
+#
+# This script calculates π using Ruby's BigDecimal and BigMath libraries, then
+# formats the result into a hierarchical visual structure that makes large
+# numbers of digits easier to read and navigate.
+#
+# The formatting follows a hierarchical structure:
+#   - Digits are grouped (default: 2 digits per group)
+#   - Groups form segments (default: 5 groups per segment)
+#   - Segments form lines (default: 5 segments per line)
+#   - Lines form blocks (default: 5 lines per block)
+#
+# @example Basic usage with default settings (1000 decimal places)
+#   $ hipi
+#
+# @example Calculate pi to 100 decimal places
+#   $ hipi -p 100
+#
+# @example Customize formatting with 3 digits per group, 4 groups per segment
+#   $ hipi --group-size 3 --groups-per-segment 4
+#
+# @author Werner Stein
+# @version 1.0.0
+
+require 'bigdecimal'
+require 'bigdecimal/math'
+require 'optparse'
+
+# Holds configuration options for Pi calculation and formatting.
+# :precision - Number of decimal places.
+# :group_size - Digits per group.
+# :groups_per_line_segment - Groups per line segment.
+# :lines_per_block - Lines per block.
+# :segments_per_line - Segments per line.
+PiOptions = Struct.new(:precision, :group_size, :groups_per_line_segment,
+                       :lines_per_block, :segments_per_line,
+                       keyword_init: true)
+
+# Computes and formats π with high precision using BigDecimal
+class HighPrecisionPiFormatter
+  # @return [String] The calculated value of π as a string
+  attr_reader :pi
+
+  # @return [PiOptions] The formatting options
+  attr_reader :options
+
+  # @param options [PiOptions] A struct containing all formatting options
+  def initialize(options)
+    @options = options
+    @pi = calculate
+  end
+
+  # @return [String] The formatted π digits according to the defined options
+  def format
+    digits = @pi.sub(/^3\./, '')
+    format_digit_groups(digits)
+  end
+
+  private
+
+  # @return [String] π calculated to the specified precision
+  def calculate
+    BigMath.PI(@options.precision + 10).to_s('F')[0..@options.precision + 1]
+  end
+
+  # @param digits [String] The decimal digits of π (e.g., "14159...")
+  # @return [String] The fully formatted string, or an error message
+  def format_digit_groups(digits)
+    return error_message unless valid_parameters?
+
+    # Group digits according to the specified group size
+    digit_groups = group_digits(digits)
+
+    # Calculate formatting dimensions
+    groups_per_line = @options.groups_per_line_segment * @options.segments_per_line
+    groups_per_block = groups_per_line * @options.lines_per_block
+
+    # Format the digits into blocks, rows, and segments
+    format_blocks(digit_groups, groups_per_line, groups_per_block)
+  end
+
+  # @return [Boolean] whether all formatting parameters are positive
+  def valid_parameters?
+    @options.group_size.positive? &&
+      @options.groups_per_line_segment.positive? &&
+      @options.segments_per_line.positive? &&
+      @options.lines_per_block.positive?
+  end
+
+  # @return [String] error message for invalid parameters
+  def error_message
+    return 'Error: Group size must be positive.' unless @options.group_size.positive?
+
+    'Error: Formatting parameters must be positive.'
+  end
+
+  # @param digits [String] The raw digits to group
+  # @return [Array<String>] Array of digit groups of specified size
+  def group_digits(digits)
+    result = []
+    0.step(digits.length - 1, @options.group_size) do |i|
+      group = digits[i, @options.group_size]
+      result << group.ljust(@options.group_size)
+    end
+    result
+  end
+
+  # @param digit_groups [Array<String>] Groups of digits to format
+  # @param groups_per_line [Integer] Number of groups in each line
+  # @param groups_per_block [Integer] Number of groups in each block
+  # @return [String] Fully formatted string with proper spacing and line breaks
+  def format_blocks(digit_groups, groups_per_line, groups_per_block)
+    blocks = []
+    digit_groups.each_slice(groups_per_block) do |block_chunk|
+      # Pad the last block with spaces if needed
+      if block_chunk.size < groups_per_block
+        block_chunk = block_chunk.dup.fill(' ' * @options.group_size, block_chunk.size...groups_per_block)
+      end
+
+      rows = block_chunk.each_slice(groups_per_line).to_a
+      formatted_rows = format_rows(rows)
+      blocks << formatted_rows.join("\n")
+    end
+
+    blocks.join("\n\n")
+  end
+
+  # @param rows [Array<Array<String>>] Rows of digit groups
+  # @return [Array<String>] Formatted rows with proper spacing
+  def format_rows(rows)
+    rows.map do |row|
+      if @options.segments_per_line > 1
+        format_row_with_segments(row)
+      else
+        row.join(' ')
+      end
+    end
+  end
+
+  # @param row [Array<String>] A row of digit groups
+  # @return [String] Formatted row with segment spacing
+  def format_row_with_segments(row)
+    row.each_slice(@options.groups_per_line_segment)
+       .map { |segment| segment.join(' ') }
+       .join('   ')
+  end
+end
+
+# @return [PiOptions] An object containing the parsed command-line options
+def parse_options
+  options = PiOptions.new
+  options.precision = 1000
+  options.group_size = 2
+  options.groups_per_line_segment = 5
+  options.lines_per_block = 5
+  options.segments_per_line = 5
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: #{$PROGRAM_NAME} [options]"
+
+    opts.on('-p', '--precision PRECISION', Integer, 'Number of decimal places for Pi (default: 1000)') do |p|
+      options.precision = p if p.positive?
+    end
+
+    opts.on('--group-size SIZE', Integer, 'Number of digits per group (default: 2)') do |gs|
+      options.group_size = gs if gs.positive?
+    end
+
+    opts.on('--groups-per-segment COUNT', Integer, 'Number of digit groups per line segment (default: 5)') do |gps|
+      options.groups_per_line_segment = gps if gps.positive?
+    end
+
+    opts.on('--lines-per-block COUNT', Integer, 'Number of lines per block (default: 5)') do |lpb|
+      options.lines_per_block = lpb if lpb.positive?
+    end
+
+    opts.on('--segments-per-line COUNT', Integer, 'Number of segments per line (default: 5)') do |spl|
+      options.segments_per_line = spl if spl.positive?
+    end
+
+    opts.on_tail('-h', '--help', 'Show this message') do
+      puts opts
+      exit
+    end
+  end.parse!
+
+  options
+end
+
+# Main execution logic
+#
+# This method parses the command-line options, initializes the HighPrecisionPiFormatter
+# with the parsed options, and prints the formatted value of π.
+def main
+  options = parse_options
+  formatter = HighPrecisionPiFormatter.new(options)
+
+  puts "Pi to #{options.precision} decimal places:"
+  puts
+
+  formatted_pi = formatter.format
+  if formatted_pi.start_with?('Error:')
+    warn formatted_pi
+    exit(1)
+  end
+
+  puts formatted_pi
+end
+
+main if __FILE__ == $PROGRAM_NAME
