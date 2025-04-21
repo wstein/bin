@@ -13,6 +13,27 @@
 #   2. Blocks → Groups arranged into blocks (--block-cols × --block-rows)
 #   3. Grid → Blocks arranged in a grid layout (--grid-cols × --grid-rows)
 #
+# Format Hierarchy Visualization:
+#
+# Grid (--grid-cols × --grid-rows)
+# ┌────────────────┐ ┌────────────────┐
+# │    Block 1     │ │    Block 2     │
+# │ g1 g2 g3 g4 g5 │ │ g1 g2 g3 g4 g5 │
+# │ g6 g7 g8 g9 g0 │ │ g6 g7 g8 g9 g0 │
+# └────────────────┘ └────────────────┘
+# ┌────────────────┐ ┌────────────────┐
+# │    Block 3     │ │    Block 4     │
+# │ g1 g2 g3 g4 g5 │ │ g1 g2 g3 g4 g5 │
+# │ g6 g7 g8 g9 g0 │ │ g6 g7 g8 g9 g0 │
+# └────────────────┘ └────────────────┘
+#
+# Block Structure (--block-cols × --block-rows):
+#   g1 g2 g3 g4 g5    ← Groups per row (block_cols)
+#   g6 g7 g8 g9 g0    ← Multiple rows (block_rows)
+#
+# Group (--group-size):
+#   g1 = "14"         ← Digits per group
+#
 # The total precision is calculated as:
 #   group_size × block_cols × block_rows × grid_cols × grid_rows
 #
@@ -44,7 +65,7 @@
 #   $ hipi -g 3 --bc 4
 #
 # @example Grid layout customization
-#   $ hipi -c 3 -r 2 --cs 5
+#   $ hipi -c 3 -r 2 --cs 3
 #
 # Format Hierarchy:
 # 1. Digits: Individual digits grouped by size (-g, --group-size)
@@ -57,11 +78,13 @@
 # - Between columns: --cs (col_spacing)
 # - Between rows: --rs (row_spacing)
 #
-# @version 1.3.1
+# @version 1.3.2
 
 require 'bigdecimal'
 require 'bigdecimal/math'
 require 'optparse'
+
+VERSION = '1.3.2'
 
 # Holds configuration options for Pi calculation and formatting.
 # All parameters must be positive integers.
@@ -260,7 +283,7 @@ def parse_options
       grid_rows: 4,
       group_spacing: 1,
       line_spacing: 0,
-      col_spacing: 3,
+      col_spacing: 2,
       row_spacing: 1
     }
   )
@@ -303,6 +326,10 @@ def parse_options
     end
 
     o.separator "\nHelp:"
+    o.on_tail('-v', '--version', 'Show version') do
+      puts "High Precision Pi version #{VERSION}"
+      exit
+    end
     o.on_tail('-h', '--help', 'Show this message') do
       puts o
       exit
