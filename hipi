@@ -6,39 +6,38 @@
 # A utility script for computing and formatting π (pi) with arbitrary precision.
 #
 # This script calculates π using Ruby's BigDecimal and BigMath libraries, then
-# formats the result into a hierarchical visual structure that makes large
-# numbers of digits easier to read and navigate.
+# formats the result into a hierarchical visual structure for better readability.
 #
-# The formatting follows a hierarchical structure:
-#   - Digits are grouped (default: 2 digits per group)
-#   - Groups form segments (default: 5 groups per segment)
-#   - Segments form lines (default: 5 segments per line)
-#   - Lines form blocks (default: 5 lines per block)
+# The formatting follows a three-level hierarchy:
+#   1. Digits → Individual digits grouped together (--group-size)
+#   2. Blocks → Groups arranged into blocks (--block-cols × --block-rows)
+#   3. Grid → Blocks arranged in a grid layout (--grid-cols × --grid-rows)
 #
-# @example Basic usage with default settings (1000 decimal places)
+# The total precision is calculated as:
+#   group_size × block_cols × block_rows × grid_cols × grid_rows
+#
+# @example Basic usage with default settings
 #   $ hipi
 #
-# @example Calculate pi to 100 decimal places
-#   $ hipi -p 100
-#
-# @example Customize formatting with 3 digits per group, 4 groups per segment
-#   $ hipi --group-size 3 --groups-per-segment 4
+# @example Customize formatting with 3 digits per group, 4 columns per block
+#   $ hipi --group-size 3 --block-cols 4
 #
 # @author Werner Stein
-# @version 1.0.0
+# @version 1.2.0
 
 require 'bigdecimal'
 require 'bigdecimal/math'
 require 'optparse'
 
 # Holds configuration options for Pi calculation and formatting.
-# :precision - Number of decimal places.
-# :group_size - Digits per group.
-# :groups_per_line_segment - Groups per line segment.
-# :lines_per_block - Lines per block.
-# :segments_per_line - Segments per line.
-PiOptions = Struct.new(:precision, :group_size, :groups_per_line_segment,
-                       :lines_per_block, :segments_per_line,
+# All parameters must be positive integers.
+# @attr [Integer] group_size Number of digits per group
+# @attr [Integer] block_cols Number of digit groups in each column within a block
+# @attr [Integer] block_rows Number of rows in each block
+# @attr [Integer] grid_cols Number of columns in the output grid
+# @attr [Integer] grid_rows Number of rows in the output grid
+PiOptions = Struct.new(:group_size, :block_cols,
+                       :block_rows, :grid_cols, :grid_rows,
                        keyword_init: true)
 
 # Computes and formats π with high precision using BigDecimal
@@ -55,6 +54,17 @@ class HighPrecisionPiFormatter
     @pi = calculate
   end
 
+  # Formats π according to the defined options and returns the complete output
+  # including the header
+  # @return [String] The formatted π digits with header
+  def format_with_header
+    header = generate_header
+    digits = @pi.sub(/^3\./, '')
+    formatted_digits = format_digit_groups(digits)
+
+    [header, formatted_digits].join("\n\n")
+  end
+
   # @return [String] The formatted π digits according to the defined options
   def format
     digits = @pi.sub(/^3\./, '')
@@ -63,10 +73,30 @@ class HighPrecisionPiFormatter
 
   private
 
-  # @return [String] π calculated to the specified precision, which is truncated not rounded
-  # @note The precision is increased by 10 to ensure accuracy in the final result
+  # Generates a header displaying information about the calculation
+  # @return [String] A formatted header
+  def generate_header
+    title = "Mathematical Representation of π (pi) to #{calculate_precision} decimal places"
+    [
+      "=" * title.length,
+      title,
+      "=" * title.length,
+    ].join("\n")
+  end
+
+  # Calculates Pi to the required precision plus a buffer for rounding safety.
+  # @return [String] Pi as a string, including "3." and the specified number of decimal places.
   def calculate
-    BigMath.PI(@options.precision + 10).to_s('F')[0..@options.precision + 1]
+    # Calculate precision based on the display parameters
+    precision = calculate_precision
+    # Calculate with a buffer and truncate to the exact precision required
+    BigMath.PI(precision + 10).to_s('F')[0..precision + 1]
+  end
+
+  # Calculate required precision based on display parameters
+  # @return [Integer] The calculated precision
+  def calculate_precision
+    @options.group_size * @options.block_cols * @options.block_rows * @options.grid_cols * @options.grid_rows
   end
 
   # @param digits [String] The decimal digits of π (e.g., "14159...")
@@ -74,26 +104,28 @@ class HighPrecisionPiFormatter
   def format_digit_groups(digits)
     return error_message unless valid_parameters?
 
-    # Group digits using more efficient scan method
+    # Group digits using efficient scan method
     digit_groups = digits.scan(/.{1,#{@options.group_size}}/)
                          .map { |group| group.ljust(@options.group_size) }
 
     # Calculate formatting dimensions
-    groups_per_line = @options.groups_per_line_segment * @options.segments_per_line
-    groups_per_block = groups_per_line * @options.lines_per_block
+    groups_per_line = @options.block_cols * @options.grid_cols
+    groups_per_block = groups_per_line * @options.block_rows
 
     # Format the digits into blocks, rows, and segments
     format_blocks(digit_groups, groups_per_line, groups_per_block)
   end
 
+  # Validates that all formatting parameters are positive
   # @return [Boolean] whether all formatting parameters are positive
   def valid_parameters?
     @options.group_size.positive? &&
-      @options.groups_per_line_segment.positive? &&
-      @options.segments_per_line.positive? &&
-      @options.lines_per_block.positive?
+      @options.block_cols.positive? &&
+      @options.grid_cols.positive? &&
+      @options.block_rows.positive?
   end
 
+  # Generates an appropriate error message for invalid parameters
   # @return [String] error message for invalid parameters
   def error_message
     return 'Error: Group size must be positive.' unless @options.group_size.positive?
@@ -101,37 +133,53 @@ class HighPrecisionPiFormatter
     'Error: Formatting parameters must be positive.'
   end
 
+  # Formats the digit groups into a hierarchical structure of blocks, rows, and columns
+  #
+  # Formatting Algorithm:
+  # 1. Group digits into blocks based on the specified dimensions
+  # 2. Divide digit groups into lines based on the block_cols parameter
+  # 3. Segment these lines into columns for the grid layout
+  # 4. Transpose to ensure proper vertical alignment
+  # 5. Arrange blocks with appropriate spacing (both horizontal and vertical)
+  # 6. Add extra spacing between grid columns for visual separation
+  #
   # @param digit_groups [Array<String>] Groups of digits to format
   # @param groups_per_line [Integer] Number of groups in each line
   # @param groups_per_block [Integer] Number of groups in each block
   # @return [String] Fully formatted string with proper spacing and line breaks
   def format_blocks(digit_groups, groups_per_line, groups_per_block)
-    sliced_by_lines = digit_groups.each_slice(@options.groups_per_line_segment).to_a
-    segmented_columns = sliced_by_lines.each_slice(sliced_by_lines.size / @options.segments_per_line).to_a
+    # Step 1: Divide the digit groups into lines based on block columns
+    sliced_by_lines = digit_groups.each_slice(@options.block_cols).to_a
 
-    # This transposition ensures columns are aligned vertically in the output
+    # Step 2: Segment the lines into columns for horizontal arrangement
+    segmented_columns = sliced_by_lines.each_slice(sliced_by_lines.size / @options.grid_cols).to_a
+
+    # Step 3: Transpose and flatten to get the correct reading order
     digit_groups = segmented_columns.empty? ? [] : segmented_columns.transpose.flatten
 
     blocks = []
     digit_groups.each_slice(groups_per_block) do |block_chunk|
-      # Pad the last block with spaces if needed
+      # Step 4: Pad the last block with spaces if needed for consistent formatting
       if block_chunk.size < groups_per_block
         block_chunk = block_chunk.dup.fill(' ' * @options.group_size, block_chunk.size...groups_per_block)
       end
 
+      # Step 5: Format rows within each block
       rows = block_chunk.each_slice(groups_per_line).to_a
       formatted_rows = format_rows(rows)
       blocks << formatted_rows.join("\n")
     end
 
+    # Step 6: Join blocks with extra vertical space
     blocks.join("\n\n")
   end
 
+  # Formats each row of digit groups with proper spacing
   # @param rows [Array<Array<String>>] Rows of digit groups
   # @return [Array<String>] Formatted rows with proper spacing
   def format_rows(rows)
     rows.map do |row|
-      if @options.segments_per_line > 1
+      if @options.grid_cols > 1
         format_row_with_segments(row)
       else
         row.join(' ')
@@ -139,47 +187,52 @@ class HighPrecisionPiFormatter
     end
   end
 
+  # Formats a row with additional segment spacing when multiple columns are used
   # @param row [Array<String>] A row of digit groups
   # @return [String] Formatted row with segment spacing
   def format_row_with_segments(row)
-    row.each_slice(@options.groups_per_line_segment)
+    row.each_slice(@options.block_cols)
        .map { |segment| segment.join(' ') }
        .join('   ')
   end
 end
 
+# Parses command-line options and returns configuration
 # @return [PiOptions] An object containing the parsed command-line options
 def parse_options
   options = PiOptions.new
-  options.precision = 1000
+  # Default configuration values
   options.group_size = 2
-  options.groups_per_line_segment = 5
-  options.lines_per_block = 5
-  options.segments_per_line = 5
+  options.block_cols = 5
+  options.block_rows = 5
+  options.grid_cols = 5
+  options.grid_rows = 4
 
   OptionParser.new do |opts|
     opts.banner = "Usage: #{$PROGRAM_NAME} [options]"
 
-    opts.on('-p', '--precision PRECISION', Integer, 'Number of decimal places for Pi (default: 1000)') do |p|
-      options.precision = p if p.positive?
+    opts.separator "\nDigit Grouping:"
+    opts.on('--group-size N', Integer, 'Digits per group (default: 2)') do |n|
+      options.group_size = n if n.positive?
     end
 
-    opts.on('--group-size SIZE', Integer, 'Number of digits per group (default: 2)') do |gs|
-      options.group_size = gs if gs.positive?
+    opts.separator "\nBlock Layout:"
+    opts.on('--block-cols N', Integer, 'Groups per column in a block (default: 5)') do |n|
+      options.block_cols = n if n.positive?
+    end
+    opts.on('--block-rows N', Integer, 'Rows per block (default: 5)') do |n|
+      options.block_rows = n if n.positive?
     end
 
-    opts.on('--groups-per-segment COUNT', Integer, 'Number of digit groups per line segment (default: 5)') do |gps|
-      options.groups_per_line_segment = gps if gps.positive?
+    opts.separator "\nGrid Layout:"
+    opts.on('--grid-cols N', Integer, 'Block columns in grid (default: 5)') do |n|
+      options.grid_cols = n if n.positive?
+    end
+    opts.on('--grid-rows N', Integer, 'Block rows in grid (default: 4)') do |n|
+      options.grid_rows = n if n.positive?
     end
 
-    opts.on('--lines-per-block COUNT', Integer, 'Number of lines per block (default: 5)') do |lpb|
-      options.lines_per_block = lpb if lpb.positive?
-    end
-
-    opts.on('--segments-per-line COUNT', Integer, 'Number of segments per line (default: 5)') do |spl|
-      options.segments_per_line = spl if spl.positive?
-    end
-
+    opts.separator "\nHelp:"
     opts.on_tail('-h', '--help', 'Show this message') do
       puts opts
       exit
@@ -192,21 +245,19 @@ end
 # Main execution logic
 #
 # This method parses the command-line options, initializes the HighPrecisionPiFormatter
-# with the parsed options, and prints the formatted value of π.
+# with the parsed options, and prints the formatted value of π along with the header.
 def main
   options = parse_options
   formatter = HighPrecisionPiFormatter.new(options)
 
-  puts "Pi to #{options.precision} decimal places:"
-  puts
-
-  formatted_pi = formatter.format
-  if formatted_pi.start_with?('Error:')
-    warn formatted_pi
+  # Use the formatter to get the formatted output with header
+  formatted_output = formatter.format_with_header
+  if formatted_output.start_with?('Error:')
+    warn formatted_output
     exit(1)
   end
 
-  puts formatted_pi
+  puts formatted_output
 end
 
 main if __FILE__ == $PROGRAM_NAME
