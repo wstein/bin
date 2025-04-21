@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 
 # good fonts:'Big Money-ne', dotmatrix, doh, Electronic
 

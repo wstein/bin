@@ -7,6 +7,6 @@ end
 
 Transposed = FingerprintsArray.transpose
 Hashes = Transposed[0].map(&:split).map { |piece| "#{piece[1]} #{piece[3]}" }
-AsciiArt = Transposed[1..-1].map { |lines| lines.join(' ') }
+AsciiArt = Transposed[1..].map { |lines| lines.join(' ') }
 
 puts AsciiArt, "\n", Hashes, "\n"
