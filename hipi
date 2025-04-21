@@ -63,7 +63,8 @@ class HighPrecisionPiFormatter
 
   private
 
-  # @return [String] π calculated to the specified precision
+  # @return [String] π calculated to the specified precision, which is truncated not rounded
+  # @note The precision is increased by 10 to ensure accuracy in the final result
   def calculate
     BigMath.PI(@options.precision + 10).to_s('F')[0..@options.precision + 1]
   end
@@ -73,8 +74,9 @@ class HighPrecisionPiFormatter
   def format_digit_groups(digits)
     return error_message unless valid_parameters?
 
-    # Group digits according to the specified group size
-    digit_groups = group_digits(digits)
+    # Group digits using more efficient scan method
+    digit_groups = digits.scan(/.{1,#{@options.group_size}}/)
+                         .map { |group| group.ljust(@options.group_size) }
 
     # Calculate formatting dimensions
     groups_per_line = @options.groups_per_line_segment * @options.segments_per_line
@@ -99,22 +101,17 @@ class HighPrecisionPiFormatter
     'Error: Formatting parameters must be positive.'
   end
 
-  # @param digits [String] The raw digits to group
-  # @return [Array<String>] Array of digit groups of specified size
-  def group_digits(digits)
-    result = []
-    0.step(digits.length - 1, @options.group_size) do |i|
-      group = digits[i, @options.group_size]
-      result << group.ljust(@options.group_size)
-    end
-    result
-  end
-
   # @param digit_groups [Array<String>] Groups of digits to format
   # @param groups_per_line [Integer] Number of groups in each line
   # @param groups_per_block [Integer] Number of groups in each block
   # @return [String] Fully formatted string with proper spacing and line breaks
   def format_blocks(digit_groups, groups_per_line, groups_per_block)
+    sliced_by_lines = digit_groups.each_slice(@options.groups_per_line_segment).to_a
+    segmented_columns = sliced_by_lines.each_slice(sliced_by_lines.size / @options.segments_per_line).to_a
+
+    # This transposition ensures columns are aligned vertically in the output
+    digit_groups = segmented_columns.empty? ? [] : segmented_columns.transpose.flatten
+
     blocks = []
     digit_groups.each_slice(groups_per_block) do |block_chunk|
       # Pad the last block with spaces if needed
