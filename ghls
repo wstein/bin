@@ -1,0 +1,1060 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'net/https'
+require 'json'
+require 'uri'
+require 'optparse'
+require 'time'
+require 'fileutils'
+
+# Configuration class for handling command-line arguments and options
+# Responsible for parsing arguments and loading GitHub tokens from environment
+class Configuration
+  attr_reader :show_directories_only, :include_directories, :token, :verbose,
+              :markdown, :glob_pattern, :repo_url, :output_format, :language_filter
+
+  def initialize
+    @show_directories_only = false
+    @include_directories = false
+    @token = nil
+    @verbose = false
+    @markdown = false
+    @output_format = 'terminal'
+    @glob_pattern = nil
+    @repo_url = nil
+    @language_filter = nil
+  end
+
+  def parse_arguments
+    optparser = create_option_parser
+
+    begin
+      process_command_line_arguments(optparser)
+      load_token_from_environment if @token.nil?
+    rescue OptionParser::InvalidOption => e
+      handle_invalid_option(e, optparser)
+    end
+  end
+
+  def process_command_line_arguments(optparser)
+    optparser.parse!
+    @repo_url = ARGV[0]
+
+    if @repo_url.nil? || @repo_url.empty?
+      puts 'Please provide a GitHub repository URL'
+      puts optparser
+      exit
+    end
+
+    process_file_filter
+  end
+
+  def process_file_filter
+    @glob_pattern = ARGV[1] if ARGV.length > 1
+    puts "Using file filter: #{@glob_pattern}" if @glob_pattern && @verbose
+  end
+
+  def handle_invalid_option(error, optparser)
+    puts error.message
+    puts optparser
+    exit 1
+  end
+
+  private
+
+  def create_option_parser
+    OptionParser.new do |opts|
+      opts.banner = 'Usage: repofiles [options] repository_url [glob_pattern]'
+
+      opts.on('-d', '--show-directories', 'Show only directories, not files') do
+        @show_directories_only = true
+      end
+
+      opts.on('-a', '--all', 'Show both files and directories (default: files only)') do
+        @include_directories = true
+      end
+
+      opts.on('-m', '--markdown', 'Output in markdown format') do
+        @markdown = true
+        @output_format = 'markdown'
+      end
+
+      opts.on('--token TOKEN', 'GitHub API token for authentication') do |token|
+        @token = token
+      end
+
+      opts.on('-v', '--verbose', 'Show more detailed information') do
+        @verbose = true
+      end
+
+      opts.on('-l', '--language LANG', 'Filter by programming language') do |lang|
+        @language_filter = lang
+      end
+
+      opts.on('-h', '--help', 'Show this help message') do
+        puts opts
+        exit
+      end
+    end
+  end
+
+  def load_token_from_environment
+    # Check environment variable
+    @token = ENV['GITHUB_TOKEN']
+
+    # Try to load from .env file if token still not found
+    return unless @token.nil? && File.exist?('.env')
+
+    File.readlines('.env').each do |line|
+      if line.start_with?('GITHUB_TOKEN=')
+        @token = line.split('=')[1].strip
+        break
+      end
+    end
+  end
+end
+
+# GitHub API client for interacting with the GitHub API
+# Responsible for fetching repository files, raw content, and user repositories
+class GitHubApiClient
+  def initialize(config)
+    @config = config
+  end
+
+  def list_repository_files
+    # For raw file content fetch, parse the URL differently
+    if has_file_path_in_url?
+      parts = @config.repo_url.split('/')
+      username = parts[0]
+      repo_name = parts[1]
+      file_path = parts[2..].join('/')
+
+      return fetch_raw_file_content(username, repo_name, file_path)
+    end
+
+    # Regular repository listing flow
+    username, repo_name = parse_repo_url(@config.repo_url)
+
+    # If only username is provided, list the user's repositories instead
+    return list_user_repositories(username) if username && repo_name.nil?
+
+    # Safety check - ensure username and repo_name are not nil
+    if username.nil? || repo_name.nil?
+      puts "Error: Could not parse repository URL: #{@config.repo_url}"
+      puts 'Expected format: username/repo or https://github.com/username/repo'
+      return nil
+    end
+
+    fetch_repository_tree(username, repo_name)
+  end
+
+  def has_file_path_in_url?
+    @config.repo_url.split('/').length >= 3
+  end
+
+  def fetch_repository_tree(username, repo_name)
+    api_url = "https://api.github.com/repos/#{username}/#{repo_name}/git/trees/HEAD?recursive=1"
+    response = make_api_request(api_url)
+
+    # Process successful response
+    if response.is_a?(Net::HTTPSuccess)
+      process_api_response(response, username, repo_name)
+    else
+      puts "Error fetching repository: #{response.code} #{response.message}"
+      nil
+    end
+  end
+
+  def fetch_raw_file_content(username, repo_name, file_path)
+    puts "Fetching repository: #{username}/#{repo_name}/#{file_path}" if @config.verbose
+
+    # Properly URI encode the file path to handle spaces and special characters
+    # Use %20 for spaces (not +) as GitHub URLs require %20 encoding for spaces
+    encoded_file_path = file_path.split('/').map do |part|
+      URI.encode_www_form_component(part).gsub('+', '%20')
+    end.join('/')
+
+    # Try with HEAD branch first
+    result = fetch_content_with_branch(username, repo_name, encoded_file_path, 'HEAD')
+
+    if result.nil?
+      puts 'Error fetching file content'
+      puts "Path: #{username}/#{repo_name}/#{file_path}"
+    end
+
+    result
+  end
+
+  def fetch_content_with_branch(username, repo_name, file_path, branch)
+    # Create raw content URL - ensure proper path construction
+    raw_url = "https://raw.githubusercontent.com/#{username}/#{repo_name}/#{branch}/#{file_path}"
+    puts "Requesting raw content: #{raw_url}" if @config.verbose
+
+    # Make the API request
+    uri = URI(raw_url)
+    https = Net::HTTP.new(uri.host, 443)
+    https.use_ssl = true
+
+    request = Net::HTTP::Get.new(uri.request_uri)
+    request['Authorization'] = "Bearer #{@config.token}" if @config.token && !@config.token.empty?
+
+    response = https.request(request)
+
+    if response.is_a?(Net::HTTPSuccess)
+      {
+        raw_content: true,
+        content: response.body,
+        file_path: file_path,
+        username: username,
+        repo_name: repo_name
+      }
+    else
+      puts "Failed with branch #{branch}: #{response.code} #{response.message}" if @config.verbose
+      nil
+    end
+  end
+
+  def list_user_repositories(username)
+    api_url = "https://api.github.com/users/#{username}/repos?per_page=100&sort=updated"
+    puts "Debug: API URL - #{api_url}" if @config.verbose
+    response = make_api_request(api_url)
+    puts "Debug: API Response - #{response.body}" if @config.verbose
+
+    # Process successful response
+    if response.is_a?(Net::HTTPSuccess)
+      repos_data = JSON.parse(response.body)
+      puts "Debug: Repositories Data - #{repos_data}" if @config.verbose
+
+      return process_user_repos(repos_data, username) if repos_data.is_a?(Array) && !repos_data.empty?
+
+      puts "No repositories found for user: #{username}"
+
+    else
+      puts "Error fetching repositories: #{response.code} #{response.message}"
+    end
+    nil
+  end
+
+  private
+
+  def parse_repo_url(repo_url)
+    # Check if this is just a username (no slash)
+    return repo_url, nil if repo_url.match?(%r{^[^/]+$}) && !repo_url.include?('http')
+
+    # Detect if the input is in "username/repo" format instead of a full URL
+    if repo_url.match?(%r{^[^/]+/[^/]+$}) && !repo_url.include?('http')
+      parts = repo_url.split('/')
+      [parts[0], parts[1]]
+    else
+      # Parse as full URL
+      uri = URI(repo_url)
+      parts = uri.path.split('/')
+      # Handle case where URL is github.com/username with no repo
+      return parts[1], nil if parts.length < 3 || parts[2].empty?
+
+      [parts[1], parts[2]]
+    end
+  end
+
+  def make_api_request(url)
+    uri = URI(url)
+    https = Net::HTTP.new(uri.host, 443)
+    https.use_ssl = true
+
+    # Create request with proper authorization
+    response = make_http_request(https, uri)
+
+    # Handle redirect
+    response = handle_redirect(response) if %w[301 302].include?(response.code)
+
+    # Display rate limit info after API requests
+    display_rate_limit(response.to_hash)
+
+    response
+  end
+
+  def handle_redirect(response)
+    redirect_url = response['location']
+    puts "Redirected to: #{redirect_url}" if @config.verbose
+
+    uri = URI(redirect_url)
+    https = Net::HTTP.new(uri.host, 443)
+    https.use_ssl = true
+    make_http_request(https, uri)
+  end
+
+  def make_http_request(http, uri)
+    request = Net::HTTP::Get.new(uri.request_uri)
+    request['Authorization'] = "Bearer #{@config.token}" if @config.token && !@config.token.empty?
+
+    puts "API Request: #{uri}" if @config.verbose
+    response = http.request(request)
+    puts "Response Status: #{response.code}" if @config.verbose
+
+    response
+  end
+
+  def process_api_response(response, username, repo_name)
+    tree_data = JSON.parse(response.body)
+
+    # Get real username/repo from API URL and commit SHA
+    real_username, real_repo_name = extract_repo_details(tree_data, username, repo_name)
+    commit_sha = extract_commit_sha(tree_data)
+
+    # Print debug information if in verbose mode
+    log_repo_details(real_username, real_repo_name, commit_sha, tree_data)
+
+    # Extract files with their details
+    if tree_data['tree']
+      files = extract_files(tree_data['tree'])
+
+      {
+        files: files,
+        username: real_username,
+        repo_name: real_repo_name,
+        commit: commit_sha
+      }
+    else
+      puts 'No file tree found in response'
+      nil
+    end
+  end
+
+  def extract_commit_sha(tree_data)
+    tree_data['sha'] || 'Unknown'
+  end
+
+  def log_repo_details(real_username, real_repo_name, commit_sha, tree_data)
+    return unless @config.verbose
+
+    puts "Real Username: #{real_username}"
+    puts "Real Repository Name: #{real_repo_name}"
+    puts "Commit SHA: #{commit_sha}"
+    puts "Tree truncated: #{tree_data['truncated'] || false}"
+  end
+
+  def process_user_repos(repos_data, username)
+    # Transform the repos data into a format similar to files
+    repos = repos_data.map do |repo|
+      {
+        type: 'repo',
+        path: repo['name'],
+        size: repo['size'] * 1024, # GitHub API returns size in KB
+        extension: 'repository',
+        sha: repo['default_branch'],
+        mode: repo['private'] ? 'private' : 'public',
+        description: repo['description'],
+        url: repo['html_url'],
+        stars: repo['stargazers_count'],
+        forks: repo['forks_count'],
+        updated_at: repo['updated_at'],
+        language: repo['language'],
+        created_at: repo['created_at']
+      }
+    end
+
+    {
+      repos: repos,
+      username: username,
+      is_repo_list: true
+    }
+  end
+
+  def extract_repo_details(tree_data, username, repo_name)
+    real_username = username
+    real_repo_name = repo_name
+
+    # Try to get more accurate repo information from any available fields
+    if tree_data['url']
+      repo_url_parts = tree_data['url'].split('/')
+      if repo_url_parts.length >= 5
+        idx = repo_url_parts.index('repos')
+        if idx && idx + 2 < repo_url_parts.length
+          real_username = repo_url_parts[idx + 1]
+          real_repo_name = repo_url_parts[idx + 2]
+        end
+      end
+    end
+
+    [real_username, real_repo_name]
+  end
+
+  def extract_files(tree_items)
+    # Filter items based on the configuration options
+    filtered_items = filter_items_by_type(tree_items)
+
+    # Map the filtered items to our file info format
+    filtered_items.map do |item|
+      create_file_info(item)
+    end
+  end
+
+  def filter_items_by_type(tree_items)
+    if @config.show_directories_only
+      # Show only directories
+      tree_items.select { |item| item['type'] == 'tree' }
+    elsif !@config.include_directories
+      # Default behavior: show only files (not directories)
+      tree_items.select { |item| item['type'] == 'blob' }
+    else
+      # Include both files and directories
+      tree_items
+    end
+  end
+
+  def create_file_info(item)
+    file_info = {
+      type: item['type'],
+      size: item['size'] || 0,
+      path: item['path'],
+      mode: item['mode'],
+      sha: item['sha']
+    }
+
+    # Add file extension information
+    file_info[:extension] = determine_extension(item)
+
+    file_info
+  end
+
+  def determine_extension(item)
+    if item['type'] == 'blob'
+      ext = File.extname(item['path']).downcase
+      ext.empty? ? '(no extension)' : ext
+    else
+      'directory'
+    end
+  end
+
+  def display_rate_limit(headers)
+    rate_limit = headers['x-ratelimit-limit']
+    rate_remaining = headers['x-ratelimit-remaining']
+    rate_reset = headers['x-ratelimit-reset']
+
+    if rate_limit && rate_remaining && rate_reset
+      reset_time = Time.at(rate_reset.first.to_i)
+      puts "\n--- Rate Limit Info ---"
+      puts "Limit: #{rate_limit.first}"
+      puts "Remaining: #{rate_remaining.first}"
+      puts "Reset At (UTC): #{reset_time}"
+      puts '-------------------------'
+    else
+      puts "\n--- Rate Limit Info Not Found in Headers ---"
+      puts '---------------------------------------------'
+    end
+  end
+end
+
+class FileFormatter
+  def initialize(config)
+    @config = config
+  end
+
+  def display_files(result)
+    return unless result
+
+    # Check if this is raw file content
+    if result[:raw_content]
+      display_raw_content(result)
+      return
+    end
+
+    # Check if this is a repository list or file list
+    if result[:is_repo_list]
+      display_repository_list(result)
+      return
+    end
+
+    real_repo_url = "https://github.com/#{result[:username]}/#{result[:repo_name]}"
+
+    # Apply glob filter if provided
+    files = filter_by_glob_pattern(result[:files], @config.glob_pattern)
+
+    # Sort files consistently across all formats - directories first, then alphabetically by path
+    sorted_files = sort_files(files)
+
+    puts "\nRepository: #{real_repo_url} (#{result[:commit]})"
+    puts "Filter: #{@config.glob_pattern}" if @config.glob_pattern
+    case @config.output_format
+    when 'markdown'
+      # For markdown output, only display the header line and the file table
+      display_files_markdown(sorted_files, result[:username], result[:repo_name])
+    else
+      # For normal output, display with terminal styling and summaries
+      puts '------------------------------------------------------------'
+      display_files_ls_style(sorted_files, result[:username])
+    end
+  end
+
+  def display_raw_content(result)
+    # Only show this message in verbose mode
+    puts "Fetching repository: #{result[:username]}/#{result[:repo_name]}/#{result[:file_path]}" if @config.verbose
+
+    # Always show the content
+    puts result[:content]
+  end
+
+  def display_repository_list(result)
+    username = result[:username]
+    repos = result[:repos]
+
+    case @config.output_format
+    when 'markdown'
+      display_repos_markdown(repos, username)
+    else
+      # Terminal output
+      display_repos_terminal(repos, username)
+    end
+  end
+
+  def display_repos_terminal(repos, username)
+    # Apply language filter if specified
+    repos = filter_repos_by_language(repos)
+
+    print_repository_header(repos, username)
+
+    # Define column widths
+    column_widths = calculate_column_widths(repos)
+
+    # Print table headers
+    print_table_headers(column_widths)
+
+    # Sort by last updated and print each repository
+    sorted_repos = repos.sort_by { |repo| repo[:updated_at] }.reverse
+    sorted_repos.each do |repo|
+      print_repository_row(repo, column_widths)
+    end
+
+    # Display summary info
+    print_repository_summary(repos)
+  end
+
+  def filter_repos_by_language(repos)
+    return repos unless @config.language_filter
+
+    repos.select { |repo| repo[:language]&.downcase == @config.language_filter.downcase }
+  end
+
+  def print_repository_header(repos, username)
+    if @config.language_filter
+      original_count = repos.length
+      filtered_count = repos.select { |repo| repo[:language]&.downcase == @config.language_filter.downcase }.length
+      puts "\nRepositories for #{username} " \
+           "(#{filtered_count}/#{original_count} repos found matching language: " \
+           "#{@config.language_filter})"
+    else
+      puts "\nRepositories for #{username} (#{repos.length} repos found)"
+    end
+
+    puts '------------------------------------------------------------'
+  end
+
+  def calculate_column_widths(repos)
+    # Define fixed column widths
+    widths = {
+      name_width: 28,
+      info_width: 20,
+      stars_width: 10,
+      size_width: 12,
+      date_width: 10,
+      desc_width: 132
+    }
+
+    # Adjust name width based on content
+    max_name_length = repos.map { |r| r[:path].length }.max || 0
+    widths[:name_width] = max_name_length + 5 if max_name_length > widths[:name_width] - 3
+
+    widths
+  end
+
+  def print_table_headers(widths)
+    name_header = 'Name'.ljust(widths[:name_width])
+    info_header = 'Information'.ljust(widths[:info_width])
+    stars_header = 'Stars'.rjust(widths[:stars_width])
+    size_header = 'Size'.rjust(widths[:size_width])
+    created_header = 'Created'.center(widths[:date_width])
+    updated_header = 'Updated'.center(widths[:date_width])
+    desc_header = 'Description'.ljust(widths[:desc_width])
+
+    # Print header with consistent widths
+    puts "  #{name_header}  #{info_header}  #{stars_header}  #{size_header}  " \
+         "#{created_header}  #{updated_header}  #{desc_header}"
+
+    # Print separator line
+    name_sep = '-' * widths[:name_width]
+    info_sep = '-' * widths[:info_width]
+    stars_sep = '-' * widths[:stars_width]
+    size_sep = '-' * widths[:size_width]
+    date_sep = '-' * widths[:date_width]
+    desc_sep = '-' * widths[:desc_width]
+    puts "  #{name_sep}  #{info_sep}  #{stars_sep}  #{size_sep}  " \
+         "#{date_sep}  #{date_sep}  #{desc_sep}"
+  end
+
+  def print_repository_row(repo, widths)
+    icon = repo[:mode] == 'private' ? '🔒' : '📂'
+    name = "#{icon} #{repo[:path]}".ljust(widths[:name_width])
+
+    # Combine language and info into single Information column
+    info_parts = []
+    info_parts << repo[:language] if repo[:language]
+    info_parts << 'private' if repo[:mode] == 'private'
+    info_parts << 'fork' if repo[:fork]
+    info = info_parts.join(', ').ljust(widths[:info_width])
+
+    # Format stars with human-readable format and align with star emoji after the count
+    formatted_stars = format_stars(repo[:stars])
+    stars = "#{formatted_stars} ⭐".rjust(widths[:stars_width])
+
+    # Right-align the size column
+    size = format_size(repo[:size]).rjust(widths[:size_width])
+
+    # Add created and updated dates
+    created = Time.parse(repo[:created_at]).strftime('%Y-%m-%d')
+    updated = Time.parse(repo[:updated_at]).strftime('%Y-%m-%d')
+
+    # Truncate description if too long
+    desc = repo[:description] || ''
+    desc = "#{desc[0...(widths[:desc_width] - 3)]}..." if desc.length > widths[:desc_width] - 3
+    desc = desc.ljust(widths[:desc_width])
+
+    puts "  #{name}  #{info}  #{stars}  #{size}  #{created}  #{updated}  #{desc}"
+  end
+
+  def print_repository_summary(repos)
+    total_size = repos.sum { |r| r[:size] }
+    total_stars = repos.sum { |r| r[:stars] }
+    lang_stats = repos.group_by { |r| r[:language] }.transform_values(&:count)
+
+    puts "\n--- Repository Summary ---"
+    puts "Total Repositories: #{repos.length}"
+    puts "Total Size: #{format_size(total_size)}"
+    puts "Total Stars: #{total_stars}"
+
+    lang_summary = lang_stats
+                   .sort_by { |_, count| -count }
+                   .map { |lang, count| "#{lang || 'None'} (#{count})" }
+                   .join(', ')
+
+    puts "Languages: #{lang_summary}"
+    puts '---------------------------'
+  end
+
+  # Sort files with directories first, then by path
+  def sort_files(files)
+    files.sort_by { |file| [file[:type] == 'tree' ? 0 : 1, file[:path].downcase] }
+  end
+
+  private
+
+  def filter_by_glob_pattern(files, pattern)
+    return files unless pattern
+
+    filtered_files = files.select do |file|
+      file_path = file[:path]
+      file_path += '/' if file[:type] == 'tree' # Add trailing slash for directories
+      matches_glob?(file_path, pattern)
+    end
+
+    puts "Found #{filtered_files.length} files matching pattern '#{pattern}'" if @config.verbose
+    filtered_files
+  end
+
+  def matches_glob?(file_path, pattern)
+    return true if pattern.nil? || pattern.empty?
+
+    # Use Ruby's built-in File.fnmatch for proper glob pattern matching
+    # FNM_PATHNAME ensures that wildcards don't match directory separators
+    # FNM_EXTGLOB enables extended globbing features
+    flags = File::FNM_PATHNAME
+
+    # Handle the special case where we need to match directories with trailing slashes
+    if file_path.end_with?('/')
+      # Remove trailing slash for matching
+      file_path = file_path.chomp('/')
+    end
+
+    # For multi-pattern support (comma-separated patterns)
+    patterns = pattern.split(',')
+    patterns.any? do |p|
+      File.fnmatch(p.strip, file_path, flags)
+    end
+  end
+
+  # Display files in markdown format with links
+  def display_files_markdown(files, username, repo_name, branch = 'HEAD')
+    # Sort by type (directory first) then by path
+    sorted_files = sort_files(files)
+
+    # Calculate column widths for alignment
+    max_size_length = sorted_files.map { |file| format_size(file[:size]).length }.max
+
+    print_files_markdown_header(max_size_length)
+    print_files_markdown_rows(sorted_files, username, repo_name, branch, max_size_length)
+  end
+
+  def print_files_markdown_header(max_size_length)
+    puts "\n# Repository Files\n"
+    puts "| Size#{' ' * (max_size_length - 4)} | Path |"
+    puts "| #{'-' * max_size_length} | ---- |"
+  end
+
+  def print_files_markdown_rows(files, username, repo_name, branch, max_size_length)
+    files.each do |file|
+      icon = file[:type] == 'tree' ? '📁' : '📄'
+      size_str = format_size(file[:size]).rjust(max_size_length)
+
+      # Prepare file name and URLs
+      file_name = file[:path]
+      file_name += '/' if file[:type] == 'tree'
+      encoded_path = file[:path].gsub(' ', '%20')
+
+      # Generate appropriate links and print the row
+      icon_link, path_link = generate_file_links(file, username, repo_name, branch, encoded_path, file_name, icon)
+      puts "| #{size_str} | #{icon_link} #{path_link} |"
+    end
+  end
+
+  def generate_file_links(file, username, repo_name, branch, encoded_path, file_name, icon)
+    if file[:type] == 'blob'
+      # For files: icon links to raw content, filename to GitHub UI
+      raw_url = "https://raw.githubusercontent.com/#{username}/#{repo_name}/#{branch}/#{encoded_path}"
+      ui_url = "https://github.com/#{username}/#{repo_name}/blob/#{branch}/#{encoded_path}"
+
+      ["[#{icon}](#{raw_url})", "[#{file_name}](#{ui_url})"]
+    else
+      # For directories: both link to GitHub directory view
+      dir_url = "https://github.com/#{username}/#{repo_name}/tree/#{branch}/#{encoded_path}"
+      ["[#{icon}](#{dir_url})", "[#{file_name}](#{dir_url})"]
+    end
+  end
+
+  # Display files like ls -alh
+  def display_files_ls_style(files, _real_username)
+    # Sort by type (directory first) then by path
+    sorted_files = files.sort_by { |file| [file[:type] == 'tree' ? 0 : 1, file[:path].downcase] }
+
+    # Calculate column widths for alignment
+    max_size_length = sorted_files.map { |f| format_size(f[:size]).length }.max
+
+    # Print header
+    puts "total #{sorted_files.length}"
+
+    # Print each file in ls -alh format
+    sorted_files.each do |file|
+      # Mode representation (simplified)
+      mode_str = file[:type] == 'tree' ? 'drwxr-xr-x' : '-rw-r--r--'
+
+      # Get file icon
+      icon = file[:type] == 'tree' ? '📁' : '📄'
+
+      # Size in human readable format
+      size_str = format_size(file[:size]).rjust(max_size_length)
+
+      # Simplified link count
+      link_count = '1'
+
+      # File name with trailing slash for directories
+      file_name = file[:path]
+      file_name += '/' if file[:type] == 'tree'
+
+      # Print in ls -alh format with user, group, and timestamp removed, now with icons
+      puts "#{mode_str} #{link_count} #{size_str} #{icon} #{file_name}"
+    end
+
+    # Calculate and display summaries
+    size_summary = calculate_size_summary(sorted_files)
+    display_size_summary(size_summary)
+
+    # Generate and display filetype matrix
+    filetype_matrix = generate_filetype_matrix(sorted_files)
+    display_filetype_matrix(filetype_matrix)
+  end
+
+  # Format file size to human readable format (like ls -h)
+  def format_size(size)
+    puts "Debug: Formatting size - #{size}" if @config.verbose
+    return '0B' if size.nil? || size.negative?
+
+    units = %w[B K M G T]
+    unit_index = 0
+
+    while size >= 1024 && unit_index < units.length - 1
+      size /= 1024.0
+      unit_index += 1
+    end
+
+    unit_index.zero? ? "#{size.to_i}#{units[unit_index]}" : "#{size.round(1)}#{units[unit_index]}"
+  end
+
+  # Format stars to human readable format (e.g., 13546 => 13.5K)
+  def format_stars(stars)
+    return '0' if stars.nil? || stars.zero?
+
+    if stars < 1000
+      stars.to_s
+    elsif stars < 1_000_000
+      "#{(stars / 1000.0).round(1)}K"
+    else
+      "#{(stars / 1_000_000.0).round(1)}M"
+    end
+  end
+
+  # Calculate file size summary statistics
+  def calculate_size_summary(files)
+    # Skip directories in size calculations
+    file_sizes = files.select { |f| f[:type] == 'blob' }.map { |f| f[:size] }
+
+    {
+      total_files: file_sizes.length,
+      total_size: file_sizes.sum,
+      average_size: file_sizes.empty? ? 0 : (file_sizes.sum.to_f / file_sizes.length),
+      min_size: file_sizes.min || 0,
+      max_size: file_sizes.max || 0
+    }
+  end
+
+  # Display file size summary
+  def display_size_summary(summary)
+    puts "\n--- File Size Summary ---"
+    puts "Total Files:   #{format_size(summary[:total_files])}"
+    puts "Total Size:    #{format_size(summary[:total_size])}"
+    puts "Average Size:  #{format_size(summary[:average_size])}"
+    puts "Smallest File: #{format_size(summary[:min_size])}"
+    puts "Largest File:  #{format_size(summary[:max_size])}"
+    puts '-------------------------'
+  end
+
+  # Generate filetype matrix
+  def generate_filetype_matrix(files)
+    # Group files by extension
+    by_extension = files.group_by { |f| f[:extension] }
+
+    # Calculate stats for each extension
+    extension_stats = {}
+    by_extension.each do |ext, ext_files|
+      # Only consider actual files (not directories)
+      ext_file_sizes = ext_files.select { |f| f[:type] == 'blob' }.map { |f| f[:size] }
+
+      extension_stats[ext] = {
+        count: ext_file_sizes.length,
+        total_size: ext_file_sizes.sum,
+        average_size: ext_file_sizes.empty? ? 0 : (ext_file_sizes.sum.to_f / ext_file_sizes.length)
+      }
+    end
+
+    extension_stats
+  end
+
+  def display_filetype_matrix(matrix)
+    puts "\n--- File Type Summary ---"
+
+    # Find the longest extension to adjust the column width
+    max_ext_length = matrix.keys.map(&:length).max
+    ext_column_width = [max_ext_length, 15].max
+
+    # Create table header based on format
+    if @config.markdown
+      puts "\n## File Type Summary"
+      puts '| Ext. | Count | Total Size | Avg. Size |'
+      puts '|------|-------|------------|-----------|'
+    else
+      # Terminal format header - Improved alignment
+      count_width = 6
+      size_width = 10
+      avg_width = 10
+
+      # Create header template pieces to avoid long lines
+      ext_header = 'Ext.'.ljust(ext_column_width)
+      count_header = 'Count'.rjust(count_width)
+      size_header = 'Total Size'.rjust(size_width)
+      avg_header = 'Avg. Size'.rjust(avg_width)
+
+      # Print header with proper column widths and alignment
+      puts "#{ext_header} | #{count_header} | #{size_header} | #{avg_header}"
+
+      # Create separator parts
+      ext_sep = '-' * ext_column_width
+      count_sep = '-' * count_width
+      size_sep = '-' * size_width
+      avg_sep = '-' * avg_width
+
+      # Build separator line
+      puts "#{ext_sep}-+-#{count_sep}-+-#{size_sep}-+-#{avg_sep}"
+
+      process_matrix_entries(matrix, ext_column_width, count_width, size_width, avg_width)
+
+      # Create footer line that matches the width of the table
+      footer_width = ext_column_width + 3 + count_width + 3 + size_width + 3 + avg_width
+      puts '-' * footer_width
+    end
+  end
+
+  def process_matrix_entries(matrix, ext_column_width, count_width, size_width, avg_width)
+    # Sort by total size descending
+    matrix.sort_by { |_, stats| -stats[:total_size] }.each do |ext, stats|
+      # Skip directories in the matrix display
+      next if ext == 'directory'
+
+      # Format for display
+      total_size_display = format_size(stats[:total_size])
+      avg_size_display = format_size(stats[:average_size])
+
+      # Terminal format with proper column widths and alignment
+      ext_display = ext.ljust(ext_column_width)
+      count_display = stats[:count].to_s.rjust(count_width)
+      total_size_display = total_size_display.rjust(size_width)
+      avg_size_display = avg_size_display.rjust(avg_width)
+
+      puts "#{ext_display} | #{count_display} | #{total_size_display} | #{avg_size_display}"
+    end
+  end
+
+  def display_repos_markdown(repos, username)
+    # Apply language filter
+    repos = filter_repos_by_language(repos)
+
+    puts "\n# GitHub Repositories for #{username}"
+    puts "\n*Filtered by language: #{@config.language_filter}*" if @config.language_filter
+    puts "\n*Total repositories: #{repos.length}*\n"
+
+    # Table header
+    puts '| Name | Language | Stars | Size | Updated | Description |'
+    puts '|------|----------|-------|------|---------|-------------|'
+
+    # Sort by last updated and print each repository
+    repos.sort_by { |repo| repo[:updated_at] }.reverse.each do |repo|
+      # Format date string
+      updated = Time.parse(repo[:updated_at]).strftime('%Y-%m-%d')
+
+      # Create link to repo
+      repo_name = repo[:path]
+      repo_url = "https://github.com/#{username}/#{repo_name}"
+      repo_link = "[#{repo_name}](#{repo_url})"
+
+      # Get other fields with defaults
+      language = repo[:language] || '-'
+      stars = repo[:stars] || 0
+      size = format_size(repo[:size])
+      description = repo[:description] || '-'
+
+      puts "| #{repo_link} | #{language} | #{stars} | #{size} | #{updated} | #{description} |"
+    end
+  end
+end
+
+# Main program
+begin
+  config = Configuration.new
+  config.parse_arguments
+
+  puts 'Debug: Starting script execution' if config.verbose
+  puts "Debug: Configuration - #{config.inspect}" if config.verbose
+  puts "Debug: Fetching repository: #{config.repo_url}" if config.verbose
+
+  # Only print fetching message in verbose mode
+  if config.verbose
+    puts "Fetching repository: #{config.repo_url}"
+    puts "Authentication: #{config.token ? 'Using token' : 'Anonymous'}"
+  end
+
+  client = GitHubApiClient.new(config)
+  result = client.list_repository_files
+
+  formatter = FileFormatter.new(config)
+  formatter.display_files(result)
+rescue StandardError => e
+  puts "Error: #{e.message}"
+  puts e.backtrace if config&.verbose
+  exit 1
+end
+
+__END__
+
+=begin
+# GitHub API Playground
+
+A collection of tools for interacting with the GitHub API from the command line.
+
+## Tools
+
+### ghls
+
+The `ghls` tool is a flexible command-line utility for browsing GitHub repositories, similar to the Unix `ls` command but for GitHub repositories. It allows you to:
+
+- List files in GitHub repositories
+- View raw file content
+- List a user's repositories
+- Filter files by pattern or programming language
+- Display results in terminal or markdown format
+
+## Installation
+
+1. Ensure you have Ruby installed
+2. Clone this repository
+3. Make the scripts executable: `chmod +x ghls`
+4. Add the directory to your PATH or run the scripts directly
+
+## Usage
+
+### ghls
+
+```bash
+./ghls [options] repository_url [glob_pattern]
+```
+
+#### Examples
+
+List files in a repository:
+
+```bash
+./ghls username/repo
+```
+
+View raw file content:
+
+```bash
+./ghls username/repo/path/to/file.txt
+```
+
+List a user's repositories:
+
+```bash
+./ghls username
+```
+
+Filter files by pattern:
+
+```bash
+./ghls username/repo "*.rb"
+```
+
+Filter repositories by language:
+
+```bash
+./ghls username -l Ruby
+```
+
+#### Options
+
+- `-d, --show-directories`: Show only directories, not files
+- `-a, --all`: Show both files and directories (default: files only)
+- `-m, --markdown`: Output in markdown format
+- `--token TOKEN`: GitHub API token for authentication
+- `-v, --verbose`: Show more detailed information
+- `-l, --language LANG`: Filter by programming language
+- `-h, --help`: Show help message
+
+## Authentication
+
+To avoid GitHub API rate limits, you can provide a personal access token:
+
+1. Set the `GITHUB_TOKEN` environment variable
+2. Create a `.env` file with `GITHUB_TOKEN=your_token_here`
+3. Use the `--token` command-line option
+
+## License
+
+MIT
+=end
