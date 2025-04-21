@@ -19,6 +19,24 @@
 # @example Basic usage with default settings
 #   $ hipi
 #
+# @example Simple 2x2 grid layout
+#   $ hipi -r 2 -c 2
+#   ======================================================
+#   Tabular Representation of π (pi) to 200 decimal places
+#   ======================================================
+#
+#   14 15 92 65 35   82 14 80 86 51
+#   89 79 32 38 46   32 82 30 66 47
+#   26 43 38 32 79   09 38 44 60 95
+#   50 28 84 19 71   50 58 22 31 72
+#   69 39 93 75 10   53 59 40 81 28
+#
+#   58 20 97 49 44   48 11 17 45 02
+#   59 23 07 81 64   84 10 27 01 93
+#   06 28 62 08 99   85 21 10 55 59
+#   86 28 03 48 25   64 46 22 94 89
+#   34 21 17 06 79   54 93 03 81 96
+#
 # @example Customize formatting with 3 digits per group, 4 columns per block
 #   $ hipi --group-size 3 --block-cols 4
 #
