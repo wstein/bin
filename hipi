@@ -17,12 +17,12 @@
 #
 # Grid (--grid-cols × --grid-rows)
 # ┌────────────────┐ ┌────────────────┐
-# │    Block 1     │ │    Block 2     │
+# │    Block 1     │ │    Block 3     │
 # │ g1 g2 g3 g4 g5 │ │ g1 g2 g3 g4 g5 │
 # │ g6 g7 g8 g9 g0 │ │ g6 g7 g8 g9 g0 │
 # └────────────────┘ └────────────────┘
 # ┌────────────────┐ ┌────────────────┐
-# │    Block 3     │ │    Block 4     │
+# │    Block 2     │ │    Block 4     │
 # │ g1 g2 g3 g4 g5 │ │ g1 g2 g3 g4 g5 │
 # │ g6 g7 g8 g9 g0 │ │ g6 g7 g8 g9 g0 │
 # └────────────────┘ └────────────────┘
@@ -93,7 +93,7 @@
 #
 # Output Format:
 # - Vertical: Read digits vertically in columns (default)
-# - Horizontal: Read digits horizontally in rows (-h, --horizontal-order)
+# - Horizontal: Read digits horizontally in rows (-t, --transpose)
 #
 # Spacing Options:
 # - Between groups: --gs (group_spacing)
@@ -353,7 +353,7 @@ def parse_options
     end
 
     o.separator "\nOutput Format:"
-    o.on('-h', '--horizontal-order', 'Order block horizontally in rows instead of vertically in columns') do |h|
+    o.on('-t', '--transpose', 'Order block horizontally in rows instead of vertically in columns') do |h|
       opts.transpose = h
     end
 
