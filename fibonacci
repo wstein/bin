@@ -1,12 +1,31 @@
 #!/usr/bin/env sh
 
+# Calculate the nth number in the Fibonacci sequence
+# Usage: fibonacci <n>
+# Example: fibonacci 10
+
 # fibonacci(n, prevprev, prev)
 fibonacci() {
-	if [ "$1" -gt 0 ]; then
-		fibonacci "$(($1 - 1))" "$3" "$(($2 + $3))"
-	else
-		echo "$2"
-	fi
+    if [ "$1" -gt 0 ]; then
+        fibonacci "$(($1 - 1))" "$3" "$(($2 + $3))"
+    else
+        echo "$2"
+    fi
 }
+
+# Input validation
+if [ $# -eq 0 ]; then
+    echo "Error: Please provide a number"
+    echo "Usage: $(basename "$0") <n>"
+    exit 1
+fi
+
+# Check if input is a number
+case $1 in
+    ''|*[!0-9]*)
+        echo "Error: Please provide a valid positive number"
+        exit 1
+        ;;
+esac
 
 fibonacci "$1" 0 1
