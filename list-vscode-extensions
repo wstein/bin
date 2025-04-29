@@ -1,0 +1,180 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: ruby list_vscode_extensions_with_details.rb
+# Requires: VS Code CLI (`code`) and Ruby with 'net/http' and 'json' (standard)
+
+require 'net/http'
+require 'json'
+require 'optparse'
+require 'io/console'
+require 'yaml'
+
+options = {}
+OptionParser.new do |opts|
+  opts.on('--format=FMT', 'Output in specified format (json, markdown, recommend)') do |f|
+    options[:format] = f
+  end
+  opts.on('-r', '--recommend', 'Output in recommendations format') { options[:format] = 'recommend' }
+  opts.on('-j', '--json', 'Output in JSON format') { options[:format] = 'json' }
+  opts.on('-m', '--markdown', 'Output in Markdown format') { options[:format] = 'markdown' }
+end.parse!
+
+
+# Get list of installed extensions
+extensions = `code --list-extensions`.split("\n").map(&:strip).reject(&:empty?)
+
+# Query VS Marketplace for extension details
+def fetch_extension_details(extension_id)
+  uri = URI('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery')
+  req = Net::HTTP::Post.new(uri)
+  req['Content-Type'] = 'application/json'
+  req['Accept'] = 'application/json;api-version=3.0-preview.1'
+  req.body = {
+    filters: [
+      { criteria: [ { filterType: 7, value: extension_id } ] }
+    ],
+    flags: 914
+  }.to_json
+
+  http = Net::HTTP.new(uri.hostname, uri.port)
+  http.use_ssl = true
+  http.open_timeout = 5  # 5 seconds timeout for opening connection
+  http.read_timeout = 10 # 10 seconds timeout for reading data
+
+  res = http.request(req)
+
+  if res.code.to_i == 200
+    json = JSON.parse(res.body)
+    ext = json.dig('results', 0, 'extensions', 0)
+    return nil unless ext
+
+    description = ext['shortDescription'] || ext['displayName'] || ''
+    marketplace = "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
+
+    # Extract statistics
+    stats = {}
+    if ext['statistics']
+      ext['statistics'].each do |stat|
+        stats[stat['statisticName']] = stat['value']
+      end
+    end
+
+    # Add stats to the returned details
+    {
+      id: extension_id,
+      description: description,
+      marketplace: marketplace,
+      installs: stats['install'],
+      rating_count: stats['ratingcount'],
+      weighted_rating: stats['weightedRating'],
+    }
+  else
+    if res.code.to_i == 429
+      reset_time = res['X-RateLimit-Reset'] || 'unknown'
+      reset_datetime = reset_time != 'unknown' ? Time.at(reset_time.to_i).strftime('%Y-%m-%d %H:%M:%S') : 'unknown'
+      remaining = res['X-RateLimit-Remaining'] || 0
+      limit = res['X-RateLimit-Limit'] || 'unknown'
+      STDERR.puts "\nRate limit exceeded for #{extension_id}: Remaining: #{remaining}/#{limit}, Reset: #{reset_datetime}"
+    else
+      STDERR.puts "\nAPI error for #{extension_id}: #{res.code} - #{res.message}"
+    end
+    { id: extension_id, description: '', marketplace: "https://marketplace.visualstudio.com/items?itemName=#{extension_id}" }
+  end
+rescue => e
+  STDERR.puts "\nError fetching #{extension_id}: #{e.message}"
+  { id: extension_id, description: '', marketplace: "https://marketplace.visualstudio.com/items?itemName=#{extension_id}" }
+end
+
+completed = 0
+mutex = Mutex.new
+
+def print_progress(current, total)
+  bar_width = 40
+  percent = (current.to_f / total * 100).to_i
+  filled = (bar_width * current / total.to_f).to_i
+  bar = '=' * filled + ' ' * (bar_width - filled)
+  STDERR.print "\r[#{bar}] #{current}/#{total} (#{percent}%)"
+  STDERR.flush
+end
+
+# Parallel fetching with 10 workers
+queue = Queue.new
+extensions.each_with_index { |ext, idx| queue << [idx, ext] }
+results = Array.new(extensions.size)
+mutex = Mutex.new
+completed = 0
+failed = 0
+
+workers = 10.times.map do
+  Thread.new do
+    while true
+      begin
+        item = queue.pop(true)  # Will raise error when queue is empty
+      rescue ThreadError
+        break  # Queue is empty, exit the thread
+      end
+
+      idx, ext = item
+      begin
+        details = fetch_extension_details(ext)
+        mutex.synchronize do
+          results[idx] = details
+          completed += 1
+          if details[:description].empty? && details[:id]
+            failed += 1
+          end
+        end
+      rescue => e
+        mutex.synchronize do
+          STDERR.puts "\nUnhandled error processing #{ext}: #{e.message}"
+          results[idx] = { id: ext, description: "Error: #{e.message}", marketplace: "https://marketplace.visualstudio.com/items?itemName=#{ext}" }
+          completed += 1
+          failed += 1
+        end
+      ensure
+        print_progress(completed, extensions.size)
+      end
+    end
+  end
+end
+
+workers.each(&:join)
+STDERR.puts "\nCompleted #{completed}/#{extensions.size} extensions (#{failed} with errors)"
+
+# Process only valid results
+valid_results = results.compact
+STDERR.puts "Retrieved #{valid_results.size} extension details"
+
+if options[:format] == 'recommend'
+  puts '{'
+  puts '  "recommendations": ['
+  valid_results.each_with_index do |details, idx|
+    puts
+    puts "    \"#{details[:id]}\","
+    puts "    // #{details[:description]}"
+    puts "    // Installs: #{details[:installs].to_i}, Rating: #{details[:weighted_rating]&.round(1)} (#{details[:rating_count]&.to_i} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
+    puts "    // #{details[:marketplace]}"
+  end
+  puts '  ]'
+  puts '}'
+elsif options[:format] == 'markdown'
+  puts "# VS Code Extensions\n"
+
+  valid_results.each do |details|
+    puts "- [#{details[:id]}](#{details[:marketplace]})"
+    puts "  > #{details[:description]}"
+    puts "  > Installs: #{details[:installs].to_i}, Rating: #{details[:weighted_rating]&.round(1)} (#{details[:rating_count]&.to_i} ratings)"
+    puts
+  end
+elsif options[:format] == 'json'
+  puts JSON.pretty_generate(valid_results)
+else
+  valid_results.each do |details|
+    puts "#{details[:id]}"
+    puts "  Description: #{details[:description]}"
+    puts "  Installs: #{details[:installs].to_i},  Rating: #{details[:weighted_rating]&.round(1)} (#{details[:rating_count]&.to_i} ratings)"
+    puts "  Marketplace: #{details[:marketplace]}"
+    puts
+  end
+end
