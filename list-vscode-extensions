@@ -10,6 +10,7 @@ require 'optparse'
 require 'io/console'
 require 'yaml'
 require 'time'
+require 'erb'
 
 options = { workers: 10 }
 OptionParser.new do |opts|
@@ -146,6 +147,17 @@ def id_with_version(details, ext_versions, options)
   end
 end
 
+# Add helper to format flags
+def format_flags(details)
+  details['flags'] ? details['flags'].split(',').map(&:strip).map { |f| "*#{f}*" }.join(' ') : ''
+end
+
+# Add helper to format flags in brackets for default output
+def bracket_flags(details)
+  flags = details['flags'] ? details['flags'].split(',').map(&:strip).join(', ') : ''
+  flags.empty? ? '' : "[#{flags}]"
+end
+
 # Parallel fetching with specified number of workers
 queue = Queue.new
 ext_ids.each_with_index { |ext, idx| queue << [idx, ext] }
@@ -205,69 +217,62 @@ def output_close(io, options)
   io.close if options[:output]
 end
 
-if options[:format] == 'recommend'
-  valid_results.each do |details|
-    last_updated_date = format_last_updated(details)
-    installs = extract_stat(details, :install).to_i
-    rating = extract_stat(details, :rating)&.round(1)
-    rating_count = extract_stat(details, :rating_count).to_i
-    input_version = ext_versions[details['id']]
-    fetched_version = details['versions']&.first&.dig('version') || 'unknown'
-    id_with_ver = if options[:id_with_version]
-      ver = input_version || fetched_version
-      "#{details['id']}@#{ver}"
-    else
-      details['id']
-    end
-    flags = details['flags'] ? details['flags'].split(',').map(&:strip).map { |f| "*#{f}*" }.join(' ') : ''
-    output_puts(output_io, "    \"#{id_with_ver}\",  // #{flags}\n    // #{details['shortDescription']}\n    // Latest #{fetched_version} - #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings) on #{Time.now.strftime('%Y-%m-%d')}\n    // #{details['marketplace']}\n")
-  end
-elsif options[:format] == 'markdown'
-  output_puts(output_io, "# VS Code Extensions\n")
-  valid_results.each do |details|
-    last_updated_date = format_last_updated(details)
-    installs = extract_stat(details, :install).to_i
-    rating = extract_stat(details, :rating)&.round(1)
-    rating_count = extract_stat(details, :rating_count).to_i
-    input_version = ext_versions[details['id']]
-    fetched_version = details['versions']&.first&.dig('version') || 'unknown'
-    id_with_ver = if options[:id_with_version]
-      ver = input_version || fetched_version
-      "#{details['id']}@#{ver}"
-    else
-      details['id']
-    end
-    flags = details['flags'] ? " *#{details['flags'].gsub(/,\s*/, '* *')}*" : ''
-    output_puts(output_io, "- [#{id_with_ver}](#{details['marketplace']})#{flags}\n  > #{details['shortDescription']}\n  > Latest #{fetched_version} - #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings)\n")
-  end
-elsif options[:format] == 'json'
-  output_puts(output_io, JSON.pretty_generate(valid_results.map { |details|
-    d = details.dup
-    d['id'] = id_with_version(details, ext_versions, options)
-    d
-  }))
-elsif options[:format] == 'yaml'
-  output_puts(output_io, valid_results.map { |details|
-    d = details.dup
-    d['id'] = id_with_version(details, ext_versions, options)
-    d
-  }.to_yaml)
+def render_erb_template(template_str, locals)
+  valid_results = locals[:valid_results]
+  ext_versions  = locals[:ext_versions]
+  options       = locals[:options]
+  ERB.new(template_str, trim_mode: '-').result(binding)
+end
+
+recommend_template = %q{
+<% valid_results.each do |details| %>
+    "<%= id_with_version(details, ext_versions, options) %>",  // <%= format_flags(details) %>
+    // <%= details['shortDescription'] %>
+    // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings) on <%= Time.now.strftime('%Y-%m-%d') %>
+    // <%= details['marketplace'] %>
+<% end %>
+}
+
+markdown_template = %q{
+# VS Code Extensions
+<% valid_results.each do |details| %>
+- [<%= id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>)<%= format_flags(details).empty? ? '' : " #{format_flags(details)}" %>
+  > <%= details['shortDescription'] %>
+  > Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
+<% end %>
+}
+
+json_template = %q{
+<%= JSON.pretty_generate(valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }) %>
+}
+
+yaml_template = %q{
+<%= valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }.to_yaml %>
+}
+
+default_template = %q{
+<% valid_results.each do |details| %>
+<%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '0.1.0'}" : "" %><%= format_flags(details).empty? ? '' : " #{format_flags(details)}" %>
+  Description: <%= details['shortDescription'] %>
+  Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %> Installs: <%= extract_stat(details, :install).to_i %>,  Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
+  Marketplace: <%= details['marketplace'] %>
+<% end %>
+}
+case options[:format]
+when 'recommend'
+  output_puts(output_io, render_erb_template(recommend_template,
+    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
+when 'markdown'
+  output_puts(output_io, render_erb_template(markdown_template,
+    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
+when 'json'
+  output_puts(output_io, render_erb_template(json_template,
+    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
+when 'yaml'
+  output_puts(output_io, render_erb_template(yaml_template,
+    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
 else
-  valid_results.each do |details|
-    last_updated_date = format_last_updated(details)
-    installs = extract_stat(details, :install).to_i
-    rating = extract_stat(details, :rating)&.round(1)
-    rating_count = extract_stat(details, :rating_count).to_i
-    input_version = ext_versions[details['id']]
-    fetched_version = details['versions']&.first&.dig('version') || 'unknown'
-    id_with_ver = if options[:id_with_version]
-      ver = input_version || fetched_version
-      "#{details['id']}@#{ver}"
-    else
-      details['id']
-    end
-    flags = details['flags'] ? " *#{details['flags'].gsub(/,\s*/, '* *')}*" : ''
-    output_puts(output_io, "- #{id_with_ver}#{flags}\n  > #{details['shortDescription']}\n  > Latest #{fetched_version} - #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings)\n  Marketplace: #{details['marketplace']}\n")
-  end
+  output_puts(output_io, render_erb_template(default_template,
+    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
 end
 output_close(output_io, options)
