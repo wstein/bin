@@ -65,9 +65,9 @@ ext_versions = Hash[ext_pairs.select { |id, v| v }.map { |id, v| [id, v] }]
 def fetch_extension_details(extension_id)
 
   ext = {
-		'id' => extension_id,
-		'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
-	  }
+    'id' => extension_id,
+    'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
+    }
 
   uri = URI('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery')
   req = Net::HTTP::Post.new(uri)
@@ -224,55 +224,47 @@ def render_erb_template(template_str, locals)
   ERB.new(template_str, trim_mode: '-').result(binding)
 end
 
-recommend_template = %q{
-<% valid_results.each do |details| %>
-    "<%= id_with_version(details, ext_versions, options) %>",  // <%= format_flags(details) %>
-    // <%= details['shortDescription'] %>
-    // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings) on <%= Time.now.strftime('%Y-%m-%d') %>
-    // <%= details['marketplace'] %>
-<% end %>
+templates = {
+  'recommend' => %q{
+    {<% valid_results.each do |details| %>
+      "<%= id_with_version(details, ext_versions, options) %>",  // <%= format_flags(details) %>
+      // <%= details['shortDescription'] %>
+      // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings) on <%= Time.now.strftime('%Y-%m-%d') %>
+      // <%= details['marketplace'] %>
+    <% end %>}
+  },
+  'markdown' => %q{
+    # VS Code Extensions
+    <% valid_results.each do |details| %>
+    - [<%= id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>)<%= format_flags(details).empty? ? '' : " #{format_flags(details)}" %>
+      > <%= details['shortDescription'] %>
+      > Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
+    <% end %>
+  },
+  'json' => %q{
+    <%= JSON.pretty_generate(valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }) %>
+  },
+  'yaml' => %q{
+    <%= valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }.to_yaml %>
+  },
+  'default' => %q{
+    <% valid_results.each do |details| %>
+    <%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '0.1.0'}" : "" %><%= bracket_flags(details).empty? ? '' : " #{bracket_flags(details)}" %>
+      Description: <%= details['shortDescription'] %>
+      Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %> Installs: <%= extract_stat(details, :install).to_i %>,  Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
+      Marketplace: <%= details['marketplace'] %>
+    <% end %>
+  }
 }
 
-markdown_template = %q{
-# VS Code Extensions
-<% valid_results.each do |details| %>
-- [<%= id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>)<%= format_flags(details).empty? ? '' : " #{format_flags(details)}" %>
-  > <%= details['shortDescription'] %>
-  > Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
-<% end %>
-}
-
-json_template = %q{
-<%= JSON.pretty_generate(valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }) %>
-}
-
-yaml_template = %q{
-<%= valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }.to_yaml %>
-}
-
-default_template = %q{
-<% valid_results.each do |details| %>
-<%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '0.1.0'}" : "" %><%= format_flags(details).empty? ? '' : " #{format_flags(details)}" %>
-  Description: <%= details['shortDescription'] %>
-  Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %> Installs: <%= extract_stat(details, :install).to_i %>,  Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
-  Marketplace: <%= details['marketplace'] %>
-<% end %>
-}
-case options[:format]
-when 'recommend'
-  output_puts(output_io, render_erb_template(recommend_template,
-    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
-when 'markdown'
-  output_puts(output_io, render_erb_template(markdown_template,
-    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
-when 'json'
-  output_puts(output_io, render_erb_template(json_template,
-    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
-when 'yaml'
-  output_puts(output_io, render_erb_template(yaml_template,
-    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
-else
-  output_puts(output_io, render_erb_template(default_template,
-    {valid_results: valid_results, ext_versions: ext_versions, options: options}))
+# Add default format if not specified and validate
+options[:format] ||= 'default'
+unless templates.key?(options[:format])
+  STDERR.puts "Unknown format: #{options[:format]}. Using default."
+  options[:format] = 'default'
 end
+
+output_puts(output_io, render_erb_template(templates[options[:format]].gsub(/^\s{4}/, ''),  # Remove leading whitespace
+  {valid_results: valid_results, ext_versions: ext_versions, options: options}))
+
 output_close(output_io, options)
