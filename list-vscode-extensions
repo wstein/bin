@@ -26,6 +26,12 @@ extensions = `code --list-extensions`.split("\n").map(&:strip).reject(&:empty?)
 
 # Query VS Marketplace for extension details
 def fetch_extension_details(extension_id)
+
+  ext = {
+		'id' => extension_id,
+		'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
+	  }
+
   uri = URI('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery')
   req = Net::HTTP::Post.new(uri)
   req['Content-Type'] = 'application/json'
@@ -44,31 +50,13 @@ def fetch_extension_details(extension_id)
 
   res = http.request(req)
 
+
   if res.code.to_i == 200
     json = JSON.parse(res.body)
-    ext = json.dig('results', 0, 'extensions', 0)
-    return nil unless ext
+    data = json.dig('results', 0, 'extensions', 0)
 
-    description = ext['shortDescription'] || ext['displayName'] || ''
-    marketplace = "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
-
-    # Extract statistics
-    stats = {}
-    if ext['statistics']
-      ext['statistics'].each do |stat|
-        stats[stat['statisticName']] = stat['value']
-      end
-    end
-
-    # Add stats to the returned details
-    {
-      id: extension_id,
-      description: description,
-      marketplace: marketplace,
-      installs: stats['install'],
-      rating_count: stats['ratingcount'],
-      weighted_rating: stats['weightedRating'],
-    }
+    data['shortDescription'] ||= 'No description available...'
+    ext.merge(data) if data
   else
     if res.code.to_i == 429
       reset_time = res['X-RateLimit-Reset'] || 'unknown'
@@ -79,11 +67,11 @@ def fetch_extension_details(extension_id)
     else
       STDERR.puts "\nAPI error for #{extension_id}: #{res.code} - #{res.message}"
     end
-    { id: extension_id, description: '', marketplace: "https://marketplace.visualstudio.com/items?itemName=#{extension_id}" }
+    ext.merge({ 'shortDescription' => 'Error fetching details...' })
   end
 rescue => e
   STDERR.puts "\nError fetching #{extension_id}: #{e.message}"
-  { id: extension_id, description: '', marketplace: "https://marketplace.visualstudio.com/items?itemName=#{extension_id}" }
+  ext.merge({ 'shortDescription' => 'Error fetching details...' })
 end
 
 completed = 0
@@ -110,7 +98,7 @@ workers = 10.times.map do
   Thread.new do
     while true
       begin
-        item = queue.pop(true)  # Will raise error when queue is empty
+        item = mutex.synchronize { queue.pop(true) } # Will raise error when queue is empty
       rescue ThreadError
         break  # Queue is empty, exit the thread
       end
@@ -121,14 +109,14 @@ workers = 10.times.map do
         mutex.synchronize do
           results[idx] = details
           completed += 1
-          if details[:description].empty? && details[:id]
+          if details['shortDescription'].empty? && details['id']
             failed += 1
           end
         end
       rescue => e
         mutex.synchronize do
           STDERR.puts "\nUnhandled error processing #{ext}: #{e.message}"
-          results[idx] = { id: ext, description: "Error: #{e.message}", marketplace: "https://marketplace.visualstudio.com/items?itemName=#{ext}" }
+          results[idx] = { 'id' => ext, 'shortDescription' => "Error: #{e.message}", 'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{ext}" }
           completed += 1
           failed += 1
         end
@@ -151,10 +139,10 @@ if options[:format] == 'recommend'
   puts '  "recommendations": ['
   valid_results.each_with_index do |details, idx|
     puts
-    puts "    \"#{details[:id]}\","
-    puts "    // #{details[:description]}"
-    puts "    // Installs: #{details[:installs].to_i}, Rating: #{details[:weighted_rating]&.round(1)} (#{details[:rating_count]&.to_i} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
-    puts "    // #{details[:marketplace]}"
+    puts "    \"#{details['id']}\","
+    puts "    // #{details['shortDescription']}"
+    puts "    // Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
+    puts "    // #{details['marketplace']}"
   end
   puts '  ]'
   puts '}'
@@ -162,19 +150,19 @@ elsif options[:format] == 'markdown'
   puts "# VS Code Extensions\n"
 
   valid_results.each do |details|
-    puts "- [#{details[:id]}](#{details[:marketplace]})"
-    puts "  > #{details[:description]}"
-    puts "  > Installs: #{details[:installs].to_i}, Rating: #{details[:weighted_rating]&.round(1)} (#{details[:rating_count]&.to_i} ratings)"
+    puts "- [#{details['id']}](#{details['marketplace']})"
+    puts "  > #{details['shortDescription']}"
+    puts "  > Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
     puts
   end
 elsif options[:format] == 'json'
   puts JSON.pretty_generate(valid_results)
 else
   valid_results.each do |details|
-    puts "#{details[:id]}"
-    puts "  Description: #{details[:description]}"
-    puts "  Installs: #{details[:installs].to_i},  Rating: #{details[:weighted_rating]&.round(1)} (#{details[:rating_count]&.to_i} ratings)"
-    puts "  Marketplace: #{details[:marketplace]}"
+    puts "#{details['id']}"
+    puts "  Description: #{details['shortDescription']}"
+    puts "  Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i},  Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
+    puts "  Marketplace: #{details['marketplace']}"
     puts
   end
 end
