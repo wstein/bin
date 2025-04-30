@@ -12,12 +12,13 @@ require 'yaml'
 
 options = {}
 OptionParser.new do |opts|
-  opts.on('--format=FMT', 'Output in specified format (json, markdown, recommend)') do |f|
+  opts.on('--format=FMT', 'Output in specified format (json, markdown, recommend, yaml)') do |f|
     options[:format] = f
   end
   opts.on('-r', '--recommend', 'Output in recommendations format') { options[:format] = 'recommend' }
   opts.on('-j', '--json', 'Output in JSON format') { options[:format] = 'json' }
   opts.on('-m', '--markdown', 'Output in Markdown format') { options[:format] = 'markdown' }
+  opts.on('-y', '--yaml', 'Output in YAML format') { options[:format] = 'yaml' }
 end.parse!
 
 
@@ -157,6 +158,8 @@ elsif options[:format] == 'markdown'
   end
 elsif options[:format] == 'json'
   puts JSON.pretty_generate(valid_results)
+elsif options[:format] == 'yaml'
+  puts valid_results.to_yaml
 else
   valid_results.each do |details|
     puts "#{details['id']}"
