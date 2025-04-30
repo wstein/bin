@@ -1,8 +1,29 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Usage: ruby list_vscode_extensions_with_details.rb
-# Requires: VS Code CLI (`code`) and Ruby with 'net/http' and 'json' (standard)
+# list-vscode-extensions: A tool to list and display details of VS Code extensions
+#
+# This script fetches details about VS Code extensions from the Visual Studio Marketplace
+# and provides formatted output in various formats (json, markdown, yaml, etc.).
+#
+# Usage:
+#   list-vscode-extensions [options]
+#   cat extensions.txt | list-vscode-extensions [options]
+#   code --list-extensions | list-vscode-extensions [options]
+#
+# Input sources (in priority order):
+#   1. File specified with --input
+#   2. STDIN (when piped)
+#   3. Currently installed extensions (via 'code --list-extensions')
+#
+# Formats:
+#   - default: Simple text format with extension details
+#   - recommend: Format suitable for extension recommendations
+#   - markdown: Markdown formatted list with details
+#   - json: JSON output with full details
+#   - yaml: YAML output with full details
+#
+# Requires: VS Code CLI ('code') and Ruby with standard libraries
 
 require 'net/http'
 require 'json'
@@ -11,6 +32,7 @@ require 'io/console'
 require 'yaml'
 require 'time'
 require 'erb'
+require_relative 'vscode_extensions_utils'
 
 options = { workers: 10 }
 OptionParser.new do |opts|
@@ -27,136 +49,209 @@ OptionParser.new do |opts|
   opts.on('--id-with-version', 'Include version in extension id in output') { options[:id_with_version] = true }
 end.parse!
 
-# Helper to read extension list from stdin, file, or VS Code CLI
-def read_extensions(options)
-  input_lines = []
-  if !STDIN.tty? && !STDIN.closed? && !STDIN.eof?
-    input_lines = STDIN.read.split("\n")
-  elsif options[:input]
-    input_lines = File.read(options[:input]).split("\n")
-  end
-  input_lines = input_lines.map(&:strip).reject(&:empty?)
-  if input_lines.empty?
-    # fallback to installed extensions
-    input_lines = `code --list-extensions --show-versions`.split("\n").map(&:strip).reject(&:empty?)
-  end
-  # Remove duplicates
-  input_lines.uniq
-end
+module VscodeExtensions
+  module Utils
+    def self.parse_extensions(ext_lines)
+      ext_lines.map { |line| parse_extension_line(line) }
+    end
 
-# Parse extension list into [id, version] pairs
-def parse_extensions(ext_lines)
-  ext_lines.map do |line|
-    if line.include?('@')
-      id, version = line.split('@', 2)
-      [id, version]
-    else
-      [line, nil]
+    def self.parse_extension_line(line)
+      line.include?('@') ? line.split('@', 2) : [line, nil]
+    end
+
+    def self.print_progress(current, total)
+      bar_width = 40
+      percent = (current.to_f / total * 100).to_i
+      filled = (bar_width * current / total.to_f).to_i
+      bar = '=' * filled + ' ' * (bar_width - filled)
+      $stderr.print "\r[#{bar}] #{current}/#{total} (#{percent}%)"
+      $stderr.flush
+    end
+
+    def self.extract_stat(details, key)
+      stats = details['statistics'] || []
+      case key
+      when :install
+        stats.find { |s| s['statisticName'] == 'install' }&.dig('value')
+      when :rating
+        stats.find { |s| s['statisticName'] == 'averagerating' }&.dig('value')
+      when :rating_count
+        stats.find { |s| s['statisticName'] == 'ratingcount' }&.dig('value')
+      end
+    end
+
+    def self.id_with_version(details, ext_versions, options)
+      id = details['id']
+      if options[:id_with_version]
+        version = ext_versions[id] || details.dig('versions', 0, 'version') || '0.1.0'
+        "#{id}@#{version}"
+      else
+        id
+      end
+    end
+
+    def self.format_flags(details)
+      flags = []
+      flags << 'PRE' if details['preview']
+      flags << 'UNPUBLISHED' if details['unpublished']
+      flags.join(', ')
+    end
+
+    def self.format_last_updated(details)
+      t = details['publishedDate'] || details['lastUpdated']
+      t ? Time.parse(t).strftime('%Y-%m-%d') : 'unknown'
+    rescue StandardError
+      'unknown'
+    end
+
+    def self.bracket_flags(details)
+      f = format_flags(details)
+      f.empty? ? '' : "[#{f}]"
+    end
+
+    def self.output_results(output_io, template, locals)
+      output_io.puts render_erb_template(template, locals)
+    end
+
+    def self.close_output(output_io, options)
+      output_io.close if options[:output]
+    end
+
+    def self.render_erb_template(template, locals)
+      ERB.new(template, trim_mode: '-').result_with_hash(locals)
+    end
+  end
+
+  class ExtensionReader
+    def initialize(options)
+      @options = options
+    end
+
+    def read
+      lines = read_from_stdin || read_from_file || read_from_cli
+      lines.map(&:strip).reject(&:empty?).uniq
+    end
+
+    private
+
+    def read_from_stdin
+      return nil if $stdin.tty? || $stdin.closed? || $stdin.eof?
+
+      $stdin.read.split("\n")
+    rescue StandardError
+      nil
+    end
+
+    def read_from_file
+      return nil unless @options[:input]
+
+      File.read(@options[:input]).split("\n")
+    rescue StandardError
+      nil
+    end
+
+    def read_from_cli
+      `code --list-extensions --show-versions`.split("\n")
+    end
+  end
+
+  # Fetches extension details from the VS Code Marketplace API.
+  class ExtensionFetcher
+    API_URL = 'https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery'
+    API_FLAGS = 914
+    TIMEOUTS = { open: 5, read: 10 }.freeze
+
+    def fetch(extension_id)
+      ext = base_extension_hash(extension_id)
+      data = fetch_data(extension_id)
+      data ? ext.merge(prepare_data(data)) : ext.merge(error_hash)
+    rescue StandardError => e
+      warn_error(extension_id, e)
+      ext.merge(error_hash)
+    end
+
+    private
+
+    def base_extension_hash(extension_id)
+      {
+        'id' => extension_id,
+        'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
+      }
+    end
+
+    def prepare_data(data)
+      data['shortDescription'] ||= 'No description available...'
+      data
+    end
+
+    def error_hash
+      { 'shortDescription' => 'Error fetching details...' }
+    end
+
+    def warn_error(extension_id, err)
+      warn "\nError fetching #{extension_id}: #{err.message}"
+    end
+
+    def fetch_data(extension_id)
+      uri = URI(API_URL)
+      req = build_request(uri, extension_id)
+      http = build_http(uri)
+      res = http.request(req)
+      return parse_response(res) if res.code.to_i == 200
+
+      handle_api_error(res, extension_id)
+      nil
+    end
+
+    def build_request(uri, extension_id)
+      req = Net::HTTP::Post.new(uri)
+      req['Content-Type'] = 'application/json'
+      req['Accept'] = 'application/json;api-version=3.0-preview.1'
+      req.body = {
+        filters: [
+          { criteria: [{ filterType: 7, value: extension_id }] }
+        ],
+        flags: API_FLAGS
+      }.to_json
+      req
+    end
+
+    def build_http(uri)
+      http = Net::HTTP.new(uri.hostname, uri.port)
+      http.use_ssl = true
+      http.open_timeout = TIMEOUTS[:open]
+      http.read_timeout = TIMEOUTS[:read]
+      http
+    end
+
+    def parse_response(res)
+      JSON.parse(res.body).dig('results', 0, 'extensions', 0)
+    end
+
+    def handle_api_error(res, extension_id)
+      if res.code.to_i == 429
+        reset_time = res['X-RateLimit-Reset'] || 'unknown'
+        reset_datetime = reset_time != 'unknown' ? Time.at(reset_time.to_i).strftime('%Y-%m-%d %H:%M:%S') : 'unknown'
+        remaining = res['X-RateLimit-Remaining'] || 0
+        limit = res['X-RateLimit-Limit'] || 'unknown'
+        warn "\nRate limit exceeded for #{extension_id}: Remaining: #{remaining}/#{limit}, Reset: #{reset_datetime}"
+      else
+        warn "\nAPI error for #{extension_id}: #{res.code} - #{res.message}"
+      end
     end
   end
 end
 
-ext_lines = read_extensions(options)
-ext_pairs = parse_extensions(ext_lines)
+# Helper to read extension list from stdin, file, or VS Code CLI
+reader = VscodeExtensions::ExtensionReader.new(options)
+ext_lines = reader.read
+
+ext_pairs = VscodeExtensions::Utils.parse_extensions(ext_lines)
 ext_ids = ext_pairs.map(&:first)
-ext_versions = Hash[ext_pairs.select { |id, v| v }.map { |id, v| [id, v] }]
+ext_versions = Hash[ext_pairs.select { |_id, v| v }.map { |id, v| [id, v] }]
 
 # Query VS Marketplace for extension details
-def fetch_extension_details(extension_id)
-
-  ext = {
-    'id' => extension_id,
-    'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{extension_id}"
-    }
-
-  uri = URI('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery')
-  req = Net::HTTP::Post.new(uri)
-  req['Content-Type'] = 'application/json'
-  req['Accept'] = 'application/json;api-version=3.0-preview.1'
-  req.body = {
-    filters: [
-      { criteria: [ { filterType: 7, value: extension_id } ] }
-    ],
-    flags: 914
-  }.to_json
-
-  http = Net::HTTP.new(uri.hostname, uri.port)
-  http.use_ssl = true
-  http.open_timeout = 5  # 5 seconds timeout for opening connection
-  http.read_timeout = 10 # 10 seconds timeout for reading data
-
-  res = http.request(req)
-
-
-  if res.code.to_i == 200
-    json = JSON.parse(res.body)
-    data = json.dig('results', 0, 'extensions', 0)
-
-    data['shortDescription'] ||= 'No description available...'
-    ext.merge(data) if data
-  else
-    if res.code.to_i == 429
-      reset_time = res['X-RateLimit-Reset'] || 'unknown'
-      reset_datetime = reset_time != 'unknown' ? Time.at(reset_time.to_i).strftime('%Y-%m-%d %H:%M:%S') : 'unknown'
-      remaining = res['X-RateLimit-Remaining'] || 0
-      limit = res['X-RateLimit-Limit'] || 'unknown'
-      STDERR.puts "\nRate limit exceeded for #{extension_id}: Remaining: #{remaining}/#{limit}, Reset: #{reset_datetime}"
-    else
-      STDERR.puts "\nAPI error for #{extension_id}: #{res.code} - #{res.message}"
-    end
-    ext.merge({ 'shortDescription' => 'Error fetching details...' })
-  end
-rescue => e
-  STDERR.puts "\nError fetching #{extension_id}: #{e.message}"
-  ext.merge({ 'shortDescription' => 'Error fetching details...' })
-end
-
-completed = 0
-mutex = Mutex.new
-
-def print_progress(current, total)
-  bar_width = 40
-  percent = (current.to_f / total * 100).to_i
-  filled = (bar_width * current / total.to_f).to_i
-  bar = '=' * filled + ' ' * (bar_width - filled)
-  STDERR.print "\r[#{bar}] #{current}/#{total} (#{percent}%)"
-  STDERR.flush
-end
-
-# Helper to extract statistics
-STAT_NAMES = {
-  install: 'install',
-  rating: 'weightedRating',
-  rating_count: 'ratingcount'
-}
-def extract_stat(details, stat)
-  details['statistics']&.find { |s| s['statisticName'] == STAT_NAMES[stat] }&.dig('value')
-end
-
-def format_last_updated(details)
-  last_updated = details['publishedDate'] || details['lastUpdated']
-  last_updated ? Time.parse(last_updated).strftime('%Y-%m-%d') : 'unknown'
-end
-
-def id_with_version(details, ext_versions, options)
-  if options[:id_with_version]
-    version = ext_versions[details['id']] || details['versions']&.first&.dig('version') || 'unknown'
-    "#{details['id']}@#{version}"
-  else
-    details['id']
-  end
-end
-
-# Add helper to format flags
-def format_flags(details)
-  details['flags'] ? details['flags'].split(',').map(&:strip).map { |f| "*#{f}*" }.join(' ') : ''
-end
-
-# Add helper to format flags in brackets for default output
-def bracket_flags(details)
-  flags = details['flags'] ? details['flags'].split(',').map(&:strip).join(', ') : ''
-  flags.empty? ? '' : "[#{flags}]"
-end
+fetcher = VscodeExtensions::ExtensionFetcher.new
 
 # Parallel fetching with specified number of workers
 queue = Queue.new
@@ -168,90 +263,73 @@ failed = 0
 
 workers = options[:workers].times.map do
   Thread.new do
-    while true
+    loop do
       begin
         item = mutex.synchronize { queue.pop(true) } # Will raise error when queue is empty
       rescue ThreadError
-        break  # Queue is empty, exit the thread
+        break # Queue is empty, exit the thread
       end
 
       idx, ext = item
       begin
-        details = fetch_extension_details(ext)
+        details = fetcher.fetch(ext)
         mutex.synchronize do
           results[idx] = details
           completed += 1
-          if details['shortDescription'].empty? && details['id']
-            failed += 1
-          end
+          failed += 1 if details['shortDescription'].empty? && details['id']
         end
-      rescue => e
+      rescue StandardError => e
         mutex.synchronize do
-          STDERR.puts "\nUnhandled error processing #{ext}: #{e.message}"
+          warn "\nUnhandled error processing #{ext}: #{e.message}"
           results[idx] = { 'id' => ext, 'shortDescription' => "Error: #{e.message}", 'marketplace' => "https://marketplace.visualstudio.com/items?itemName=#{ext}" }
           completed += 1
           failed += 1
         end
       ensure
-        print_progress(completed, ext_ids.size)
+        VscodeExtensions::Utils.print_progress(completed, ext_ids.size)
       end
     end
   end
 end
 
 workers.each(&:join)
-STDERR.puts "\nCompleted #{completed}/#{ext_ids.size} extensions (#{failed} with errors)"
+warn "\nCompleted #{completed}/#{ext_ids.size} extensions (#{failed} with errors)"
 
 # Process only valid results, sort by id
 valid_results = results.compact.sort_by { |d| d['id'] }
-STDERR.puts "Retrieved #{valid_results.size} extension details"
+warn "Retrieved #{valid_results.size} extension details"
 
 # Output to file or stdout
 output_io = options[:output] ? File.open(options[:output], 'w') : $stdout
 
-def output_puts(io, str)
-  io.puts str
-end
-
-def output_close(io, options)
-  io.close if options[:output]
-end
-
-def render_erb_template(template_str, locals)
-  valid_results = locals[:valid_results]
-  ext_versions  = locals[:ext_versions]
-  options       = locals[:options]
-  ERB.new(template_str, trim_mode: '-').result(binding)
-end
-
 templates = {
   'recommend' => %q{
     {<% valid_results.each do |details| %>
-      "<%= id_with_version(details, ext_versions, options) %>",  // <%= format_flags(details) %>
+      "<%= VscodeExtensions::Utils.id_with_version(details, ext_versions, options) %>",  // <%= VscodeExtensions::Utils.format_flags(details) %>
       // <%= details['shortDescription'] %>
-      // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings) on <%= Time.now.strftime('%Y-%m-%d') %>
+      // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>, Installs: <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %>, Rating: <%= VscodeExtensions::Utils.extract_stat(details, :rating)&.round(1) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings) on <%= Time.now.strftime('%Y-%m-%d') %>
       // <%= details['marketplace'] %>
     <% end %>}
   },
   'markdown' => %q{
     # VS Code Extensions
     <% valid_results.each do |details| %>
-    - [<%= id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>)<%= format_flags(details).empty? ? '' : " #{format_flags(details)}" %>
+    - [<%= VscodeExtensions::Utils.id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>)<%= VscodeExtensions::Utils.format_flags(details).empty? ? '' : " #{VscodeExtensions::Utils.format_flags(details)}" %>
       > <%= details['shortDescription'] %>
-      > Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %>, Installs: <%= extract_stat(details, :install).to_i %>, Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
+      > Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>, Installs: <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %>, Rating: <%= VscodeExtensions::Utils.extract_stat(details, :rating)&.round(1) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings)
     <% end %>
   },
-  'json' => %q{
-    <%= JSON.pretty_generate(valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }) %>
-  },
-  'yaml' => %q{
-    <%= valid_results.map { |details| d = details.dup; d['id'] = id_with_version(details, ext_versions, options); d }.to_yaml %>
-  },
+  'json' => "
+    <%= JSON.pretty_generate(valid_results.map { |details| d = details.dup; d['id'] = VscodeExtensions::Utils.id_with_version(details, ext_versions, options); d }) %>
+  ",
+  'yaml' => "
+    <%= valid_results.map { |details| d = details.dup; d['id'] = VscodeExtensions::Utils.id_with_version(details, ext_versions, options); d }.to_yaml %>
+  ",
   'default' => %q{
     <% valid_results.each do |details| %>
-    <%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '0.1.0'}" : "" %><%= bracket_flags(details).empty? ? '' : " #{bracket_flags(details)}" %>
+    <%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '0.1.0'}" : "" %><%= VscodeExtensions::Utils.bracket_flags(details).empty? ? '' : " #{VscodeExtensions::Utils.bracket_flags(details)}" %>
       Description: <%= details['shortDescription'] %>
-      Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= format_last_updated(details) %> Installs: <%= extract_stat(details, :install).to_i %>,  Rating: <%= extract_stat(details, :rating)&.round(1) %> (<%= extract_stat(details, :rating_count).to_i %> ratings)
+      Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %> Installs: <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %>, Rating: <%= VscodeExtensions::Utils.extract_stat(details, :rating)&.round(1) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings)
       Marketplace: <%= details['marketplace'] %>
     <% end %>
   }
@@ -260,11 +338,10 @@ templates = {
 # Add default format if not specified and validate
 options[:format] ||= 'default'
 unless templates.key?(options[:format])
-  STDERR.puts "Unknown format: #{options[:format]}. Using default."
+  warn "Unknown format: #{options[:format]}. Using default."
   options[:format] = 'default'
 end
 
-output_puts(output_io, render_erb_template(templates[options[:format]].gsub(/^\s{4}/, ''),  # Remove leading whitespace
-  {valid_results: valid_results, ext_versions: ext_versions, options: options}))
-
-output_close(output_io, options)
+VscodeExtensions::Utils.output_results(output_io, templates[options[:format]].gsub(/^\s{4}/, ''),
+                                       { valid_results: valid_results, ext_versions: ext_versions, options: options })
+VscodeExtensions::Utils.close_output(output_io, options)
