@@ -11,7 +11,7 @@ require 'io/console'
 require 'yaml'
 require 'time'
 
-options = {}
+options = { workers: 10 }
 OptionParser.new do |opts|
   opts.on('--format=FMT', 'Output in specified format (json, markdown, recommend, yaml)') do |f|
     options[:format] = f
@@ -20,11 +20,17 @@ OptionParser.new do |opts|
   opts.on('-j', '--json', 'Output in JSON format') { options[:format] = 'json' }
   opts.on('-m', '--markdown', 'Output in Markdown format') { options[:format] = 'markdown' }
   opts.on('-y', '--yaml', 'Output in YAML format') { options[:format] = 'yaml' }
+  opts.on('--workers=N', Integer, 'Number of parallel workers (default: 10)') { |n| options[:workers] = n }
 end.parse!
 
 
-# Get list of installed extensions
-extensions = `code --list-extensions`.split("\n").map(&:strip).reject(&:empty?)
+# Get list of installed extensions with versions
+extensions_with_versions = `code --list-extensions --show-versions`.split("\n").map(&:strip).reject(&:empty?)
+extensions = extensions_with_versions.map { |ext_with_version| ext_with_version.split('@').first }
+extension_versions = Hash[extensions_with_versions.map { |ext_with_version|
+  parts = ext_with_version.split('@')
+  [parts.first, parts.last] if parts.size > 1
+}.compact]
 
 # Query VS Marketplace for extension details
 def fetch_extension_details(extension_id)
@@ -88,7 +94,22 @@ def print_progress(current, total)
   STDERR.flush
 end
 
-# Parallel fetching with 10 workers
+# Helper to extract statistics
+STAT_NAMES = {
+  install: 'install',
+  rating: 'weightedRating',
+  rating_count: 'ratingcount'
+}
+def extract_stat(details, stat)
+  details['statistics']&.find { |s| s['statisticName'] == STAT_NAMES[stat] }&.dig('value')
+end
+
+def format_last_updated(details)
+  last_updated = details['publishedDate'] || details['lastUpdated']
+  last_updated ? Time.parse(last_updated).strftime('%Y-%m-%d') : 'unknown'
+end
+
+# Parallel fetching with specified number of workers
 queue = Queue.new
 extensions.each_with_index { |ext, idx| queue << [idx, ext] }
 results = Array.new(extensions.size)
@@ -96,7 +117,7 @@ mutex = Mutex.new
 completed = 0
 failed = 0
 
-workers = 10.times.map do
+workers = options[:workers].times.map do
   Thread.new do
     while true
       begin
@@ -132,22 +153,22 @@ end
 workers.each(&:join)
 STDERR.puts "\nCompleted #{completed}/#{extensions.size} extensions (#{failed} with errors)"
 
-# Process only valid results
-valid_results = results.compact
+# Process only valid results, sort by id
+valid_results = results.compact.sort_by { |d| d['id'] }
 STDERR.puts "Retrieved #{valid_results.size} extension details"
 
 if options[:format] == 'recommend'
   puts '{'
   puts '  "recommendations": ['
   valid_results.each_with_index do |details, idx|
-    # Get the lastUpdated date
-    last_updated = details['publishedDate'] || details['lastUpdated']
-    last_updated_date = last_updated ? Time.parse(last_updated).strftime("%Y-%m-%d") : 'unknown'
-
+    last_updated_date = format_last_updated(details)
+    installs = extract_stat(details, :install).to_i
+    rating = extract_stat(details, :rating)&.round(1)
+    rating_count = extract_stat(details, :rating_count).to_i
     puts
     puts "    \"#{details['id']}\", // #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
     puts "    // #{details['shortDescription']}"
-    puts "    // Last Updated: #{last_updated_date}, Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
+    puts "    // Last Updated: #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
     puts "    // #{details['marketplace']}"
   end
   puts '  ]'
@@ -155,15 +176,14 @@ if options[:format] == 'recommend'
 elsif options[:format] == 'markdown'
   puts "# VS Code Extensions"
   puts
-
   valid_results.each do |details|
-    # Get the lastUpdated date
-    last_updated = details['publishedDate'] || details['lastUpdated']
-    last_updated_date = last_updated ? Time.parse(last_updated).strftime("%Y-%m-%d") : 'unknown'
-
+    last_updated_date = format_last_updated(details)
+    installs = extract_stat(details, :install).to_i
+    rating = extract_stat(details, :rating)&.round(1)
+    rating_count = extract_stat(details, :rating_count).to_i
     puts "- [#{details['id']}](#{details['marketplace']}) #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
     puts "  > #{details['shortDescription']}"
-    puts "  > Last Updated: #{last_updated_date}, Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
+    puts "  > Last Updated: #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings)"
     puts
   end
 elsif options[:format] == 'json'
@@ -172,13 +192,13 @@ elsif options[:format] == 'yaml'
   puts valid_results.to_yaml
 else
   valid_results.each do |details|
-    # Get the lastUpdated date
-    last_updated = details['publishedDate'] || details['lastUpdated']
-    last_updated_date = last_updated ? Time.parse(last_updated).strftime("%Y-%m-%d") : 'unknown'
-
+    last_updated_date = format_last_updated(details)
+    installs = extract_stat(details, :install).to_i
+    rating = extract_stat(details, :rating)&.round(1)
+    rating_count = extract_stat(details, :rating_count).to_i
     puts "#{details['id']} #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
     puts "  Description: #{details['shortDescription']}"
-    puts "  Last Updated: #{last_updated_date} Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i},  Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
+    puts "  Last Updated: #{last_updated_date} Installs: #{installs},  Rating: #{rating} (#{rating_count} ratings)"
     puts "  Marketplace: #{details['marketplace']}"
     puts
   end
