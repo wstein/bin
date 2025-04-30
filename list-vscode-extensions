@@ -21,16 +21,43 @@ OptionParser.new do |opts|
   opts.on('-m', '--markdown', 'Output in Markdown format') { options[:format] = 'markdown' }
   opts.on('-y', '--yaml', 'Output in YAML format') { options[:format] = 'yaml' }
   opts.on('--workers=N', Integer, 'Number of parallel workers (default: 10)') { |n| options[:workers] = n }
+  opts.on('-o', '--output=FILE', 'Write output to FILE instead of stdout') { |file| options[:output] = file }
+  opts.on('-i', '--input=FILE', 'Read extension list from FILE') { |file| options[:input] = file }
 end.parse!
 
+# Helper to read extension list from stdin, file, or VS Code CLI
+def read_extensions(options)
+  input_lines = []
+  if !STDIN.tty? && !STDIN.closed? && !STDIN.eof?
+    input_lines = STDIN.read.split("\n")
+  elsif options[:input]
+    input_lines = File.read(options[:input]).split("\n")
+  end
+  input_lines = input_lines.map(&:strip).reject(&:empty?)
+  if input_lines.empty?
+    # fallback to installed extensions
+    input_lines = `code --list-extensions --show-versions`.split("\n").map(&:strip).reject(&:empty?)
+  end
+  # Remove duplicates
+  input_lines.uniq
+end
 
-# Get list of installed extensions with versions
-extensions_with_versions = `code --list-extensions --show-versions`.split("\n").map(&:strip).reject(&:empty?)
-extensions = extensions_with_versions.map { |ext_with_version| ext_with_version.split('@').first }
-extension_versions = Hash[extensions_with_versions.map { |ext_with_version|
-  parts = ext_with_version.split('@')
-  [parts.first, parts.last] if parts.size > 1
-}.compact]
+# Parse extension list into [id, version] pairs
+def parse_extensions(ext_lines)
+  ext_lines.map do |line|
+    if line.include?('@')
+      id, version = line.split('@', 2)
+      [id, version]
+    else
+      [line, nil]
+    end
+  end
+end
+
+ext_lines = read_extensions(options)
+ext_pairs = parse_extensions(ext_lines)
+ext_ids = ext_pairs.map(&:first)
+ext_versions = Hash[ext_pairs.select { |id, v| v }.map { |id, v| [id, v] }]
 
 # Query VS Marketplace for extension details
 def fetch_extension_details(extension_id)
@@ -111,8 +138,8 @@ end
 
 # Parallel fetching with specified number of workers
 queue = Queue.new
-extensions.each_with_index { |ext, idx| queue << [idx, ext] }
-results = Array.new(extensions.size)
+ext_ids.each_with_index { |ext, idx| queue << [idx, ext] }
+results = Array.new(ext_ids.size)
 mutex = Mutex.new
 completed = 0
 failed = 0
@@ -144,62 +171,65 @@ workers = options[:workers].times.map do
           failed += 1
         end
       ensure
-        print_progress(completed, extensions.size)
+        print_progress(completed, ext_ids.size)
       end
     end
   end
 end
 
 workers.each(&:join)
-STDERR.puts "\nCompleted #{completed}/#{extensions.size} extensions (#{failed} with errors)"
+STDERR.puts "\nCompleted #{completed}/#{ext_ids.size} extensions (#{failed} with errors)"
 
 # Process only valid results, sort by id
 valid_results = results.compact.sort_by { |d| d['id'] }
 STDERR.puts "Retrieved #{valid_results.size} extension details"
 
+# Output to file or stdout
+output_io = options[:output] ? File.open(options[:output], 'w') : $stdout
+
+def output_puts(io, str)
+  io.puts str
+end
+
+def output_close(io, options)
+  io.close if options[:output]
+end
+
 if options[:format] == 'recommend'
-  puts '{'
-  puts '  "recommendations": ['
+  output_puts(output_io, '{')
+  output_puts(output_io, '  "recommendations": [')
   valid_results.each_with_index do |details, idx|
     last_updated_date = format_last_updated(details)
     installs = extract_stat(details, :install).to_i
     rating = extract_stat(details, :rating)&.round(1)
     rating_count = extract_stat(details, :rating_count).to_i
-    puts
-    puts "    \"#{details['id']}\", // #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
-    puts "    // #{details['shortDescription']}"
-    puts "    // Last Updated: #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
-    puts "    // #{details['marketplace']}"
+    output_puts(output_io, "\n    \"#{details['id']}\", // #{details['versions']&.first&.dig('version') || ext_versions[details['id']] || 'unknown'} [#{details['flags']}]")
+    output_puts(output_io, "    // #{details['shortDescription']}")
+    output_puts(output_io, "    // Last Updated: #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings) on #{Time.now.strftime("%Y-%m-%d")}")
+    output_puts(output_io, "    // #{details['marketplace']}")
   end
-  puts '  ]'
-  puts '}'
+  output_puts(output_io, '  ]')
+  output_puts(output_io, '}')
 elsif options[:format] == 'markdown'
-  puts "# VS Code Extensions"
-  puts
+  output_puts(output_io, "# VS Code Extensions\n")
   valid_results.each do |details|
     last_updated_date = format_last_updated(details)
     installs = extract_stat(details, :install).to_i
     rating = extract_stat(details, :rating)&.round(1)
     rating_count = extract_stat(details, :rating_count).to_i
-    puts "- [#{details['id']}](#{details['marketplace']}) #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
-    puts "  > #{details['shortDescription']}"
-    puts "  > Last Updated: #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings)"
-    puts
+    output_puts(output_io, "- [#{details['id']}](#{details['marketplace']}) #{details['versions']&.first&.dig('version') || ext_versions[details['id']] || 'unknown'} [#{details['flags']}]\n  > #{details['shortDescription']}\n  > Last Updated: #{last_updated_date}, Installs: #{installs}, Rating: #{rating} (#{rating_count} ratings)\n")
   end
 elsif options[:format] == 'json'
-  puts JSON.pretty_generate(valid_results)
+  output_puts(output_io, JSON.pretty_generate(valid_results))
 elsif options[:format] == 'yaml'
-  puts valid_results.to_yaml
+  output_puts(output_io, valid_results.to_yaml)
 else
   valid_results.each do |details|
     last_updated_date = format_last_updated(details)
     installs = extract_stat(details, :install).to_i
     rating = extract_stat(details, :rating)&.round(1)
     rating_count = extract_stat(details, :rating_count).to_i
-    puts "#{details['id']} #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
-    puts "  Description: #{details['shortDescription']}"
-    puts "  Last Updated: #{last_updated_date} Installs: #{installs},  Rating: #{rating} (#{rating_count} ratings)"
-    puts "  Marketplace: #{details['marketplace']}"
-    puts
+    output_puts(output_io, "#{details['id']} #{details['versions']&.first&.dig('version') || ext_versions[details['id']] || 'unknown'} [#{details['flags']}]\n  Description: #{details['shortDescription']}\n  Last Updated: #{last_updated_date} Installs: #{installs},  Rating: #{rating} (#{rating_count} ratings)\n  Marketplace: #{details['marketplace']}\n")
   end
 end
+output_close(output_io, options)
