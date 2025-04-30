@@ -9,6 +9,7 @@ require 'json'
 require 'optparse'
 require 'io/console'
 require 'yaml'
+require 'time'
 
 options = {}
 OptionParser.new do |opts|
@@ -139,21 +140,30 @@ if options[:format] == 'recommend'
   puts '{'
   puts '  "recommendations": ['
   valid_results.each_with_index do |details, idx|
+    # Get the lastUpdated date
+    last_updated = details['publishedDate'] || details['lastUpdated']
+    last_updated_date = last_updated ? Time.parse(last_updated).strftime("%Y-%m-%d") : 'unknown'
+
     puts
-    puts "    \"#{details['id']}\","
+    puts "    \"#{details['id']}\", // #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
     puts "    // #{details['shortDescription']}"
-    puts "    // Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
+    puts "    // Last Updated: #{last_updated_date}, Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings) on #{Time.now.strftime("%Y-%m-%d")}"
     puts "    // #{details['marketplace']}"
   end
   puts '  ]'
   puts '}'
 elsif options[:format] == 'markdown'
-  puts "# VS Code Extensions\n"
+  puts "# VS Code Extensions"
+  puts
 
   valid_results.each do |details|
-    puts "- [#{details['id']}](#{details['marketplace']})"
+    # Get the lastUpdated date
+    last_updated = details['publishedDate'] || details['lastUpdated']
+    last_updated_date = last_updated ? Time.parse(last_updated).strftime("%Y-%m-%d") : 'unknown'
+
+    puts "- [#{details['id']}](#{details['marketplace']}) #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
     puts "  > #{details['shortDescription']}"
-    puts "  > Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
+    puts "  > Last Updated: #{last_updated_date}, Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i}, Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
     puts
   end
 elsif options[:format] == 'json'
@@ -162,9 +172,13 @@ elsif options[:format] == 'yaml'
   puts valid_results.to_yaml
 else
   valid_results.each do |details|
-    puts "#{details['id']}"
+    # Get the lastUpdated date
+    last_updated = details['publishedDate'] || details['lastUpdated']
+    last_updated_date = last_updated ? Time.parse(last_updated).strftime("%Y-%m-%d") : 'unknown'
+
+    puts "#{details['id']} #{details['versions']&.first&.dig('version') || 'unknown'} [#{details['flags']}]"
     puts "  Description: #{details['shortDescription']}"
-    puts "  Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i},  Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
+    puts "  Last Updated: #{last_updated_date} Installs: #{details['statistics']&.find { |stat| stat['statisticName'] == 'install' }&.dig('value').to_i},  Rating: #{details['statistics']&.find { |stat| stat['statisticName'] == 'weightedRating' }&.dig('value')&.round(1)} (#{details['statistics']&.find { |stat| stat['statisticName'] == 'ratingcount' }&.dig('value').to_i} ratings)"
     puts "  Marketplace: #{details['marketplace']}"
     puts
   end
