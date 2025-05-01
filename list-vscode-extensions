@@ -111,9 +111,7 @@ module VscodeExtensions
 
     def self.stars(rating, max = 5)
       return '' unless rating
-      full = rating.round
-      empty = max - full
-      '★' * full + '☆' * empty
+      '⭐' * rating.round
     end
   end
 
@@ -300,18 +298,18 @@ output_io = options[:output] ? File.open(options[:output], 'w') : $stdout
 templates = {
   'recommend' => %q{
     {<% valid_results.each do |details| %>
-      "<%= VscodeExtensions::Utils.id_with_version(details, ext_versions, options) %>",
       // <%= details['shortDescription'] %>
-      // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>, Installs: <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %>, Rating: <%= VscodeExtensions::Utils.extract_stat(details, :rating)&.round(1) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings) on <%= Time.now.strftime('%Y-%m-%d') %>
+      "<%= VscodeExtensions::Utils.id_with_version(details, ext_versions, options) %>", // Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>
+      // Rating: <%= (VscodeExtensions::Utils.extract_stat(details, :rating) || 0).round(1) %> <%= VscodeExtensions::Utils.stars(VscodeExtensions::Utils.extract_stat(details, :rating) || 0) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings) and <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %> installs on <%= Time.now.strftime('%Y-%m-%d') %>
       // <%= details['marketplace'] %>
     <% end %>}
   },
   'markdown' => %q{
     # VS Code Extensions
     <% valid_results.each do |details| %>
-    - [<%= VscodeExtensions::Utils.id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>)
-      > <%= details['shortDescription'] %>
-      > Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>, Installs: <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %>, Rating: <%= VscodeExtensions::Utils.extract_stat(details, :rating)&.round(1) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings)
+    - [<%= VscodeExtensions::Utils.id_with_version(details, ext_versions, options) %>](<%= details['marketplace'] %>) Rating: <%= (VscodeExtensions::Utils.extract_stat(details, :rating) || 0).round(1) %> <%= VscodeExtensions::Utils.stars(VscodeExtensions::Utils.extract_stat(details, :rating) || 0) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings) and <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %> installs on <%= Time.now.strftime('%Y-%m-%d') %>
+      <br/><%= details['shortDescription'] %>
+      <br/>Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>
     <% end %>
   },
   'json' => "
@@ -322,9 +320,9 @@ templates = {
   ",
   'default' => %q{
     <% valid_results.each do |details| %>
-    <%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '0.1.0'}" : "" %>
+    <%= details['id'] %><%= options[:id_with_version] ? "@#{ext_versions[details['id']] || '-'}" : "" %> Rating: <%= (VscodeExtensions::Utils.extract_stat(details, :rating) || 0).round(1) %> <%= VscodeExtensions::Utils.stars(VscodeExtensions::Utils.extract_stat(details, :rating) || 0) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings) and <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %> installs on <%= Time.now.strftime('%Y-%m-%d') %>
       Description: <%= details['shortDescription'] %>
-      Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %> Installs: <%= VscodeExtensions::Utils.extract_stat(details, :install).to_i %>, Rating: <%= VscodeExtensions::Utils.extract_stat(details, :rating)&.round(1) || '-' %> <%= VscodeExtensions::Utils.stars(VscodeExtensions::Utils.extract_stat(details, :rating) || 0) %> (<%= VscodeExtensions::Utils.extract_stat(details, :rating_count).to_i %> ratings)
+      Latest <%= details['versions']&.first&.dig('version') || 'unknown' %> - <%= VscodeExtensions::Utils.format_last_updated(details) %>
       Marketplace: <%= details['marketplace'] %>
     <% end %>
   }
