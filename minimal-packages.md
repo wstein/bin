@@ -4,80 +4,96 @@ This file documents a cross-distro list of recommended packages for minimal Linu
 
 ## Package list
 
-| fedora          | debian                  | ubuntu                  | rhel           | alpine         | arch     | opensuse       | photon         |
-|-----------------|-------------------------|-------------------------|----------------|----------------|----------|----------------|----------------|
-| aria2           |                         |                         | n/a            |                |          |                | n/a            |
-| bash-completion |                         |                         |                |                |          |                | n/a            |
-| byobu           |                         |                         | n/a            |                |          |                | n/a            |
-| bzip2           |                         |                         |                |                |          |                |                |
-| cloud-utils     |                         |                         | n/a            |                |          | n/a            | n/a            |
-| ctags           | universal-ctags         | universal-ctags         | n/a            |                |          |                |                |
-| curl            |                         |                         | n/a            |                |          |                |                |
-| darkhttpd       | n/a                     | n/a                     | n/a            |                |          |                | n/a            |
-| diffutils       |                         |                         |                |                |          |                |                |
-| dirmngr         |                         |                         |                |                | n/a      |                | n/a            |
-| doas            |                         |                         | n/a            |                |          |                | n/a            |
-| eza             | exa                     |                         | n/a            |                |          |                | n/a            |
-| fd-find         |                         | fd                      | n/a            | fd             | fd       |                | n/a            |
-| findutils       |                         |                         |                |                |          |                |                |
-| fping           |                         |                         | n/a            |                |          |                |                |
-| fzf             |                         |                         | n/a            |                |          |                | n/a            |
-| git             |                         |                         |                |                |          |                |                |
-| gnupg           |                         |                         | gnupg2         |                |          |                |                |
-| gzip            |                         |                         |                |                |          |                |                |
-| htop            |                         |                         | n/a            |                |          |                | n/a            |
-| inotify-tools   |                         |                         | n/a            |                |          |                |                |
-| iproute         | iproute2                | iproute2                |                | iproute2       |          |                | iproute2       |
-| iptraf-ng       |                         |                         | n/a            |                |          |                |                |
-| jq              |                         |                         |                |                |          |                |                |
-| kitty-terminfo  |                         |                         | n/a            |                |          |                | n/a            |
-| libnsl          | n/a                     | n/a                     |                |                |          | n/a            |                |
-| lshw            |                         |                         |                |                |          |                |                |
-| lz4             |                         |                         |                |                |          |                |                |
-| lzip            |                         |                         | n/a            |                |          |                | n/a            |
-| lzop            |                         | lzo                     |                |                |          |                | n/a            |
-| make            |                         |                         |                |                |          |                |                |
-| mkpasswd        | libstring-mkpasswd-perl | libstring-mkpasswd-perl |                |                | whois    |                |                |
-| moreutils       |                         |                         | n/a            |                |          | n/a            | n/a            |
-| neovim          |                         |                         | vim            |                |          |                | vim            |
-| net-snmp-utils  | snmp                    | snmp                    |                | net-snmp-tools | net-snmp |                | net-snmp       |
-| nethogs         |                         |                         | n/a            |                |          |                | n/a            |
-| openssh-server  |                         |                         |                |                | openssh  |                |                |
-| pass            |                         |                         | n/a            |                |          | password-store | password-store |
-| patch           |                         |                         |                |                |          |                |                |
-| procps          |                         |                         | procps-ng      |                |          |                | n/a            |
-| pv              |                         |                         | n/a            |                |          |                | n/a            |
-| qrencode        |                         | libqrencode             | n/a            | libqrencode    |          |                | n/a            |
-| ripgrep         |                         |                         | n/a            |                |          | n/a            | n/a            |
-| rlwrap          |                         |                         | n/a            |                |          |                | n/a            |
-| rsync           |                         |                         |                |                |          |                |                |
-| ruby            |                         |                         |                |                |          |                |                |
-| sl              |                         |                         | n/a            |                |          |                | n/a            |
-| socat           |                         |                         |                |                |          |                |                |
-| sqlite          | sqlite3                 | sqlite3                 |                |                | sqlite3  | sqlite3        | sqlite3        |
-| sshpass         |                         |                         |                |                |          |                |                |
-| strace          |                         |                         |                |                |          |                |                |
-| sudo            |                         |                         |                |                |          |                |                |
-| tar             |                         |                         |                |                |          |                |                |
-| tig             |                         |                         | n/a            |                |          |                | n/a            |
-| tmux            |                         |                         |                |                |          |                |                |
-| unzip           |                         |                         |                |                |          |                |                |
-| util-linux      |                         |                         |                |                |          |                |                |
-| virt-what       |                         |                         | n/a            |                |          |                | n/a            |
-| wget            |                         |                         |                |                |          |                |                |
-| xmlstarlet      |                         |                         |                |                |          |                |                |
-| xz              | xz-utils                | xz-utils                |                |                |          |                |                |
-| zip             |                         |                         |                |                |          |                |                |
-| zsh             |                         |                         |                |                |          |                |                |
-| zstd            |                         |                         |                |                |          |                |                |
+| fedora             | debian                  | ubuntu                  | rhel           | alpine         | arch     | opensuse       | photon         |
+|--------------------|-------------------------|-------------------------|----------------|----------------|----------|----------------|----------------|
+| aria2              |                         |                         | n/a            |                |          |                | n/a            |
+| bash-completion    |                         |                         |                |                |          |                | n/a            |
+| byobu              |                         |                         | n/a            |                |          |                | n/a            |
+| bzip2              |                         |                         |                |                |          |                |                |
+| cloud-utils        |                         |                         | n/a            |                |          | n/a            | n/a            |
+| ctags              | universal-ctags         | universal-ctags         | n/a            |                |          |                |                |
+| curl               |                         |                         | n/a            |                |          |                |                |
+| darkhttpd          | n/a                     | n/a                     | n/a            |                |          |                | n/a            |
+| diffutils          |                         |                         |                |                |          |                |                |
+| dirmngr            |                         |                         |                |                | n/a      |                | n/a            |
+| doas               |                         |                         | n/a            |                |          |                | n/a            |
+| eza                | exa                     |                         | n/a            |                |          |                | n/a            |
+| fd-find            |                         | fd                      | n/a            | fd             | fd       |                | n/a            |
+| findutils          |                         |                         |                |                |          |                |                |
+| fping              |                         |                         | n/a            |                |          |                |                |
+| fzf                |                         |                         | n/a            |                |          |                | n/a            |
+| git                |                         |                         |                |                |          |                |                |
+| gnupg              |                         |                         | gnupg2         |                |          |                |                |
+| gzip               |                         |                         |                |                |          |                |                |
+| htop               |                         |                         | n/a            |                |          |                | n/a            |
+| inotify-tools      |                         |                         | n/a            |                |          |                |                |
+| iproute            | iproute2                | iproute2                |                | iproute2       |          |                | iproute2       |
+| iptraf-ng          |                         |                         | n/a            |                |          |                |                |
+| jq                 |                         |                         |                |                |          |                |                |
+| kitty-terminfo     |                         |                         | n/a            |                |          |                | n/a            |
+| libnsl             | n/a                     | n/a                     |                |                |          | n/a            |                |
+| lolcat             |                         |                         |                |                |          |                |                |
+| lshw               |                         |                         |                |                |          |                |                |
+| lz4                |                         |                         |                |                |          |                |                |
+| lzip               |                         |                         | n/a            |                |          |                | n/a            |
+| lzop               |                         | lzo                     |                |                |          |                | n/a            |
+| make               |                         |                         |                |                |          |                |                |
+| mkpasswd           | libstring-mkpasswd-perl | libstring-mkpasswd-perl |                |                | whois    |                |                |
+| moreutils          |                         |                         | n/a            |                |          | n/a            | n/a            |
+| neovim             |                         |                         | vim            |                |          |                | vim            |
+| net-snmp-utils     | snmp                    | snmp                    |                | net-snmp-tools | net-snmp |                | net-snmp       |
+| nethogs            |                         |                         | n/a            |                |          |                | n/a            |
+| openssh-server     |                         |                         |                |                | openssh  |                |                |
+| pass               |                         |                         | n/a            |                |          | password-store | password-store |
+| patch              |                         |                         |                |                |          |                |                |
+| procps             |                         |                         | procps-ng      |                |          |                | n/a            |
+| pv                 |                         |                         | n/a            |                |          |                | n/a            |
+| qrencode           |                         | libqrencode             | n/a            | libqrencode    |          |                | n/a            |
+| ripgrep            |                         |                         | n/a            |                |          | n/a            | n/a            |
+| rlwrap             |                         |                         | n/a            |                |          |                | n/a            |
+| rsync              |                         |                         |                |                |          |                |                |
+| ruby               |                         |                         |                |                |          |                |                |
+| rubygem-bigdecimal |                         |                         |                |                |          |                |                |
+| rubygem-bundler    |                         |                         |                |                |          |                |                |
+| rubygem-git        |                         |                         |                |                |          |                |                |
+| rubygem-mustache   |                         |                         |                |                |          |                |                |
+| rubygem-optimist   |                         |                         |                |                |          |                |                |
+| rubygem-pastel     |                         |                         |                |                |          |                |                |
+| rubygem-rake       |                         |                         |                |                |          |                |                |
+| rubygem-rdoc       |                         |                         |                |                |          |                |                |
+| rubygem-rspec      |                         |                         |                |                |          |                |                |
+| rubygem-thwait     |                         |                         |                |                |          |                |                |
+| rubygem-tracer     |                         |                         |                |                |          |                |                |
+| rubygem-webrick    |                         |                         |                |                |          |                |                |
+| screen             |                         |                         |                |                |          |                |                |
+| sl                 |                         |                         | n/a            |                |          |                | n/a            |
+| socat              |                         |                         |                |                |          |                |                |
+| sqlite             | sqlite3                 | sqlite3                 |                |                | sqlite3  | sqlite3        | sqlite3        |
+| sshpass            |                         |                         |                |                |          |                |                |
+| strace             |                         |                         |                |                |          |                |                |
+| sudo               |                         |                         |                |                |          |                |                |
+| tar                |                         |                         |                |                |          |                |                |
+| tig                |                         |                         | n/a            |                |          |                | n/a            |
+| tmux               |                         |                         |                |                |          |                |                |
+| unzip              |                         |                         |                |                |          |                |                |
+| util-linux         |                         |                         |                |                |          |                |                |
+| virt-what          |                         |                         | n/a            |                |          |                | n/a            |
+| wget               |                         |                         |                |                |          |                |                |
+| xmlstarlet         |                         |                         |                |                |          |                |                |
+| xz                 | xz-utils                | xz-utils                |                |                |          |                |                |
+| zip                |                         |                         |                |                |          |                |                |
+| zsh                |                         |                         |                |                |          |                |                |
+| zstd               |                         |                         |                |                |          |                |                |
 
 **Notes:**
+
 - If a package is renamed, the table shows the actual name used for that distro.
 - The `n/a` entries indicate that the package is not applicable or not available for that distro.
 
 ## Version-specific package rules
 
 These rules allow you to customize the package list for specific distributions and versions. Each rule starts with a line like `- distro:version ...` followed by a list of modifications:
+
 - `+pkgname` adds a package for that version.
 - `-pkgname` disables (removes) a package for that version.
 - `pkg1=>pkg2` renames `pkg1` to `pkg2` for that version.
