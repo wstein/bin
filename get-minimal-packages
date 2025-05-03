@@ -2,28 +2,28 @@
 
 # Usage: ./get-minimal-packages [distro] [version]
 # Prints a space-separated list of packages for the given distro and version (default: fedora)
-# Always reads from minimal-packages.md
+# Always reads from $HOME/bin/minimal-packages.md
 
-function trim(s) { sub(/^[ ]+/, "", s); sub(/[ ]+$/, "", s); return s }
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
 BEGIN {
-    # Parse CLI arguments
     distro = (ARGC > 1) ? ARGV[1] : "fedora"
     version = (ARGC > 2) ? ARGV[2] : ""
     distro_lc = tolower(distro)
     version_lc = tolower(version)
     dv_key = (version_lc != "") ? distro_lc "@" version_lc : distro_lc
-    if (ARGC > 2) delete ARGV[2]
-    if (ARGC > 1) delete ARGV[1]
-    ARGV[1] = "minimal-packages.md"
+    for (i = 1; i < ARGC; i++) delete ARGV[i]
+    input_file = ENVIRON["HOME"] "/bin/minimal-packages.md"
+    ARGV[1] = input_file
+    ARGC = 2
     fedora_col = target_col = -1
     pkgs = ""
     header_seen = 0
+    rule_count = 0
 }
 
-/^[-= |]+$/ { next } # skip table separators
+/^[-= |]+$/ { next }
 
-# Parse header to find column indices for fedora and target distro
 /^[|]/ && !header_seen {
     header_seen = 1
     line = $0
@@ -32,12 +32,11 @@ BEGIN {
     for (i = 1; i <= nfields; i++) {
         col = trim(tolower(fields[i]))
         if (col == "fedora") fedora_col = i
-        if (index("," col ",", "," distro_lc ",")) target_col = i
+        if (col == distro_lc) target_col = i
     }
     next
 }
 
-# Process package rows
 /^[|][^|]/ {
     line = $0
     sub(/^[|][ ]*/, "", line)
@@ -51,43 +50,60 @@ BEGIN {
     }
 }
 
-# Store lines for version-specific rules in new format
 /^[ \t]*- +[a-zA-Z0-9_-]+:[0-9.]+/ {
     rule_lines[++rule_count] = $0
 }
 
 END {
-    # Parse version-specific rules in new format
+    delete disables; delete renames; delete adds;
     for (ri = 1; ri <= rule_count; ri++) {
-        n = split(rule_lines[ri], parts, /[ ]+/)
-        rule_key = tolower(parts[2])
-        gsub(":", "@", rule_key)
-        if (rule_key == dv_key) {
-            for (j = 3; j <= n; j++) {
-                part = parts[j]
-                if (part ~ /^-/) disables[tolower(substr(part, 2))]
-                else if (part ~ /=>/) {
-                    split(part, ren, /=>/)
-                    ren_from = tolower(trim(ren[1]))
-                    ren_to = tolower(trim(ren[2]))
-                    renames[ren_from] = ren_to
-                } else if (part ~ /^\+/) adds[tolower(substr(part, 2))]
-            }
+        line = rule_lines[ri]
+        sub(/^[ \t]*-[ \t]+/, "", line)
+        key_end_pos = match(line, /[ \t]+/)
+        if (key_end_pos == 0) continue
+        rule_key_part = substr(line, 1, key_end_pos - 1)
+        rule_content = substr(line, key_end_pos + RLENGTH)
+        sub(/^[ \t]+/, "", rule_content)
+        if (match(rule_key_part, /:/)) {
+             distro_version_split_pos = RSTART
+             rule_distro = tolower(substr(rule_key_part, 1, distro_version_split_pos - 1))
+             rule_version = substr(rule_key_part, distro_version_split_pos + 1)
+             current_rule_key = rule_distro "@" rule_version
+             if (current_rule_key == dv_key) {
+                 gsub(/[ \t]+/, " ", rule_content)
+                 n_rule_parts = split(rule_content, rule_parts, " ")
+                 for (j = 1; j <= n_rule_parts; j++) {
+                     part = rule_parts[j]
+                     if (substr(part, 1, 1) == "-") {
+                         disables[tolower(substr(part, 2))] = 1
+                     } else if (index(part, "=>")) {
+                         split(part, ren, /=>/)
+                         ren_from = tolower(trim(ren[1]))
+                         ren_to = tolower(trim(ren[2]))
+                         renames[ren_from] = ren_to
+                     } else if (substr(part, 1, 1) == "+") {
+                         adds[tolower(substr(part, 2))] = 1
+                     }
+                 }
+             }
         }
     }
-    # Split pkgs into array
     npkgs = split(pkgs, pkgarr, " ")
-    out_pkgs = ""
+    delete out_pkgs_map
     for (i = 1; i <= npkgs; i++) {
         p = tolower(pkgarr[i])
         if (p in renames) p = renames[p]
         if (p in disables) continue
-        if (out_pkgs ~ "(^| )" p "($| )") continue
-        out_pkgs = out_pkgs ? out_pkgs " " p : p
+        out_pkgs_map[p] = 1
     }
     for (a in adds) {
-        if (out_pkgs ~ "(^| )" a "($| )") continue
-        out_pkgs = out_pkgs ? out_pkgs " " a : a
+        out_pkgs_map[a] = 1
     }
-    print out_pkgs
+    final_pkgs_str = ""
+    for (p in out_pkgs_map) {
+        final_pkgs_str = (final_pkgs_str == "") ? p : final_pkgs_str " " p
+    }
+    cmd = "tr ' ' '\\n' | sort | tr '\\n' ' '"
+    print final_pkgs_str | cmd
+    close(cmd)
 }
