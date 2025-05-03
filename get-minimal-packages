@@ -1,0 +1,93 @@
+#!/usr/bin/awk -f
+
+# Usage: ./get-minimal-packages [distro] [version]
+# Prints a space-separated list of packages for the given distro and version (default: fedora)
+# Always reads from minimal-packages.md
+
+function trim(s) { sub(/^[ ]+/, "", s); sub(/[ ]+$/, "", s); return s }
+
+BEGIN {
+    # Parse CLI arguments
+    distro = (ARGC > 1) ? ARGV[1] : "fedora"
+    version = (ARGC > 2) ? ARGV[2] : ""
+    distro_lc = tolower(distro)
+    version_lc = tolower(version)
+    dv_key = (version_lc != "") ? distro_lc "@" version_lc : distro_lc
+    if (ARGC > 2) delete ARGV[2]
+    if (ARGC > 1) delete ARGV[1]
+    ARGV[1] = "minimal-packages.md"
+    fedora_col = target_col = -1
+    pkgs = ""
+    header_seen = 0
+}
+
+/^[-= |]+$/ { next } # skip table separators
+
+# Parse header to find column indices for fedora and target distro
+/^[|]/ && !header_seen {
+    header_seen = 1
+    line = $0
+    sub(/^\|\s*/, "", line)
+    nfields = split(line, fields, "|")
+    for (i = 1; i <= nfields; i++) {
+        col = trim(tolower(fields[i]))
+        if (col == "fedora") fedora_col = i
+        if (index("," col ",", "," distro_lc ",")) target_col = i
+    }
+    next
+}
+
+# Process package rows
+/^[|][^|]/ {
+    line = $0
+    sub(/^[|][ ]*/, "", line)
+    split(line, fields, "|")
+    col_idx = (target_col > 0) ? target_col : fedora_col
+    fedora_val = (fedora_col > 0) ? trim(fields[fedora_col]) : ""
+    pkg = (col_idx > 0) ? trim(fields[col_idx]) : ""
+    if (pkg == "") pkg = fedora_val
+    if (pkg != "" && pkg != "n/a" && pkg != "*" && pkg != distro && pkg != "fedora") {
+        pkgs = pkgs ? pkgs " " pkg : pkg
+    }
+}
+
+# Store lines for version-specific rules in new format
+/^[ \t]*- +[a-zA-Z0-9_-]+:[0-9.]+/ {
+    rule_lines[++rule_count] = $0
+}
+
+END {
+    # Parse version-specific rules in new format
+    for (ri = 1; ri <= rule_count; ri++) {
+        n = split(rule_lines[ri], parts, /[ ]+/)
+        rule_key = tolower(parts[2])
+        gsub(":", "@", rule_key)
+        if (rule_key == dv_key) {
+            for (j = 3; j <= n; j++) {
+                part = parts[j]
+                if (part ~ /^-/) disables[tolower(substr(part, 2))]
+                else if (part ~ /=>/) {
+                    split(part, ren, /=>/)
+                    ren_from = tolower(trim(ren[1]))
+                    ren_to = tolower(trim(ren[2]))
+                    renames[ren_from] = ren_to
+                } else if (part ~ /^\+/) adds[tolower(substr(part, 2))]
+            }
+        }
+    }
+    # Split pkgs into array
+    npkgs = split(pkgs, pkgarr, " ")
+    out_pkgs = ""
+    for (i = 1; i <= npkgs; i++) {
+        p = tolower(pkgarr[i])
+        if (p in renames) p = renames[p]
+        if (p in disables) continue
+        if (out_pkgs ~ "(^| )" p "($| )") continue
+        out_pkgs = out_pkgs ? out_pkgs " " p : p
+    }
+    for (a in adds) {
+        if (out_pkgs ~ "(^| )" a "($| )") continue
+        out_pkgs = out_pkgs ? out_pkgs " " a : a
+    }
+    print out_pkgs
+}
