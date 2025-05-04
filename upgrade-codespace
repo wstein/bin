@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+
+set -eu
+
+# This script is used to upgrade the Ubuntu version in a GitHub Codespace.
+
+# Remove Python, still available at /home/codespace/.python/current/bin/python
+sudo apt-get remove -y \
+    python3 \
+    python3.*
+
+# install updates
+sudo apt-get update
+sudo apt-get upgrade -y
+sudo apt-get dist-upgrade -y
+sudo apt install -y ubuntu-release-upgrader-core -y
+
+# remove unused packages
+sudo apt-get autoremove -y
+sudo apt-get clean
+
+# install the next lts version of ubuntu - 20.04 => 22.04
+sudo do-release-upgrade
+
+# install the next lts version of ubuntu - 22.04 => 24.04
+sudo do-release-upgrade
