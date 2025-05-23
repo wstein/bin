@@ -2,6 +2,9 @@
 
 set -e
 
+OLD=""
+NEW=""
+
 usage() {
 	echo "Usage: dokudiff <OLD> <NEW>"
 	echo "	compare OLD with NEW line by line. Generates a simple output."
@@ -15,7 +18,7 @@ usage() {
 }
 
 parse_args() {
-	local USAGE=0
+	USAGE=0
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -29,7 +32,7 @@ parse_args() {
 			elif [ -z "$NEW" ]; then
 				NEW=$1
 			else
-				echo "to many arguments: $1"
+				echo "too many arguments: $1"
 				USAGE=1
 			fi
 			;;
@@ -40,20 +43,18 @@ parse_args() {
 
 	if [ $USAGE -eq 1 ]; then
 		usage
-		exit
 	fi
 
 	if [ -z "$OLD" ] || [ -z "$NEW" ]; then
 		echo "Missing arguments!"
 		usage
-		exit
 	fi
 }
 
 main() {
 	parse_args "$@"
 
-	diff --new-line-format="+%L" --old-line-format="-%L" $OLD $NEW | sed --regexp-extended 's/^([+-]) /\1/'
+	diff --new-line-format="+%L" --old-line-format="-%L" "$OLD" "$NEW" | sed -E 's/^([+-]) /\1/'
 }
 
 main "$@"
