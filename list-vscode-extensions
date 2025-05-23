@@ -32,7 +32,6 @@ require 'io/console'
 require 'yaml'
 require 'time'
 require 'erb'
-require_relative 'vscode_extensions_utils'
 
 options = { workers: 10 }
 OptionParser.new do |opts|
