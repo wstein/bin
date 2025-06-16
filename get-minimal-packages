@@ -1,14 +1,28 @@
 #!/usr/bin/awk -f
 
-# Usage: ./get-minimal-packages [distro] [version]
-# Prints a space-separated list of packages for the given distro and version (default: fedora)
+# Usage: ./get-minimal-packages [group] [distro] [version]
+# Prints a space-separated list of packages for the given group, distro, and version (default: fedora)
+# The group argument is mandatory and must match a group in the table (case-insensitive).
 # Always reads from $HOME/bin/minimal-packages.md
 
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
+function split_groups(groups_str, arr,    n, i, g, part) {
+    n = split(groups_str, part, ",")
+    for (i = 1; i <= n; i++) {
+        g = trim(part[i])
+        if (g != "") {
+            arr[tolower(g)] = 1
+        }
+    }
+    return
+}
+
 BEGIN {
-    distro = (ARGC > 1) ? ARGV[1] : "fedora"
-    version = (ARGC > 2) ? ARGV[2] : ""
+    group = (ARGC > 1) ? ARGV[1] : "core"
+    distro = (ARGC > 2) ? ARGV[2] : "fedora"
+    version = (ARGC > 3) ? ARGV[3] : ""
+    target_group = tolower(trim(group))
     distro_lc = tolower(distro)
     version_lc = tolower(version)
     dv_key = (version_lc != "") ? distro_lc "@" version_lc : distro_lc
@@ -17,8 +31,9 @@ BEGIN {
     ARGV[1] = input_file
     ARGC = 2
     fedora_col = target_col = -1
-    pkgs = ""
+    groups_col = -1
     header_seen = 0
+    pkgs = ""
     rule_count = 0
 }
 
@@ -33,6 +48,8 @@ BEGIN {
         col = trim(tolower(fields[i]))
         if (col == "fedora") fedora_col = i
         if (col == distro_lc) target_col = i
+        if (col == "groups") groups_col = i
+        # Ignore description column by not using it
     }
     next
 }
@@ -45,7 +62,18 @@ BEGIN {
     fedora_val = (fedora_col > 0) ? trim(fields[fedora_col]) : ""
     pkg = (col_idx > 0) ? trim(fields[col_idx]) : ""
     if (pkg == "") pkg = fedora_val
-    if (pkg != "" && pkg != "n/a" && pkg != "*" && pkg != distro && pkg != "fedora") {
+
+    # Handle group filtering
+    include_pkg = 1
+    if (groups_col > 0 && target_group != "") {
+        delete pkg_groups
+        group_val = trim(fields[groups_col])
+        split_groups(group_val, pkg_groups)
+        if (!(target_group in pkg_groups)) {
+            include_pkg = 0
+        }
+    }
+    if (pkg != "" && pkg != "n/a" && pkg != "*" && pkg != distro && pkg != "fedora" && include_pkg) {
         pkgs = pkgs ? pkgs " " pkg : pkg
     }
 }
