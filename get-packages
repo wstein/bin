@@ -1,9 +1,9 @@
 #!/usr/bin/awk -f
 
-# Usage: ./get-minimal-packages [group] [distro] [version]
+# Usage: ./get-packages [group] [distro] [version]
 # Prints a space-separated list of packages for the given group, distro, and version (default: fedora)
 # The group argument is mandatory and must match a group in the table (case-insensitive).
-# Always reads from $HOME/bin/minimal-packages.md
+# Always reads from $HOME/bin/packages.md
 
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
@@ -27,7 +27,7 @@ BEGIN {
     version_lc = tolower(version)
     dv_key = (version_lc != "") ? distro_lc "@" version_lc : distro_lc
     for (i = 1; i < ARGC; i++) delete ARGV[i]
-    input_file = ENVIRON["HOME"] "/bin/minimal-packages.md"
+    input_file = ENVIRON["HOME"] "/bin/packages.md"
     ARGV[1] = input_file
     ARGC = 2
     fedora_col = target_col = -1
