@@ -30,7 +30,7 @@ apt)
 	;;
 
 dnf)
-	$SUDO dnf -y install $PACKAGES
+	$SUDO dnf -y install --excludeWeakdeps $PACKAGES
 	;;
 
 eopkg-cli)
