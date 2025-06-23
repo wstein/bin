@@ -22,27 +22,27 @@ PKG_MANAGER=${PKG_MANAGER_PATH##*/}
 
 case "$PKG_MANAGER" in
 apk)
-	$SUDO apk --no-cache add $PACKAGES
+	$SUDO apk --no-cache --no-suggest add $PACKAGES
 	;;
 
 apt)
-	$SUDO apt -y install --no-install-recommends $PACKAGES
+	$SUDO apt -y install --no-install-recommends --no-install-suggests $PACKAGES
 	;;
 
 dnf)
-	$SUDO dnf -y install --setopt=install_weak_deps=false $PACKAGES
+	$SUDO dnf -y install --setopt=install_weak_deps=false --skip-unavailable $PACKAGES
 	;;
 
 eopkg-cli)
-	$SUDO eopkg-cli -y install $PACKAGES
+	$SUDO eopkg-cli -y install $PACKAGES # no direct option to skip recommended/weak deps
 	;;
 
 pacman)
-	$SUDO pacman -Sy --noconfirm $PACKAGES
+	$SUDO pacman -Sy --noconfirm --asdeps $PACKAGES # -Sy: refresh, --asdeps: install as dependency (skip optional), --noconfirm: no prompt
 	;;
 
 zypper)
-	$SUDO zypper install -y $PACKAGES
+	$SUDO zypper install -y --no-recommends $PACKAGES
 	;;
 
 *)
