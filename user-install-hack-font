@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 NERDFONT_VERSION='v3.4.0'
-FONT='Fira Code'
+FONT='Hack'
 
 set -eu
 
