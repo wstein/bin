@@ -1,0 +1,108 @@
+#!/usr/bin/env ruby
+# pathsmith: Generate shell scripts to set PATH for various shells
+# Usage: pathsmith [-v|--verbose] [-p|--paths PATHFILE] SHELL
+# Outputs shell code to stdout. Source it in your shell config.
+
+require 'optparse'
+require 'etc'
+require 'shellwords'
+
+def main
+  config = parse_options
+  shell_target = (ARGV.shift || 'sh').downcase
+  validate_target(shell_target)
+
+  raw_lines = read_paths_file(config[:paths_file], config[:verbose])
+  all_paths = merge_with_env_path(raw_lines)
+  final_paths = process_paths(all_paths, config[:verbose])
+
+  output_result(shell_target, final_paths)
+end
+
+def parse_options
+  config = {
+    paths_file: File.expand_path('~/.config/pathsmith.conf'),
+    verbose: false
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: pathsmith [-v|--verbose] [-p|--paths PATHFILE] SHELL"
+    opts.on('-v', '--verbose', 'Enable verbose output') { config[:verbose] = true }
+    opts.on('-pPATH', '--paths=PATH', 'Specify paths file') { |p| config[:paths_file] = File.expand_path(p) }
+    opts.on('-h', '--help', 'Show help') do
+      puts opts
+      exit 0
+    end
+  end.parse!(ARGV)
+
+  config
+end
+
+def validate_target(shell_target)
+  supported_targets = %w[sh ash bash zsh fish nu nushell pwsh powershell list]
+  unless supported_targets.include?(shell_target)
+    warn "[pathsmith] Unsupported target: #{shell_target}. Supported: #{supported_targets.join(', ')}"
+    exit 2
+  end
+end
+
+def expand_path(str)
+  # Expand environment variables, tilde, and resolve relative paths
+  File.expand_path(str.gsub(/\$(\w+|\{\w+\})/) { |m| ENV[m[1..-1].gsub(/[{}]/, '')] || "" })
+end
+
+def read_paths_file(paths_file, verbose)
+  File.readlines(paths_file, chomp: true) || []
+rescue Errno::ENOENT
+  warn "[pathsmith] Paths file not found: #{paths_file}" if verbose
+  []
+rescue Errno::EACCES
+  warn "[pathsmith] Permission denied for paths file: #{paths_file}"
+  exit 1
+rescue StandardError => e
+  warn "[pathsmith] Error reading paths file: #{e.message}"
+  exit 1
+end
+
+def merge_with_env_path(raw_lines)
+  (raw_lines + (ENV['PATH'] || '').split(File::PATH_SEPARATOR)).freeze
+end
+
+def process_paths(all_paths, verbose)
+  all_paths
+    .map(&:strip)
+    .reject { |line| line.empty? || line.start_with?('#') }
+    .map(&method(:expand_path))
+    .select { |path| absolute_path?(path) }
+    .select { |path| validate_directory(path, verbose) }
+    .uniq
+    .freeze
+end
+
+def absolute_path?(path)
+  path.start_with?('/') || path =~ /^[A-Za-z]:[\/\\]/
+end
+
+def validate_directory(path, verbose)
+  exists = File.directory?(path)
+  if verbose
+    message = exists ? "Added: #{path}" : "Skipped (not a directory): #{path}"
+    warn "[pathsmith] #{message}"
+  end
+  exists
+end
+
+def output_result(shell_target, final_paths)
+  case shell_target
+  when 'list'
+    final_paths.each { |p| puts p }
+  when 'fish'
+    puts "set -gx PATH #{final_paths.map { |p| Shellwords.escape(p) }.join(' ')};"
+  when 'nu', 'nushell', 'pwsh', 'powershell'
+    puts "$env:PATH = \"#{final_paths.join(';')}\""
+  else
+    puts "export PATH=#{final_paths.map { |p| Shellwords.escape(p) }.join(File::PATH_SEPARATOR)}"
+  end
+end
+
+main if __FILE__ == $0
