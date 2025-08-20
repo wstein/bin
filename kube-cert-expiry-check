@@ -1,0 +1,395 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'openssl'
+require 'yaml'
+require 'date'
+require 'base64'
+require 'json'
+require 'optparse'
+require 'time'
+
+module KubeCertChecker
+  KUBE_DIR = File.expand_path('~/.kube').freeze
+  WARNING_DAYS = 28
+  SOON_DAYS = 56
+
+  module CLI
+    def self.parse_options
+      options = {}
+
+      OptionParser.new do |opts|
+        opts.banner = "Usage: kube-cert-expiry-check [options] [config-file]"
+        opts.separator ""
+        opts.separator "Checks expiry dates of Kubernetes client certificates in ~/.kube or given file."
+        opts.separator ""
+        opts.separator "Options:"
+
+        opts.on("-j", "--json", "Output in JSON format") { options[:json] = true }
+        opts.on("-h", "--help", "Show this help message") { puts opts; exit 0 }
+
+        opts.separator ""
+        opts.separator "Arguments:"
+        opts.separator "  config-file    Specific kube config file to check (optional)"
+      end.parse!
+
+      { options: options, config_file: ARGV.first }
+    end
+  end
+
+  class Certificate
+    attr_reader :name, :expiry, :type, :key_valid
+
+    def initialize(name:, cert_data: nil, cert_file: nil, key_data: nil, key_file: nil, type: :client)
+      @name = name
+      @type = type
+      @cert = load_certificate(cert_data, cert_file)
+      @expiry = @cert&.not_after
+      @key_valid = validate_key(key_data, key_file) if @cert && (key_data || key_file)
+    end
+
+    def valid?
+      !@cert.nil?
+    end
+
+    def expired?(now = Time.now.utc)
+      valid? && @expiry < now
+    end
+
+    def expires_within?(days, now = Time.now.utc)
+      valid? && @expiry < now + (days * 86400)
+    end
+
+    def to_h
+      {
+        name: @name,
+        type: @type.to_s,
+        expiry: @expiry&.utc&.iso8601,
+        valid: valid?,
+        expired: expired?,
+        expires_soon: expires_within?(WARNING_DAYS),
+        key_valid: @key_valid
+      }
+    end
+
+    private
+
+    def load_certificate(cert_data, cert_file)
+      return decode_cert_data(cert_data) if cert_data
+      return read_cert_file(cert_file) if cert_file&.then { |f| File.readable?(f) }
+
+      warn "Warning: Could not load certificate for #{@name}"
+      nil
+    end
+
+    def decode_cert_data(data)
+      OpenSSL::X509::Certificate.new(Base64.decode64(data))
+    rescue => e
+      warn "Warning: Failed to decode certificate data for #{@name}: #{e.message}"
+      nil
+    end
+
+    def read_cert_file(file)
+      OpenSSL::X509::Certificate.new(File.read(file))
+    rescue => e
+      warn "Warning: Failed to read certificate file #{file} for #{@name}: #{e.message}"
+      nil
+    end
+
+    def validate_key(key_data, key_file)
+      key_content = key_data ? Base64.decode64(key_data) : read_key_file(key_file)
+      return nil unless key_content
+
+      OpenSSL::PKey.read(key_content).then do |key|
+        key.respond_to?(:check_key) ? key.check_key : nil
+      end
+    rescue => e
+      warn "Warning: Failed to validate key for #{@name}: #{e.message}"
+      false
+    end
+
+    def read_key_file(file)
+      File.readable?(file) ? File.read(file) : nil
+    end
+  end
+
+  class TimeSpan
+    attr_reader :years, :months, :days, :total_days, :past
+
+    def initialize(expiry, now = Time.now.utc)
+      @past = expiry < now
+      diff = (@past ? now - expiry : expiry - now)
+      @total_days = (diff / 86400).ceil
+
+      start_date = (@past ? expiry : now).to_date
+      end_date = (@past ? now : expiry).to_date
+
+      @years, @months, @days = self.class.calculate_parts(start_date, end_date)
+    end
+
+    def self.calculate_parts(start_date, end_date)
+      years = months = 0
+      temp_date = start_date
+
+      while temp_date.next_year <= end_date
+        temp_date = temp_date.next_year
+        years += 1
+      end
+
+      while temp_date.next_month <= end_date
+        temp_date = temp_date.next_month
+        months += 1
+      end
+
+      [years, months, (end_date - temp_date).to_i]
+    end
+
+    def format
+      return "expired #{total_days} days ago" if past
+
+      case
+      when years >= 2 then "expires in #{total_days} days - more than #{years} years"
+      when months >= 3 then "expires in #{total_days} days - more than #{months} months"
+      when total_days >= 7 then "expires in #{total_days} days - #{total_days / 7} weeks"
+      else "expires in #{total_days} days"
+      end
+    end
+
+    def short_format
+      return "expired #{total_days} days ago" if past
+
+      case
+      when years > 0
+        "expires in more than #{years} year#{'s' if years > 1} (#{total_days} days)"
+      when months > 0
+        "expires in more than #{months} month#{'s' if months > 1} (#{total_days} days)"
+      when total_days >= 7
+        weeks = total_days / 7
+        "expires in #{weeks} week#{'s' if weeks > 1} (#{total_days} days)"
+      else
+        "expires in #{total_days} day#{'s' if total_days > 1}"
+      end
+    end
+  end
+
+  class KubeConfig
+    attr_reader :file_path
+
+    def initialize(file_path)
+      @file_path = file_path
+      @config = load_config
+    end
+
+    def certificates
+      valid? ? ca_certs + client_certs : []
+    end
+
+    def contexts
+      valid? ? (@config['contexts'] || []).map { |ctx| ctx['name'] } : []
+    end
+
+    def valid?
+      @config.is_a?(Hash)
+    end
+
+    def to_h
+      {
+        file_path: @file_path,
+        contexts: contexts,
+        certificates: certificates.map(&:to_h)
+      }
+    end
+
+    private
+
+    def load_config
+      YAML.load_file(@file_path)
+    rescue => e
+      warn "Warning: Could not read YAML from #{@file_path}: #{e.message}"
+      nil
+    end
+
+    def client_certs
+      (@config['users'] || [])
+        .map { |user| build_certificate(user, :client) }
+        .compact
+    end
+
+    def ca_certs
+      (@config['clusters'] || [])
+        .map { |cluster| build_certificate(cluster, :ca) }
+        .compact
+    end
+
+    def build_certificate(config, type)
+      case type
+      when :client
+        cert = Certificate.new(
+          name: config['name'],
+          cert_data: config.dig('user', 'client-certificate-data'),
+          cert_file: config.dig('user', 'client-certificate'),
+          key_data: config.dig('user', 'client-key-data'),
+          key_file: config.dig('user', 'client-key'),
+          type: :client
+        )
+      when :ca
+        cert = Certificate.new(
+          name: config['name'],
+          cert_data: config.dig('cluster', 'certificate-authority-data'),
+          cert_file: config.dig('cluster', 'certificate-authority'),
+          type: :ca
+        )
+      end
+
+      cert&.valid? ? cert : nil
+    end
+  end
+
+  module OutputFormatter
+    COLORS = {
+      expired: "\e[31m",
+      warning: "\e[38;5;208m",
+      soon: "\e[33m",
+      valid: "\e[32m",
+      reset: "\e[0m"
+    }.freeze
+
+    EMOJIS = {
+      expired: "❌",
+      warning: "⚠️",
+      soon: "⏳",
+      valid: "✅"
+    }.freeze
+
+    def self.format_certificate(cert)
+      status = determine_status(cert)
+      time_span = TimeSpan.new(cert.expiry)
+      color = COLORS[status]
+
+      time_str = cert.expiry.utc.strftime('%Y-%m-%d %H:%M:%S')
+      message = time_span.short_format
+      key_info = cert.key_valid == false ? " [Key Invalid]" : ""
+      prefix = cert.type == :ca ? "CA " : ""
+      symbol = cert.type == :ca ? "├─" : "└─"
+
+      "  #{symbol} #{color}✅\t#{time_str} UTC => #{prefix}#{cert.name} - #{message}#{key_info}#{COLORS[:reset]}"
+    end
+
+    def self.format_header
+      "Date: #{Time.now.utc.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    end
+
+    def self.format_contexts(contexts)
+      contexts.empty? ? "" : "  Contexts: #{contexts.join(', ')}"
+    end
+
+    def self.format_summary(summary, total)
+      counts = %i[expired warning soon valid].map { |k| "#{summary[k]} #{k}" }
+      "\nSummary: #{counts.join(', ')}.\nTotal certificates checked: #{total}"
+    end
+
+    def self.to_json(configs, summary, total)
+      {
+        timestamp: Time.now.utc.iso8601,
+        summary: summary.merge(total: total),
+        configs: configs.map(&:to_h)
+      }.to_json
+    end
+
+    private
+
+    def self.determine_status(cert)
+      return :expired if cert.expired?
+      return :warning if cert.expires_within?(WARNING_DAYS)
+      return :soon if cert.expires_within?(SOON_DAYS)
+      :valid
+    end
+  end
+
+  class Runner
+    def initialize(options: {}, config_file: nil)
+      @options = options
+      @config_file = config_file
+    end
+
+    def run
+      @options[:json] ? run_json : run_text
+    end
+
+    private
+
+    def file_paths
+      @file_paths ||= @config_file ? [@config_file] :
+        Dir.glob("#{KUBE_DIR}/**/*").select { |f| File.file?(f) }
+    end
+
+    def run_text
+      puts OutputFormatter.format_header
+
+      summary = Hash.new(0)
+      total = 0
+
+      file_paths.sort.each do |file_path|
+        kube_config = KubeConfig.new(file_path)
+        next unless kube_config.valid?
+
+        certificates = kube_config.certificates
+        next if certificates.empty?
+
+        puts File.basename(file_path)
+
+        # Print CA certs first, then client certs
+        ca_certs, client_certs = certificates.partition { |c| c.type == :ca }
+
+        ca_certs.each { |cert| puts OutputFormatter.format_certificate(cert) }
+        client_certs.each do |cert|
+          puts OutputFormatter.format_certificate(cert)
+          status = certificate_status(cert)
+          summary[status] += 1
+          total += 1
+        end
+
+        contexts_output = OutputFormatter.format_contexts(kube_config.contexts)
+        puts contexts_output unless contexts_output.empty?
+      end
+
+      puts OutputFormatter.format_summary(summary, total)
+    end
+
+    def run_json
+      summary = Hash.new(0)
+      total = 0
+      configs = []
+
+      file_paths.sort.each do |file_path|
+        kube_config = KubeConfig.new(file_path)
+        next unless kube_config.valid?
+
+        certificates = kube_config.certificates
+        next if certificates.empty?
+
+        configs << kube_config
+
+        certificates.each do |cert|
+          next unless cert.type == :client
+
+          status = certificate_status(cert)
+          summary[status] += 1
+          total += 1
+        end
+      end
+
+      puts OutputFormatter.to_json(configs, summary, total)
+    end
+
+    def certificate_status(cert)
+      return :expired if cert.expired?
+      return :warning if cert.expires_within?(WARNING_DAYS)
+      return :soon if cert.expires_within?(SOON_DAYS)
+      :valid
+    end
+  end
+end
+
+cli_result = KubeCertChecker::CLI.parse_options
+KubeCertChecker::Runner.new(**cli_result).run
