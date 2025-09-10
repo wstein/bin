@@ -1,0 +1,2069 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'sqlite3'
+require 'json'
+require 'fileutils'
+require 'optparse'
+require 'ostruct'
+require 'time'
+
+# Helper to format timestamps (from Julian Day)
+def format_time(timestamp)
+  return 'unknown' unless timestamp
+  # Convert from Julian Day to Unix timestamp
+  unix_time = (timestamp - 2440587.5) * 86400
+  Time.at(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+end
+
+# Helper to format duration
+def format_duration(duration)
+  return 'N/A' unless duration
+  if duration < 1
+    "#{(duration * 1000).round(1)}ms"
+  elsif duration < 60
+    "#{duration.round(2)}s"
+  elsif duration < 3600
+    minutes = (duration / 60).to_i
+    seconds = (duration % 60).round(1)
+    "#{minutes}m #{seconds}s"
+  else
+    hours = (duration / 3600).to_i
+    minutes = ((duration % 3600) / 60).to_i
+    "#{hours}h #{minutes}m"
+  end
+end
+
+# Helper to truncate command text
+def truncate_command(command, max_length = 60)
+  return 'N/A' unless command
+  command.length > max_length ? "#{command[0...max_length-3]}..." : command
+end
+
+# Get current timezone
+def get_timezone
+  # Try to get timezone from environment or system
+  ENV['TZ'] || Time.now.zone || 'UTC'
+rescue
+  'UTC'
+end
+
+# Cross-platform TTY detection
+def get_current_tty
+  if RUBY_PLATFORM.include?('linux')
+    # On Linux, read from /proc
+    begin
+      File.read('/proc/self/fd/0').match(/\/dev\/(.*)$/)[1]
+    rescue
+      'unknown'
+    end
+  else
+    # On macOS and other systems, use tty command
+    begin
+      `tty`.chomp
+    rescue
+      # Fallback to TERM environment variable
+      ENV['TERM'] || 'unknown'
+    end
+  end
+end
+
+# Remove the command_hash function - no longer needed
+
+# Format bytes in human readable format
+def format_bytes(bytes)
+  units = ['B', 'KB', 'MB', 'GB', 'TB']
+  size = bytes.to_f
+  unit_index = 0
+
+  while size >= 1024 && unit_index < units.length - 1
+    size /= 1024
+    unit_index += 1
+  end
+
+  "#{size.round(2)} #{units[unit_index]}"
+end
+
+# Helper to get tty
+
+def get_tty
+  begin
+    # Try Linux-style first
+    File.readlink('/proc/self/fd/0')
+  rescue
+    begin
+      # Try macOS-style
+      `tty`.chomp
+    rescue
+      # Fallback to TERM environment variable
+      ENV['TERM'] || 'unknown'
+    end
+  end
+end
+
+# SQLite database setup
+def get_db_path
+  # Prefer explicit environment variable if provided, else default to local db
+  if ENV['HISTLOG_DB'] && !ENV['HISTLOG_DB'].strip.empty?
+    File.expand_path(ENV['HISTLOG_DB'])
+  else
+    File.expand_path('~/.local/share/histlog/histlog.db')
+  end
+end
+
+def initialize_db
+  db_path = get_db_path
+  db_dir = File.dirname(db_path)
+  FileUtils.mkdir_p(db_dir) unless Dir.exist?(db_dir)
+  db = SQLite3::Database.new(db_path)
+
+  # Enable performance and compression optimizations
+  db.execute "PRAGMA journal_mode = WAL"          # Write-Ahead Logging for better concurrency
+  db.execute "PRAGMA synchronous = NORMAL"        # Balance safety and performance
+  db.execute "PRAGMA cache_size = 10000"          # Larger cache (10MB)
+  db.execute "PRAGMA temp_store = MEMORY"         # Store temp data in memory
+  db.execute "PRAGMA mmap_size = 268435456"       # 256MB memory mapping
+  db.execute "PRAGMA page_size = 4096"            # Optimal page size for command data
+
+  # Create shells table
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS shells (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      version TEXT,
+      created_at REAL DEFAULT (julianday('now'))
+    )
+  SQL
+
+  # Create ttys table
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS ttys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device TEXT NOT NULL,
+      created_at REAL DEFAULT (julianday('now'))
+    );
+  SQL
+
+  # Create paths table
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS paths (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('f', 'd')),
+      created_at REAL DEFAULT (julianday('now'))
+    );
+  SQL
+
+  # Create sessions table
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shell_id INTEGER,
+  tty_id INTEGER,
+      path_id INTEGER,
+      pid INTEGER,
+      parent_pid INTEGER,
+      timezone TEXT,
+      created_at REAL DEFAULT (julianday('now')),
+  FOREIGN KEY (shell_id) REFERENCES shells (id),
+  FOREIGN KEY (tty_id) REFERENCES ttys (id),
+      FOREIGN KEY (path_id) REFERENCES paths (id)
+    )
+  SQL
+
+  # Create cmd_texts table for command text
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS cmd_texts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      command TEXT UNIQUE NOT NULL,
+      created_at REAL DEFAULT (julianday('now'))
+    )
+  SQL
+
+  # Create commands table (formerly: entries/history) for command executions
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS commands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER,
+  cmd_text_id INTEGER,
+  path_old_id INTEGER,                         -- Working directory at preexec
+  path_new_id INTEGER,                         -- Working directory at postcmd
+  start_time REAL,                              -- Unix epoch seconds when command started
+      duration REAL,
+      exit_code INTEGER,
+      is_private INTEGER DEFAULT 0,              -- 1 if command started with space
+      is_assisted INTEGER DEFAULT 0,             -- 1 if command was AI-assisted/injected
+      created_at REAL DEFAULT (julianday('now')),
+  FOREIGN KEY (session_id) REFERENCES sessions (id),
+  FOREIGN KEY (cmd_text_id) REFERENCES cmd_texts (id),
+  FOREIGN KEY (path_old_id) REFERENCES paths (id),
+  FOREIGN KEY (path_new_id) REFERENCES paths (id)
+    )
+  SQL
+
+  # Create path_args table for storing argument paths
+  db.execute <<-SQL
+    CREATE TABLE IF NOT EXISTS path_args (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_id INTEGER,
+  path_id INTEGER,
+      arg_position INTEGER,                       -- Position of argument in command
+      created_at REAL DEFAULT (julianday('now')),
+    FOREIGN KEY (command_id) REFERENCES commands (id),
+  FOREIGN KEY (path_id) REFERENCES paths (id)
+    )
+  SQL
+
+  # Create optimized indexes for query performance
+  db.execute "CREATE INDEX IF NOT EXISTS idx_shells_path ON shells (path)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_ttys_device ON ttys (device)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_paths_path ON paths (path)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_paths_type ON paths (type)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_shell_id ON sessions (shell_id)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions (created_at)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_path_id ON sessions (path_id)"
+  db.execute "CREATE UNIQUE INDEX IF NOT EXISTS idx_cmd_texts_command ON cmd_texts (command)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_cmd_texts_created_at ON cmd_texts (created_at)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_session_id ON commands (session_id)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_cmd_text_id ON commands (cmd_text_id)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_created_at ON commands (created_at)"
+  # Ensure start_time column exists (migration for older DBs)
+  begin
+    cols = db.execute("PRAGMA table_info(commands)")
+    col_names = cols.map { |r| r[1] }
+    unless col_names.include?('start_time')
+      db.execute "ALTER TABLE commands ADD COLUMN start_time REAL"
+    end
+  rescue SQLite3::Exception
+    # ignore migration errors
+  end
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_start_time ON commands (start_time)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_exit_code ON commands (exit_code)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_command_id ON path_args (command_id)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_path_id ON path_args (path_id)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_path_id ON path_args (path_id)"
+
+
+  # Compound indexes for common query patterns
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_session_id_created_at ON commands (session_id, created_at)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_exit_code_created_at ON commands (exit_code, created_at)"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_command_id_arg_position ON path_args (command_id, arg_position)"
+
+  # Partial indexes for performance on common filters
+  db.execute "CREATE INDEX IF NOT EXISTS idx_commands_session_created_where_failed ON commands (session_id, created_at) WHERE exit_code != 0"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_paths_path_where_file ON paths (path) WHERE type = 'f'"
+  db.execute "CREATE INDEX IF NOT EXISTS idx_paths_path_where_dir ON paths (path) WHERE type = 'd'"
+
+  # Create sessions view for easier querying
+  db.execute "DROP VIEW IF EXISTS sessions_view"
+  db.execute <<-SQL
+    CREATE VIEW sessions_view AS
+    SELECT
+      s.id as session_id,
+      s.pid,
+      s.parent_pid,
+      s.timezone,
+      s.created_at,
+      datetime(s.created_at) as created_time,
+      sh.path as shell_path,
+      sh.version as shell_version,
+      t.device as tty_device,
+      p.path as working_directory
+    FROM sessions s
+    LEFT JOIN shells sh ON s.shell_id = sh.id
+    LEFT JOIN ttys t ON s.tty_id = t.id
+    LEFT JOIN paths p ON s.path_id = p.id
+  SQL
+
+  # Create history view for comprehensive command history
+  db.execute <<-SQL
+    CREATE VIEW IF NOT EXISTS history_view AS
+    SELECT
+      cmd.id as cmd_text_id,
+      cmd.session_id as session_id,
+      s.pid as session_pid,
+      s.parent_pid as session_parent_pid,
+      datetime(s.created_at) as session_started,
+      sh.path as shell_path,
+      t.device as tty_device,
+      c.command,
+  datetime(cmd.start_time, 'unixepoch') as command_started,
+  cmd.start_time as start_time,
+      cmd.duration,
+      cmd.exit_code,
+      cmd.is_private,
+      p_old.path as cwd_old,
+      p_new.path as cwd_new,
+      CASE
+        WHEN p_old.path IS NOT NULL AND p_new.path IS NOT NULL AND p_old.path != p_new.path THEN 1
+        ELSE 0
+      END as directory_changed
+  FROM commands cmd
+    LEFT JOIN sessions s ON cmd.session_id = s.id
+  JOIN cmd_texts c ON cmd.cmd_text_id = c.id
+    LEFT JOIN shells sh ON s.shell_id = sh.id
+    LEFT JOIN ttys t ON s.tty_id = t.id
+    LEFT JOIN paths p_old ON cmd.path_old_id = p_old.id
+    LEFT JOIN paths p_new ON cmd.path_new_id = p_new.id
+  ORDER BY cmd.start_time DESC
+  SQL
+
+  db
+end
+
+# Helper function to get shell version
+def get_shell_version(shell_path)
+  return nil unless shell_path
+  begin
+    # Try common version flags
+    version_output = `#{shell_path} --version 2>/dev/null`.strip
+    return version_output.lines.first&.strip if !version_output.empty?
+
+    # Fallback for shells that don't support --version
+    version_output = `#{shell_path} -c 'echo $0 $version' 2>/dev/null`.strip
+    return version_output if !version_output.empty?
+  rescue
+    # If we can't get version, return nil
+  end
+  nil
+end
+
+# Get or create shell_id
+def get_or_create_shell_id(db, shell_path)
+  return nil unless shell_path
+
+  # Try to find existing shell
+  result = db.execute("SELECT id FROM shells WHERE path = ?", [shell_path])
+  return result[0][0] if result && result[0]
+
+  # Create new shell entry
+  version = get_shell_version(shell_path)
+  result = db.execute(
+    "INSERT INTO shells (path, version) VALUES (?, ?) RETURNING id",
+    [shell_path, version]
+  )
+  result[0][0] if result && result[0]
+rescue SQLite3::Exception
+  # Fallback for older SQLite without RETURNING
+  db.execute("INSERT INTO shells (path, version) VALUES (?, ?)", [shell_path, version])
+  db.last_insert_row_id
+end
+
+# Get or create tty_id
+def get_or_create_tty_id(db, tty_device)
+  return nil unless tty_device
+
+  # Try to find existing tty
+  result = db.execute("SELECT id FROM ttys WHERE device = ?", [tty_device])
+  return result[0][0] if result && result[0]
+
+  # Create new tty entry
+  result = db.execute(
+    "INSERT INTO ttys (device) VALUES (?) RETURNING id",
+    [tty_device]
+  )
+  result[0][0] if result && result[0]
+rescue SQLite3::Exception
+  # Fallback for older SQLite without RETURNING
+  db.execute("INSERT INTO ttys (device) VALUES (?)", [tty_device])
+  db.last_insert_row_id
+end
+
+
+# Get or create path_id
+def get_or_create_path_id(db, path, type = nil)
+  return nil unless path
+
+  # Normalize to absolute path
+  begin
+    abs_path = File.expand_path(path)
+  rescue => e
+    STDERR.puts "Warning: Could not normalize path '#{path}': #{e.message}"
+    abs_path = path
+  end
+
+  # Try to find existing path (using absolute path)
+  result = db.execute("SELECT id FROM paths WHERE path = ?", [abs_path])
+  return result[0][0] if result && result[0]
+
+  # Determine type if not provided
+  if type.nil?
+    type = File.directory?(abs_path) ? 'd' : 'f'
+  end
+
+  # Create new path entry with absolute path
+  result = db.execute(
+    "INSERT INTO paths (path, type) VALUES (?, ?) RETURNING id",
+    [abs_path, type]
+  )
+  result[0][0] if result && result[0]
+rescue SQLite3::Exception
+  # Fallback for older SQLite without RETURNING
+  db.execute("INSERT INTO paths (path, type) VALUES (?, ?)", [abs_path, type])
+  db.last_insert_row_id
+end
+
+def store_session(session_data)
+  db = initialize_db
+  begin
+    # Get or create IDs for foreign key references
+  shell_id = get_or_create_shell_id(db, session_data[:shell])
+  tty_id = get_or_create_tty_id(db, session_data[:tty])
+  path_id = get_or_create_path_id(db, session_data[:cwd])
+
+    # Use RETURNING clause for thread-safe ID retrieval (SQLite 3.35+)
+    result = db.execute(
+      "INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+      [
+        shell_id,
+        tty_id,
+        path_id,
+        session_data[:pid],
+        session_data[:parent_pid],
+        session_data[:timezone]
+      ]
+    )
+    # Return the session_id from the RETURNING clause
+    return result[0][0] if result && result[0]
+  rescue SQLite3::Exception => e
+    # Fallback to last_insert_row_id if RETURNING is not supported
+    if e.message.include?("syntax error") || e.message.include?("RETURNING")
+      STDERR.puts "Warning: RETURNING clause not supported, using fallback method"
+      begin
+  shell_id = get_or_create_shell_id(db, session_data[:shell])
+  tty_id = get_or_create_tty_id(db, session_data[:tty])
+  path_id = get_or_create_path_id(db, session_data[:cwd])
+
+        db.execute(
+          "INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            shell_id,
+            tty_id,
+            path_id,
+            session_data[:pid],
+            session_data[:parent_pid],
+            session_data[:timezone]
+          ]
+        )
+        return db.last_insert_row_id
+      rescue SQLite3::Exception => fallback_e
+        STDERR.puts "Error storing session: #{fallback_e.message}"
+        return nil
+      end
+    else
+      STDERR.puts "Error storing session: #{e.message}"
+      return nil
+    end
+  ensure
+    db.close if db
+  end
+end
+
+def get_or_create_cmd_text_id(db, command)
+  # Try to find existing command by text
+  result = db.execute("SELECT id FROM cmd_texts WHERE command = ?", [command])
+  return result[0][0] if result && result[0]
+
+  # Insert new command text
+  begin
+    result = db.execute(
+    "INSERT INTO cmd_texts (command) VALUES (?) RETURNING id",
+      [command]
+    )
+    return result[0][0] if result && result[0]
+  rescue SQLite3::Exception => e
+    if e.message.include?("syntax error") || e.message.include?("RETURNING")
+  db.execute("INSERT INTO cmd_texts (command) VALUES (?)", [command])
+      return db.last_insert_row_id
+    else
+      raise e
+    end
+  end
+end
+
+def store_command(command_data)
+  db = initialize_db
+  begin
+    # Detect if command is private (starts with space) and strip the space
+    original_command = command_data[:command]
+    is_private = original_command.start_with?(' ') ? 1 : 0
+    clean_command = original_command.lstrip  # Remove leading whitespace
+
+    # Detect if command is AI-assisted (check VSCODE_INJECTION environment variable)
+    is_assisted = ENV['VSCODE_INJECTION'] == '1' ? 1 : 0
+
+  # Get or create cmd_text_id for the cleaned command
+  cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+
+  # Get or create path_id for the command's working directory (cwd_old)
+  path_old_id = get_or_create_path_id(db, command_data[:cwd])
+
+    # Use RETURNING clause for thread-safe ID retrieval (SQLite 3.35+)
+    result = db.execute(
+  "INSERT INTO commands (session_id, cmd_text_id, path_old_id, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+      [
+  command_data[:session_id],
+  cmd_text_id,
+  path_old_id,
+        is_private,
+          is_assisted,
+          Time.now.to_f
+      ]
+    )
+    # Return the command row id from the RETURNING clause
+    command_id = result[0][0] if result && result[0]
+
+    # Parse command arguments for path tracking (use clean command)
+    if command_id
+      parse_command_arguments(db, command_id, clean_command)
+    end
+
+    return command_id
+  rescue SQLite3::Exception => e
+    # Fallback to last_insert_row_id if RETURNING is not supported
+    if e.message.include?("syntax error") || e.message.include?("RETURNING")
+      STDERR.puts "Warning: RETURNING clause not supported, using fallback method"
+      begin
+        # Detect if command is private (starts with space) and strip the space
+        original_command = command_data[:command]
+        is_private = original_command.start_with?(' ') ? 1 : 0
+        clean_command = original_command.lstrip  # Remove leading whitespace
+
+  cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+  path_old_id = get_or_create_path_id(db, command_data[:cwd])
+
+        db.execute(
+          "INSERT INTO commands (session_id, cmd_text_id, path_old_id, is_private, start_time) VALUES (?, ?, ?, ?, ?)",
+          [
+            command_data[:session_id],
+            cmd_text_id,
+            path_old_id,
+            is_private,
+            Time.now.to_f
+          ]
+        )
+        command_id = db.last_insert_row_id
+
+        # Parse command arguments for path tracking (use clean command)
+        if command_id
+          parse_command_arguments(db, command_id, clean_command)
+        end
+
+        return command_id
+      rescue SQLite3::Exception => fallback_e
+        STDERR.puts "Error storing command: #{fallback_e.message}"
+        return nil
+      end
+    else
+      STDERR.puts "Error storing command: #{e.message}"
+      return nil
+    end
+  ensure
+    db.close if db
+  end
+end
+
+def parse_command_arguments(db, command_id, command_text)
+  # Parse command into arguments (basic shell-like parsing)
+  # This is a simplified parser - could be enhanced for more complex cases
+  args = command_text.scan(/(?:[^\s"']+|"[^"]*"|'[^']*')+/).map { |arg| arg.gsub(/^["']|["']$/, '') }
+
+  args.each_with_index do |arg, position|
+    # Skip arguments with null bytes or invalid characters
+    next if arg.include?("\x00") || arg.empty?
+
+    # Check if argument is a valid path (including the command itself at position 0)
+    begin
+      if File.exist?(arg)
+        # Resolve to absolute path
+        abs_path = File.expand_path(arg)
+        path_type = File.directory?(abs_path) ? 'd' : 'f'
+
+        # Store path and get paths_id
+  path_id = get_or_create_path_id(db, abs_path, path_type)
+
+        # Store argument reference
+        db.execute(
+          "INSERT INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)",
+          [command_id, path_id, position]
+        )
+      end
+    rescue => e
+      # Ignore errors for individual arguments
+      STDERR.puts "Warning: Could not process argument '#{arg}': #{e.message}"
+    end
+  end
+end
+
+def update_command_completion(command_id, duration, exit_code)
+  db = initialize_db
+  begin
+    # Get current working directory for cwd_new_id
+  cwd_new_id = get_or_create_path_id(db, Dir.pwd)
+
+    # Update entries row with completion data
+    db.execute(
+  "UPDATE commands SET duration = ?, exit_code = ?, path_new_id = ? WHERE id = ?",
+  [duration, exit_code, cwd_new_id, command_id]
+    )
+
+    # Get the command text for argument parsing
+    result = db.execute(
+  "SELECT c.command FROM commands cmd JOIN cmd_texts c ON cmd.cmd_text_id = c.id WHERE cmd.id = ?",
+  [command_id]
+    )
+
+    if result && result[0]
+      command_text = result[0][0]
+      # Parse and store command arguments that are valid paths
+      parse_command_arguments(db, command_id, command_text)
+    end
+
+  rescue SQLite3::Exception => e
+    STDERR.puts "Error updating command: #{e.message}"
+  ensure
+    db.close if db
+  end
+end
+
+# Interactive query interface function
+def query_interactive(args)
+  # Parse command line options
+  options = {
+    search_term: nil,
+    session: false,
+    session_id: nil,
+  current: false,
+    dir: false,
+    dir_path: nil,
+    failed: false,
+    success: false,
+    exit_code: nil,
+    today: false,
+    week: false,
+    since: nil,
+    after: nil,
+    has_paths: false,
+    path: nil,
+    long: false,
+    quick: false,
+    slow: false,
+    private: false,
+    no_private: false,
+    assisted: false,
+    no_assisted: false,
+    fast: false,
+    instant: false,
+    background: false,
+    rare: false,
+    frequent: false,
+    unique: false,
+    shell: nil,
+    tty: nil,
+    with_args: false,
+    no_args: false,
+    arg_count: nil,
+    limit: nil,
+    json: false
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog query [search] [options]"
+
+    # Search and basic filters
+    opts.on("--session [ID]", "Commands from current/most recent or specific session") do |id|
+      options[:session] = true
+      options[:session_id] = id.to_i if id
+    end
+
+    opts.on("--dir [PATH]", "Commands executed in current or specific directory") do |path|
+      options[:dir] = true
+      options[:dir_path] = path
+    end
+
+    # Status filters
+    opts.on("--failed", "Only failed commands (exit_code != 0)") { options[:failed] = true }
+    opts.on("--success", "Only successful commands (exit_code = 0)") { options[:success] = true }
+    opts.on("--exit CODE", Integer, "Commands with specific exit code") { |code| options[:exit_code] = code }
+
+    # Time filters
+    opts.on("--today", "Commands from today") { options[:today] = true }
+    opts.on("--week", "Commands from this week") { options[:week] = true }
+    opts.on("--since TIME", "Commands since X time ago (e.g., '1 hour')") { |time| options[:since] = time }
+    opts.on("--after DATE", "Commands after date (YYYY-MM-DD)") { |date| options[:after] = date }
+
+    # Path filters
+    opts.on("--has-paths", "Commands that touched filesystem paths") { options[:has_paths] = true }
+    opts.on("--path PATH", "Commands that accessed specific path") { |path| options[:path] = path }
+
+    # Performance filters
+    opts.on("--long", "Commands longer than 50 characters") { options[:long] = true }
+    opts.on("--quick", "Commands that ran quickly (< 1s)") { options[:quick] = true }
+    opts.on("--slow", "Commands that ran slowly (> 10s)") { options[:slow] = true }
+    opts.on("--fast", "Commands that ran very quickly (< 100ms)") { options[:fast] = true }
+    opts.on("--instant", "Commands that ran instantly (< 10ms)") { options[:instant] = true }
+    opts.on("--background", "Long-running commands (> 60s)") { options[:background] = true }
+
+    # Frequency filters
+    opts.on("--rare", "Commands used < 3 times") { options[:rare] = true }
+    opts.on("--frequent", "Commands used > 10 times") { options[:frequent] = true }
+    opts.on("--unique", "Commands used exactly once") { options[:unique] = true }
+
+      # Context filters
+      opts.on("--shell SHELL", "Commands from specific shell") { |shell| options[:shell] = shell }
+    opts.on("--tty TTY", "Commands from specific TTY device") { |tty| options[:tty] = tty }
+  # Current session shortcut (uses __histlog_session_id)
+  opts.on("--current", "Commands from the current shell session (requires __histlog_session_id env)") { options[:current] = true }
+
+    # Argument filters
+    opts.on("--with-args", "Commands that had arguments") { options[:with_args] = true }
+    opts.on("--no-args", "Commands without arguments") { options[:no_args] = true }
+    opts.on("--arg-count N", Integer, "Commands with exactly N arguments") { |n| options[:arg_count] = n }
+
+    # Private command filters
+    opts.on("--private", "Show only private commands (started with space)") { options[:private] = true }
+    opts.on("--no-private", "Explicitly exclude private commands") { options[:no_private] = true }
+
+  # Imported filters
+  opts.on("--imported", "Show only imported commands (no session)") { options[:imported] = true }
+  opts.on("--no-imported", "Exclude imported commands (require a session)") { options[:no_imported] = true }
+
+    # Environment filters
+    opts.on("--assisted", "Only show AI-assisted commands") { options[:assisted] = true }
+    opts.on("--no-assisted", "Exclude AI-assisted commands") { options[:no_assisted] = true }    # Output format
+    opts.on("--json", "Output as JSON with full metadata") { options[:json] = true }
+  opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
+    opts.on("--limit N", Integer, "Limit number of results (default: no limit)") { |n| options[:limit] = n }
+
+    opts.on("-h", "--help", "Show this help") do
+      puts opts
+      exit 0
+    end
+  end.parse!(args)
+
+  # Get search term from remaining arguments
+  options[:search_term] = args.join(' ') unless args.empty?
+
+  # Build SQL query based on options
+  execute_interactive_query(options)
+end
+
+# Execute the interactive query with filters
+def execute_interactive_query(options)
+  # Read-only queries should not create or mutate the database.
+  db_path = get_db_path
+  unless File.exist?(db_path)
+    STDERR.puts "No histlog.db found in current directory"
+    return
+  end
+
+  # Open the existing database for read-only queries
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+  begin
+    # Build the base query
+    query_parts = []
+    params = []
+
+    # Base SELECT with joins
+    base_query = <<-SQL
+    SELECT
+      c.id AS cmd_text_id,
+  cmd.command AS cmd_text,
+      c.created_at,
+      c.start_time,
+      c.duration,
+      c.exit_code,
+      c.is_private,
+      c.is_assisted,
+      p_old.path as cwd_old,
+      p_new.path as cwd_new,
+      s.id as session_id,
+      s.pid,
+      sh.path as shell_path,
+      t.device as tty_device
+  FROM commands c
+  JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+      LEFT JOIN sessions s ON c.session_id = s.id
+      LEFT JOIN shells sh ON s.shell_id = sh.id
+      LEFT JOIN ttys t ON s.tty_id = t.id
+      LEFT JOIN paths p_old ON c.path_old_id = p_old.id
+      LEFT JOIN paths p_new ON c.path_new_id = p_new.id
+    SQL
+
+    # Add WHERE conditions based on options
+    where_conditions = []
+
+    # Search term filter (optional)
+    if options[:search_term] && !options[:search_term].empty?
+      where_conditions << "cmd.command LIKE ?"
+      params << "%#{options[:search_term]}%"
+    end
+
+    # Session filter
+    if options[:session]
+      if options[:session_id]
+        where_conditions << "s.id = ?"
+        params << options[:session_id]
+      else
+        # Find current session from environment variable set by shell integration
+          # Read current session id from environment (new name matching table `sessions`)
+          current_session_id = ENV['__histlog_session_id']
+        if current_session_id
+            where_conditions << "s.id = ?"
+            params << current_session_id.to_i
+        else
+          # Fallback: use the most recent session
+            recent_session_result = db.execute("SELECT id FROM sessions ORDER BY created_at DESC LIMIT 1")
+            if recent_session_result && recent_session_result[0]
+              where_conditions << "s.id = ?"
+              params << recent_session_result[0][0]
+          else
+            # If no sessions exist, this will return no results
+            where_conditions << "s.id IS NULL"
+          end
+        end
+      end
+    end
+
+    # Current session shortcut: require the environment-provided session id
+    if options[:current]
+      # Read current session id from environment (new name matching table `sessions`)
+      current_session_id = ENV['__histlog_session_id']
+      unless current_session_id && !current_session_id.to_s.strip.empty?
+        STDERR.puts "Error: __histlog_session_id environment variable not set; cannot determine current session"
+        return
+      end
+      where_conditions << "s.id = ?"
+      params << current_session_id.to_i
+    end
+
+    # Directory filter
+    if options[:dir]
+      dir_path = options[:dir_path] || Dir.pwd
+      abs_dir = File.expand_path(dir_path)
+      where_conditions << "(p_old.path = ? OR p_new.path = ?)"
+      params << abs_dir << abs_dir
+    end
+
+    # Status filters
+    if options[:failed]
+      where_conditions << "c.exit_code != 0"
+    elsif options[:success]
+      where_conditions << "c.exit_code = 0"
+    elsif options[:exit_code]
+      where_conditions << "c.exit_code = ?"
+      params << options[:exit_code]
+    end
+
+    # Private command filters
+    if options[:private]
+      where_conditions << "c.is_private = 1"
+    elsif options[:no_private]
+      where_conditions << "c.is_private = 0"
+    # Default: show private commands unless explicitly excluded
+    end
+
+    # AI-assisted command filters
+    if options[:assisted]
+      where_conditions << "c.is_assisted = 1"
+    elsif options[:no_assisted]
+      where_conditions << "c.is_assisted != 1"
+    # Default: show all commands regardless of AI assistance unless explicitly filtered
+    end
+
+    # Imported / non-imported filtering
+    if options[:imported]
+      # Imported commands have no session ID
+      where_conditions << "c.session_id IS NULL"
+    elsif options[:no_imported]
+      # Only show commands that belong to sessions
+      where_conditions << "c.session_id IS NOT NULL"
+    end
+
+    # Time filters
+    if options[:today]
+      # Convert start of today to Julian day
+      today_start_unix = Time.new(Time.now.year, Time.now.month, Time.now.day).to_f
+      today_start_julian = (today_start_unix / 86400.0) + 2440587.5
+      where_conditions << "c.created_at >= ?"
+      params << today_start_julian
+    elsif options[:week]
+      # Get start of week (Monday)
+      now = Time.now
+      days_since_monday = (now.wday + 6) % 7  # Convert Sunday=0 to Monday=0
+      week_start_unix = (Time.new(now.year, now.month, now.day) - (days_since_monday * 86400)).to_f
+      week_start_julian = (week_start_unix / 86400.0) + 2440587.5
+      where_conditions << "c.created_at >= ?"
+      params << week_start_julian
+    elsif options[:since]
+      # Parse relative time (simplified)
+      if options[:since] =~ /(\d+)\s*(hour|minute|day)s?/
+        amount = $1.to_i
+        unit = $2
+        seconds_ago = case unit
+        when 'minute' then amount * 60
+        when 'hour' then amount * 3600
+        when 'day' then amount * 86400
+        end
+        since_unix = Time.now.to_f - seconds_ago
+        since_julian = (since_unix / 86400.0) + 2440587.5
+        where_conditions << "c.created_at >= ?"
+        params << since_julian
+      end
+    elsif options[:after]
+      # Parse date
+      begin
+        after_unix = Time.parse(options[:after]).to_f
+        after_julian = (after_unix / 86400.0) + 2440587.5
+        where_conditions << "c.created_at >= ?"
+        params << after_julian
+      rescue ArgumentError
+        STDERR.puts "Invalid date format: #{options[:after]}"
+        return
+      end
+    end
+
+    # Performance filters (duration-based)
+    if options[:quick]
+      where_conditions << "c.duration < 1.0"
+    elsif options[:slow]
+      where_conditions << "c.duration > 10.0"
+    elsif options[:fast]
+      where_conditions << "c.duration < 0.1"
+    elsif options[:instant]
+      where_conditions << "c.duration < 0.01"
+    elsif options[:background]
+      where_conditions << "c.duration > 60.0"
+    end
+
+    # Command length filters
+    if options[:long]
+      where_conditions << "LENGTH(cmd.command) > 50"
+    end
+
+    # Shell and TTY filters
+    if options[:shell]
+      where_conditions << "sh.path LIKE ?"
+      params << "%#{options[:shell]}%"
+    end
+
+    if options[:tty]
+      where_conditions << "t.device LIKE ?"
+      params << "%#{options[:tty]}%"
+    end
+
+
+    # Path-related filters
+    if options[:has_paths]
+    base_query += " JOIN path_args a ON c.id = a.command_id"
+      where_conditions << "a.path_id IS NOT NULL"
+    end
+
+    if options[:path]
+  base_query += " JOIN path_args a ON c.id = a.command_id JOIN paths p_arg ON a.path_id = p_arg.id"
+      where_conditions << "p_arg.path LIKE ?"
+      params << "%#{options[:path]}%"
+    end
+
+    # Argument count filters
+    if options[:with_args]
+  base_query += " JOIN path_args a ON c.id = a.command_id"
+      where_conditions << "a.arg_position > 0"  # Position 0 is the command itself
+    elsif options[:no_args]
+  where_conditions << "NOT EXISTS (SELECT 1 FROM path_args a WHERE a.command_id = c.id AND a.arg_position > 0)"
+    elsif options[:arg_count]
+  where_conditions << "(SELECT COUNT(*) FROM path_args a WHERE a.command_id = c.id AND a.arg_position > 0) = ?"
+      params << options[:arg_count]
+    end
+
+    # Frequency filters require subqueries
+    if options[:rare] || options[:frequent] || options[:unique]
+      frequency_subquery = <<-SQL
+  (SELECT COUNT(*) FROM commands c2 WHERE c2.cmd_text_id = c.cmd_text_id)
+      SQL
+
+      if options[:rare]
+        where_conditions << "#{frequency_subquery} < 3"
+      elsif options[:frequent]
+        where_conditions << "#{frequency_subquery} > 10"
+      elsif options[:unique]
+        where_conditions << "#{frequency_subquery} = 1"
+      end
+    end
+
+  # Combine query parts
+    full_query = base_query
+    if where_conditions.any?
+      full_query += " WHERE " + where_conditions.join(" AND ")
+    end
+
+    # Add GROUP BY to handle potential duplicates from JOINs, but preserve individual command executions
+  full_query += " GROUP BY c.id"
+
+    # Order by most recent first
+    full_query += " ORDER BY c.created_at DESC"
+
+    # Add limit if specified
+    if options[:limit]
+      full_query += " LIMIT #{options[:limit]}"
+    end
+
+    # Execute query
+    results = db.execute(full_query, params)
+
+    # Output results
+    if options[:json]
+      output_json_results(results)
+    else
+      output_interactive_results(results, options)
+    end
+
+  rescue SQLite3::Exception => e
+    STDERR.puts "Database error: #{e.message}"
+  ensure
+    db.close if db
+  end
+end
+
+# Output results in JSON format
+def output_json_results(results)
+    json_results = results.map do |row|
+      {
+        cmd_text_id: row['cmd_text_id'],
+        cmd_text: row['cmd_text'],
+  start_time: row['start_time'],
+        duration: row['duration'],
+        exit_code: row['exit_code'],
+        is_private: row['is_private'] == 1,
+        is_assisted: row['is_assisted'] == 1,
+        cwd_old: row['cwd_old'],
+        cwd_new: row['cwd_new'],
+        session_id: row['session_id'],
+        pid: row['pid'],
+        shell: row['shell_path'],
+        tty: row['tty_device'],
+      }
+  end
+  puts JSON.pretty_generate(json_results)
+end
+
+# Output results for display
+def output_interactive_results(results, options)
+  if results.empty?
+    puts "No commands found matching the criteria."
+    return
+  end
+
+  # Simple output: just print commands (optionally prefixed by ISO8601 start_time)
+  results.each do |row|
+  command = row['cmd_text'] || row['command']
+    lines = command.split("\n")
+    time_prefix = ""
+    if options && options[:show_time] && row['start_time']
+      begin
+        t = Time.at(row['start_time'].to_f)
+        # Format in local timezone (ISO 8601 with offset)
+        time_prefix = t.getlocal.iso8601 + " "
+      rescue
+        time_prefix = ""
+      end
+    end
+
+    if results.length == 1
+      # Single result: show full command, even if multiline
+      puts time_prefix + command
+    elsif lines.length > 1
+      # Multiple results with multiline command: show first line + "..."
+      puts time_prefix + "#{lines.first}..."
+    else
+      # Multiple results with single line command: show as-is
+      puts time_prefix + command
+    end
+  end
+end
+
+# Show advanced command statistics
+def show_advanced_stats(args)
+  # Connect to database
+  db_path = get_db_path
+  unless File.exist?(db_path)
+    puts "No histlog.db found in current directory"
+    return
+  end
+
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  puts "=== Command History Summary ==="
+  puts
+
+  # Basic stats
+  total_commands = db.execute("SELECT COUNT(*) as count FROM commands")[0]['count']
+  unique_commands = db.execute("SELECT COUNT(*) as count FROM cmd_texts")[0]['count']
+  failed_commands = db.execute("SELECT COUNT(*) as count FROM commands WHERE exit_code != 0")[0]['count']
+  tracked_paths = db.execute("SELECT COUNT(*) as count FROM path_args")[0]['count']
+
+  puts "Total commands executed: #{total_commands}"
+  puts "Unique commands: #{unique_commands}"
+  puts "Failed commands: #{failed_commands} (#{(failed_commands.to_f / total_commands * 100).round(2)}%)" if total_commands > 0
+  puts "Arguments tracked as paths: #{tracked_paths}"
+
+  if total_commands > 0
+    # Most used commands
+    puts "\n=== Most Frequent Commands ==="
+    frequent_commands = db.execute(<<-SQL)
+      SELECT
+        cmd_texts.command AS cmd_text,
+        COUNT(*) as count,
+        AVG(c.duration) as avg_duration,
+        MAX(c.created_at) as last_seen
+      FROM commands c
+      JOIN cmd_texts ON c.cmd_text_id = cmd_texts.id
+      WHERE c.duration IS NOT NULL
+      GROUP BY cmd_texts.id
+      ORDER BY count DESC
+      LIMIT 10
+    SQL
+
+    if frequent_commands.any?
+      puts "%-6s %-8s %-50s %-s" % ["Count", "Avg Time", "Command", "Last Used"]
+      puts "-" * 85
+      frequent_commands.each do |cmd|
+        avg_time = format_duration(cmd['avg_duration'])
+        last_used = format_time(cmd['last_seen'])
+        command_text = truncate_command(cmd['cmd_text'], 45)
+        puts "% -6s %-8s %-50s %-s" % [cmd['count'], avg_time, command_text, last_used]
+      end
+    end
+
+    # Most accessed paths
+    puts "\n=== Most Accessed Paths ==="
+    frequent_paths = db.execute(<<-SQL)
+      SELECT
+        p.path,
+        p.type,
+        COUNT(*) as usage_count
+      FROM path_args ca
+      JOIN paths p ON ca.path_id = p.id
+      GROUP BY p.path
+      ORDER BY usage_count DESC
+      LIMIT 10
+    SQL
+
+    if frequent_paths.any?
+      puts "%-6s %-4s %-s" % ["Count", "Type", "Path"]
+      puts "-" * 60
+      frequent_paths.each do |path_data|
+        type_name = path_data['type'] == 'd' ? 'dir' : 'file'
+        puts "%-6s %-4s %-s" % [path_data['usage_count'], type_name, path_data['path']]
+      end
+    else
+      puts "No path arguments tracked yet"
+    end
+
+    # Most common failures
+    if failed_commands > 0
+      puts "\n=== Most Common Failures ==="
+      common_failures = db.execute(<<-SQL)
+        SELECT
+          cmd_texts.command AS cmd_text,
+          c.exit_code,
+          COUNT(*) as count,
+          MAX(c.created_at) as last_failure
+        FROM commands c
+        JOIN cmd_texts ON c.cmd_text_id = cmd_texts.id
+        WHERE c.exit_code != 0
+        GROUP BY cmd_texts.id, c.exit_code
+        ORDER BY count DESC
+        LIMIT 10
+      SQL
+
+      puts "%-6s %-4s %-50s %-s" % ["Count", "Exit", "Command", "Last Failure"]
+      puts "-" * 85
+      common_failures.each do |failure|
+        command_text = truncate_command(failure['cmd_text'], 45)
+        last_fail = format_time(failure['last_failure'])
+        puts "%-6s %-4s %-50s %-s" % [failure['count'], failure['exit_code'], command_text, last_fail]
+      end
+    end
+  end
+  db.close
+end
+
+# Show a list of recent commands
+def show_history_list(args)
+  options = {
+    limit: 20,
+    show_all: false,
+    show_paths: false,
+    filter_command: nil,
+    filter_path: nil
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog history [options]"
+    opts.on("-l", "--limit N", Integer, "Number of recent commands to show (default: 20)") { |n| options[:limit] = n }
+    opts.on("-a", "--all", "Show all commands (ignore limit)") { options[:show_all] = true }
+    opts.on("-p", "--paths", "Show path arguments for commands") { options[:show_paths] = true }
+    opts.on("-c", "--command PATTERN", "Filter commands containing pattern") { |p| options[:filter_command] = p }
+    opts.on("-d", "--dir PATH", "Filter commands that used specific directory") { |p| options[:filter_path] = File.expand_path(p) }
+  end.parse!(args)
+
+  db_path = get_db_path
+  unless File.exist?(db_path)
+    puts "No histlog.db found in current directory"
+    return
+  end
+
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  where_conditions = []
+  params = []
+
+  if options[:filter_command]
+    where_conditions << "cmd.command LIKE ?"
+    params << "%#{options[:filter_command]}%"
+  end
+
+  if options[:filter_path]
+    where_conditions << "(p_old.path = ? OR p_new.path = ?)"
+    params << options[:filter_path] << options[:filter_path]
+  end
+
+  where_clause = where_conditions.empty? ? "" : "WHERE #{where_conditions.join(' AND ')}"
+  limit_clause = options[:show_all] ? "" : "LIMIT #{options[:limit]}"
+
+  recent_commands_query = <<-SQL
+    SELECT
+      c.id as command_id,
+      cmd.command AS cmd_text,
+      c.start_time,
+      c.duration,
+      c.exit_code,
+      p_old.path as cwd_old,
+      p_new.path as cwd_new
+    FROM commands c
+    JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+    LEFT JOIN paths p_old ON c.path_old_id = p_old.id
+    LEFT JOIN paths p_new ON c.path_new_id = p_new.id
+    #{where_clause}
+    ORDER BY c.start_time DESC
+    #{limit_clause}
+  SQL
+
+  recent_commands = db.execute(recent_commands_query, params)
+
+  if recent_commands.empty?
+    puts "No commands found."
+    return
+  end
+
+  puts "%-6s %-8s %-4s %-50s %-s" % ["ID", "Duration", "Exit", "Command", "Time"]
+  puts "-" * 90
+
+  recent_commands.each do |cmd|
+    duration = format_duration(cmd['duration'])
+    exit_code = cmd['exit_code'] || 'N/A'
+    command_text = truncate_command(cmd['cmd_text'], 45)
+    time = cmd['start_time'] ? Time.at(cmd['start_time']).strftime('%Y-%m-%d %H:%M:%S') : 'N/A'
+
+    exit_display = case exit_code
+                   when 0 then "  ✓ "
+                   when 'N/A' then " ? "
+                   else " ✗#{exit_code}"
+                   end
+
+    puts "%-6s %-8s %-4s %-50s %-s" % [cmd['command_id'], duration, exit_display, command_text, time]
+
+    if options[:show_paths]
+      path_args = db.execute(<<-SQL, [cmd['command_id']])
+        SELECT p.path, p.type, ca.arg_position
+        FROM path_args ca
+        JOIN paths p ON ca.path_id = p.id
+        WHERE ca.command_id = ?
+        ORDER BY ca.arg_position
+      SQL
+
+      if path_args.any?
+        path_args.each do |path_arg|
+          type_indicator = path_arg['type'] == 'd' ? '📁' : '📄'
+          puts "       #{' ' * 8}     #{type_indicator} [#{path_arg['arg_position']}] #{path_arg['path']}"
+        end
+      end
+    end
+  end
+  db.close
+end
+
+# Query sessions function
+def query_sessions(args)
+  # Connect to database
+  db_path = get_db_path
+  unless File.exist?(db_path)
+    puts "No histlog.db found in current directory"
+    return
+  end
+
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  puts "=== Sessions Summary ==="
+  puts
+
+  # Count sessions
+  session_count = db.execute("SELECT COUNT(*) as count FROM sessions")[0]['count']
+  puts "Total sessions: #{session_count}"
+
+  if session_count > 0
+    # Latest sessions
+    puts "\n=== Recent Sessions ==="
+    puts "%-10s %-15s %-15s %-10s %-30s %-s" % ["Session", "Shell", "TTY", "Timezone", "Created", "Working Directory"]
+    puts "-" * 160
+
+    latest_sessions = db.execute(<<-SQL)
+      SELECT
+        s.id as session_id,
+        sh.path as shell_path,
+        t.device as tty_device,
+        s.timezone,
+        s.created_at,
+        p.path as working_directory
+  FROM sessions s
+  LEFT JOIN shells sh ON s.shell_id = sh.id
+  LEFT JOIN ttys t ON s.tty_id = t.id
+  LEFT JOIN paths p ON s.path_id = p.id
+      ORDER BY s.created_at DESC
+      LIMIT 10
+    SQL
+
+    latest_sessions.each do |session|
+      shell_name = session['shell_path'] ? File.basename(session['shell_path']) : 'unknown'
+      tty_short = session['tty_device']&.gsub('/dev/', '') || 'unknown'
+      timezone = session['timezone'] || 'unknown'
+      created_time = format_time(session['created_at'])
+
+  puts "%-10s %-15s %-15s %-10s %-30s %-s" % [
+        session['session_id'],
+        shell_name,
+        tty_short,
+        timezone,
+        created_time,
+        session['working_directory']
+      ]
+    end
+
+    # Session analysis
+    puts "\n=== Session Analysis ==="
+    shells = db.execute(<<-SQL)
+      SELECT sh.path, COUNT(*) as count
+  FROM sessions s
+  LEFT JOIN shells sh ON s.shell_id = sh.id
+      GROUP BY sh.id, sh.path
+      ORDER BY count DESC
+    SQL
+
+    puts "Shells used:"
+    shells.each do |shell_data|
+      shell_name = shell_data['path'] ? File.basename(shell_data['path']) : 'unknown'
+      puts "  #{shell_name}: #{shell_data['count']} sessions"
+    end
+
+    # TTY analysis
+    puts "\nTTYs used:"
+    ttys = db.execute(<<-SQL)
+      SELECT t.device, COUNT(*) as count
+  FROM sessions s
+  LEFT JOIN ttys t ON s.tty_id = t.id
+      GROUP BY t.id, t.device
+      ORDER BY count DESC
+    SQL
+
+    ttys.each do |tty_data|
+      tty_name = tty_data['device']&.gsub('/dev/', '') || 'unknown'
+      puts "  #{tty_name}: #{tty_data['count']} sessions"
+    end
+  end
+
+  db.close
+end
+
+# Import shell history function
+def import_shell_history(args)
+  # Parse command line options
+  options = {
+    history_file: nil,
+    shell: nil,
+    dry_run: false,
+    verbose: false
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog import [options] [history_file]"
+
+    opts.on("-s", "--shell SHELL", "Shell type (fish, zsh, nu)") do |shell|
+      options[:shell] = shell.downcase
+    end
+
+    opts.on("-f", "--file FILE", "History file path (defaults to shell's default)") do |file|
+      options[:history_file] = file
+    end
+
+    opts.on("-n", "--dry-run", "Show what would be imported without saving") do
+      options[:dry_run] = true
+    end
+
+    opts.on("-v", "--verbose", "Show detailed import progress") do
+      options[:verbose] = true
+    end
+
+    opts.on("-h", "--help", "Show this help") do
+      puts opts
+      exit 0
+    end
+  end.parse!(args)
+
+  # Get history file from command line if provided
+  options[:history_file] = args.first if args.first && !options[:history_file]
+
+  # If a history file is provided but no shell, try to detect shell from that file
+  if options[:history_file] && options[:shell].nil?
+    detected_shell = detect_shell_from_history_file(options[:history_file])
+    options[:shell] = detected_shell if detected_shell
+  end
+
+  # Auto-detect default shell and history file only if history_file not specified
+  if !options[:history_file]
+    detected_shell, default_file = detect_shell_and_history_file()
+    options[:shell] ||= detected_shell
+    options[:history_file] ||= default_file
+  end
+
+  # If shell is still unknown but we have a file, make one more attempt to detect
+  if options[:shell].nil? && options[:history_file]
+    options[:shell] = detect_shell_from_history_file(options[:history_file])
+  end
+
+  unless options[:shell] && options[:history_file]
+    STDERR.puts "Error: Could not determine shell type or history file location"
+    STDERR.puts "Use --shell and --file options to specify manually"
+    exit 1
+  end
+
+  unless File.exist?(options[:history_file])
+    STDERR.puts "Error: History file not found: #{options[:history_file]}"
+    exit 1
+  end
+
+  puts "Importing #{options[:shell]} history from: #{options[:history_file]}"
+  puts "Mode: #{options[:dry_run] ? 'DRY RUN' : 'IMPORT'}"
+
+  # Parse history file based on shell type
+  commands = parse_history_file(options[:history_file], options[:shell], options[:verbose])
+
+  if commands.empty?
+    puts "No commands found in history file"
+    return
+  end
+
+  puts "Found #{commands.length} commands"
+
+  if options[:dry_run]
+    puts "\nSample commands (first 10):"
+    commands.first(10).each_with_index do |cmd, i|
+      timestamp = cmd[:start_time] ? Time.at(cmd[:start_time]).strftime('%Y-%m-%d %H:%M:%S') : 'unknown'
+      puts "  #{i+1}. [#{timestamp}] #{cmd[:command]}"
+    end
+    puts "..."
+    return
+  end
+
+  # Import commands into database
+  imported_count = import_commands_to_db(commands, options)
+  puts "Successfully imported #{imported_count} commands"
+end
+
+# Detect current shell and default history file location
+def detect_shell_and_history_file
+  # Try to detect from environment
+  shell_path = ENV['SHELL'] || ''
+  shell_name = File.basename(shell_path)
+
+  # Get home directory
+  home = Dir.home
+
+  case shell_name
+  when 'fish'
+    history_file = File.join(home, '.local/share/fish/fish_history')
+    return ['fish', history_file] if File.exist?(history_file)
+  when 'zsh'
+    # Try common zsh history locations
+    candidates = [
+      File.join(home, '.zsh_history'),
+      File.join(home, '.zhistory'),
+      ENV['HISTFILE']
+    ].compact
+    candidates.each do |file|
+      return ['zsh', file] if File.exist?(file)
+    end
+  when 'nu', 'nushell'
+    # Nushell history location (may vary by version/config)
+    nu_config_dir = ENV['XDG_CONFIG_HOME'] || File.join(home, '.config')
+    history_file = File.join(nu_config_dir, 'nushell/history.txt')
+    return ['nu', history_file] if File.exist?(history_file)
+    # Alternative location
+    history_file = File.join(home, '.config/nushell/history.txt')
+    return ['nu', history_file] if File.exist?(history_file)
+  end
+
+  # Fallback: try to detect by checking for common history files
+  [
+    ['fish', File.join(home, '.local/share/fish/fish_history')],
+    ['zsh', File.join(home, '.zsh_history')],
+    ['nu', File.join(home, '.config/nushell/history.txt')]
+  ].each do |shell, file|
+    return [shell, file] if File.exist?(file)
+  end
+
+  [nil, nil]
+end
+
+# Detect shell format from a given history file path and content
+# Returns 'fish', 'zsh', 'nu' or nil if unknown
+def detect_shell_from_history_file(file_path)
+  return nil unless file_path && File.exist?(file_path)
+
+  begin
+    basename = File.basename(file_path)
+    fullpath = file_path
+    lower = fullpath.downcase
+
+    # Path-based hints first
+    return 'fish' if basename == 'fish_history' || lower.include?('/fish/fish_history')
+    return 'zsh' if basename == '.zsh_history' || basename == '.zhistory' || lower.include?('/zsh')
+    return 'nu'   if lower.include?('/nushell/history') || (basename == 'history.txt' && lower.include?('/nushell/'))
+
+    # Content-based heuristics
+    sample_lines = []
+    File.open(file_path, 'r') do |f|
+      2000.times do
+        line = f.gets
+        break unless line
+        line = line.chomp
+        next if line.strip.empty?
+        sample_lines << line
+        break if sample_lines.size >= 200 # cap
+      end
+    end
+
+    # Fish YAML-like entries start with "- cmd: " and have indented keys like "  when:"
+    if sample_lines.any? { |l| l.start_with?('- cmd: ') } || sample_lines.any? { |l| l.strip.start_with?('when:') || l.start_with?('  when: ') }
+      return 'fish'
+    end
+
+    # Zsh extended history lines typically start with ": <epoch>:" or ": <epoch>;"
+    if sample_lines.any? { |l| l.start_with?(': ') && (l.match(/^: \d+:\d+;/) || l.match(/^: \d+;/)) }
+      return 'zsh'
+    end
+
+    # Nushell is plain lines; if path hints didn't match, and lines don't match fish/zsh, guess 'nu'
+    return 'nu'
+  rescue
+    # On any error, fall back to nil
+    nil
+  end
+end
+
+# Parse history file based on shell format
+# If shell_type is nil or 'auto', attempt to auto-detect based on file path and content
+def parse_history_file(file_path, shell_type, verbose = false)
+  # Autodetect if not provided
+  if shell_type.nil? || shell_type.to_s.strip.downcase == 'auto'
+    detected = detect_shell_from_history_file(file_path)
+    if detected
+      shell_type = detected
+    else
+      STDERR.puts "Error: Could not auto-detect shell history format for: #{file_path}"
+      STDERR.puts "Hint: specify --shell fish|zsh|nu"
+      return []
+    end
+  end
+
+  commands = []
+
+  puts "Parsing #{shell_type} history..." if verbose
+
+  case shell_type
+  when 'fish'
+    commands = parse_fish_history(file_path, verbose)
+  when 'zsh'
+    commands = parse_zsh_history(file_path, verbose)
+  when 'nu', 'nushell', 'nu-shell'
+    commands = parse_nu_history(file_path, verbose)
+  else
+    STDERR.puts "Error: Unsupported shell type: #{shell_type}"
+    return []
+  end
+
+  commands
+end
+
+# Parse Fish shell history format
+def parse_fish_history(file_path, verbose = false)
+  commands = []
+  current_command = nil
+
+  File.readlines(file_path).each_with_index do |line, line_num|
+    line = line.chomp
+
+    if line.start_with?('- cmd: ')
+      # Save previous command if exists
+      commands << current_command if current_command && current_command[:command]
+
+      # Start new command
+      command_text = line[7..-1] # Remove '- cmd: ' prefix
+      current_command = {
+        command: command_text,
+        start_time: nil
+      }
+    elsif line.start_with?('  when: ') && current_command
+      # Parse timestamp
+      timestamp_str = line[8..-1] # Remove '  when: ' prefix
+      begin
+        current_command[:start_time] = timestamp_str.to_i
+      rescue
+        # Ignore invalid timestamps
+      end
+    elsif line.start_with?('  paths:') && current_command
+      # Fish also stores paths, but we'll parse them from command text instead
+      next
+    end
+
+    puts "Processed line #{line_num + 1}" if verbose && (line_num + 1) % 1000 == 0
+  end
+
+  # Add last command
+  commands << current_command if current_command && current_command[:command]
+
+  commands
+end
+
+# Parse Zsh history format
+def parse_zsh_history(file_path, verbose = false)
+  commands = []
+
+  File.readlines(file_path).each_with_index do |line, line_num|
+    line = line.chomp
+
+    if line.match(/^: (\d+):\d+;(.*)$/)
+      # Extended history format: ": timestamp:duration;command"
+  start_time = $1.to_i
+  command = $2
+  commands << { command: command, start_time: start_time }
+    elsif line.match(/^: (\d+);\s*(.*)$/)
+      # Simple extended format: ": timestamp;command"
+  start_time = $1.to_i
+  command = $2
+  commands << { command: command, start_time: start_time }
+    elsif !line.start_with?(':')
+      # Simple format: just the command
+  commands << { command: line, start_time: nil }
+    end
+
+    puts "Processed line #{line_num + 1}" if verbose && (line_num + 1) % 1000 == 0
+  end
+
+  commands
+end
+
+# Parse Nushell history format
+def parse_nu_history(file_path, verbose = false)
+  commands = []
+
+  # Nushell history is typically plain text, one command per line
+  File.readlines(file_path).each_with_index do |line, line_num|
+    line = line.chomp.strip
+    next if line.empty?
+
+  commands << { command: line, start_time: nil }
+    puts "Processed line #{line_num + 1}" if verbose && (line_num + 1) % 1000 == 0
+  end
+
+  commands
+end
+
+# Import parsed commands into the database
+def import_commands_to_db(commands, options)
+  db = initialize_db
+  db.results_as_hash = true
+  imported_count = 0
+
+  begin
+    commands.each_with_index do |cmd_data, index|
+      begin
+        # Skip empty commands
+        next if cmd_data[:command].nil? || cmd_data[:command].strip.empty?
+
+        # Detect if command is private (starts with space)
+        original_command = cmd_data[:command]
+        is_private = original_command.start_with?(' ') ? 1 : 0
+        clean_command = original_command.lstrip
+
+  # Get or create cmd_text_id
+  cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+
+        # Only use actual timestamp if available, otherwise let DB use default
+        if cmd_data[:start_time]
+          # Convert Unix timestamp to Julian Day format (database uses julianday)
+          julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
+          # Insert command into current `entries` table, marking it as an imported row
+          # session-related fields are NULL for imported commands
+          db.execute(
+            "INSERT INTO entries (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, julian_day, cmd_data[:start_time].to_f]
+          )
+        else
+          # Insert command without explicit timestamp (DB will use default created_at)
+          db.execute(
+            "INSERT INTO entries (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, nil]
+          )
+        end
+
+        imported_count += 1
+
+        puts "Imported #{imported_count} commands..." if options[:verbose] && imported_count % 100 == 0
+
+      rescue SQLite3::Exception => e
+        STDERR.puts "Warning: Could not import command '#{cmd_data[:command]}': #{e.message}" if options[:verbose]
+      end
+    end
+
+  rescue SQLite3::Exception => e
+    STDERR.puts "Database error during import: #{e.message}"
+  ensure
+    db.close if db
+  end
+
+  imported_count
+end
+
+# Show help function
+def show_help(show_plumbing = false)
+  puts "Usage: histlog <command> [options]"
+  puts ""
+  puts "Commands:"
+  puts "  help            Show this help message"
+  puts "  init [SHELL]    Generate shell configuration (fish, zsh, nu)"
+  puts "  query [STRING]  Command search and display"
+  puts "  stats           Show command history statistics"
+  puts "  sessions        Show session information"
+  puts "  import [FILE]   Import history from shell history files"
+  puts "  optimize        Optimize database performance"
+  puts ""
+  puts "Query Filters:"
+  puts "  --session [ID]  Commands from current or specific session"
+  puts "  --current        Commands from the current shell session (requires __histlog_session_id env)"
+  puts "  --dir [PATH]    Commands from current or specific directory"
+  puts "  --failed        Only failed commands (exit != 0)"
+  puts "  --success       Only successful commands (exit = 0)"
+  puts "  --today         Commands from today"
+  puts "  --week          Commands from this week"
+  puts "  --private       Show only private commands (started with space)"
+  puts "  --no-private    Exclude private commands"
+  puts "  --quick         Fast commands (< 1s)"
+  puts "  --slow          Slow commands (> 10s)"
+  puts "  --has-paths     Commands that accessed filesystem paths"
+  puts "  --json          Output as JSON"
+  puts ""
+
+  if show_plumbing
+    puts ""
+    puts "Plumbing Commands (for shell integration only):"
+    puts "  _on_session     Create new shell session"
+    puts "  _on_preexec     Record command start"
+    puts "  _on_postcmd     Record command completion"
+    puts ""
+    puts "These commands are called automatically by shell hooks."
+    puts "Users should not invoke them directly."
+  end
+
+  puts ""
+  puts "Use 'histlog --help-all' to see plumbing commands"
+  puts "Use 'histlog query --help' for complete filter options"
+end
+
+# Shell configuration functions
+def fish_config
+  histlog_path = File.expand_path(__FILE__)
+  <<~FISH
+    #!/usr/bin/env fish
+    # histlog configuration for fish shell
+    # Add this to your config.fish or source this file
+
+      if test -z "$__histlog_session_id"
+        # Export histlog path and session id so external commands can read them
+        set -gx __histlog_path "#{histlog_path}"
+        set -gx __histlog_session_id (
+          $__histlog_path _on_session
+        )
+      end
+
+      function __histlog_preexec --on-event fish_preexec
+        # Export the current command id for external tools
+        set -gx __histlog_entries_id (
+          $__histlog_path _on_preexec $argv[1] $__histlog_session_id
+        )
+      end
+
+      function __histlog_postcmd --on-event fish_postexec
+        $__histlog_path _on_postcmd $__histlog_entries_id $CMD_DURATION $status
+      end
+  FISH
+end
+
+def zsh_config
+  histlog_path = File.expand_path(__FILE__)
+  <<~ZSH
+    #!/usr/bin/env zsh
+    # histlog configuration for zsh shell
+    # Add this to ~/.zshrc or source this file
+
+    if [[ -z $__histlog_session_id ]]; then
+      export __histlog_path="#{histlog_path}"
+      export __histlog_session_id="$($__histlog_path _on_session)"
+    fi
+
+    function __histlog_preexec() {
+      export __histlog_entries_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
+    }
+
+    function __histlog_postexec() {
+      $__histlog_path _on_postcmd "$__histlog_entries_id" "$CMD_DURATION" "$?"
+    }
+
+    # Zsh hooks
+    autoload -Uz add-zsh-hook
+    add-zsh-hook preexec __histlog_preexec
+    add-zsh-hook precmd __histlog_postexec
+  ZSH
+end
+
+def nu_config
+  histlog_path = File.expand_path(__FILE__)
+  <<~NU
+    #!/usr/bin/env nu
+    # histlog configuration for nushell
+    # Add this to your config.nu
+
+    # Initialize session once and set environment variables so external commands see them
+    if ($env.__histlog_session_id? | is-empty) {
+      $env.__histlog_path = "#{histlog_path}"
+      $env.__histlog_session_id = ^$env.__histlog_path _on_session
+    }
+
+    $env.config.hooks = {
+      pre_execution: [
+        { $env.__histlog_entries_id = (^$env.__histlog_path _on_preexec (commandline) $env.__histlog_session_id) }
+      ]
+      pre_prompt: [
+        { ^$env.__histlog_path _on_postcmd $env.__histlog_entries_id $env.CMD_DURATION_MS $env.LAST_EXIT_CODE }
+      ]
+    }
+  NU
+end
+
+# Main application class
+class HistlogApp
+  def initialize(argv)
+    @argv = argv
+    @command = @argv.shift
+  end
+
+  def run
+    # Handle help flags first
+    if @command == '--help-all'
+      show_help(true)
+
+      return
+    elsif @command == '-h' || @command == '--help' || @command.nil?
+      show_help(false)
+      return
+    end
+
+    # Define known commands
+    known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', '_on_session', '_on_preexec', '_on_postcmd']
+
+    if !known_commands.include?(@command) && !@command.start_with?('-')
+      STDERR.puts "Error: Unknown command '#{@command}'"
+      STDERR.puts "Use 'histlog help' to see available commands"
+      exit 1
+    end
+
+    case @command
+    when 'help'
+      show_help(false)
+    when 'init'
+      handle_init
+    when 'query'
+      query_interactive(@argv)
+    when 'stats'
+      show_advanced_stats(@argv)
+    when 'history'
+      show_history_list(@argv)
+    when 'sessions'
+      query_sessions(@argv)
+    when 'import'
+      import_shell_history(@argv)
+    when 'optimize'
+      handle_optimize
+    when '_on_session'
+      handle_on_session
+    when '_on_preexec'
+      handle_on_preexec
+    when '_on_postcmd'
+      handle_on_postcmd
+    else
+      # This case may be triggered by unhandled options passed as commands
+      # Re-insert the "command" and let query_interactive handle it
+      @argv.unshift(@command)
+      query_interactive(@argv)
+    end
+  end
+
+  private
+
+  def handle_init
+    shell = @argv[0]
+    case shell
+    when 'fish'
+      puts "# Add to ~/.config/fish/config.fish:"
+      puts "# histlog init fish | source"
+      puts ""
+      puts fish_config
+    when 'zsh'
+      puts "# Add to ~/.zshrc:"
+      puts "# eval \"$(histlog init zsh)\""
+      puts ""
+      puts zsh_config
+    when 'nu', 'nushell'
+      puts "# Add to ~/.config/nushell/config.nu:"
+      puts "# histlog init nu | save /tmp/histlog-nu-config.nu; source /tmp/histlog-nu-config.nu"
+      puts ""
+      puts nu_config
+    else
+      STDERR.puts "Error: Unsupported shell '#{shell}'"
+      STDERR.puts "Supported shells: fish, zsh, nu"
+      STDERR.puts "Usage: histlog init <shell>"
+      exit 1
+    end
+  end
+
+  def handle_optimize
+    puts "Optimizing histlog database..."
+    db = initialize_db
+
+    begin
+      original_size = File.size(get_db_path)
+      puts "Original size: #{format_bytes(original_size)}"
+
+      # Check database integrity first
+      puts "Checking database integrity..."
+      integrity_result = db.execute "PRAGMA integrity_check"
+      if integrity_result[0][0] != "ok"
+        STDERR.puts "Warning: Database integrity issues detected"
+        integrity_result.each { |row| STDERR.puts "  #{row[0]}" }
+      else
+        puts "Database integrity: OK"
+      end
+
+      # Update statistics for query planner
+      puts "Running ANALYZE..."
+      db.execute "ANALYZE"
+
+      # Rebuild indexes for optimal performance
+      puts "Rebuilding indexes..."
+      db.execute "REINDEX"
+
+      # Run VACUUM to defragment and apply page size optimizations
+      puts "Running VACUUM..."
+      db.execute "VACUUM"
+
+      new_size = File.size(get_db_path)
+      savings = original_size - new_size
+      percentage = savings > 0 ? (savings.to_f / original_size * 100).round(2) : 0
+
+      puts "Optimized size: #{format_bytes(new_size)}"
+      if savings > 0
+        puts "Space saved: #{format_bytes(savings)} (#{percentage}%)"
+      else
+        puts "Database was already optimized"
+      end
+
+    rescue => e
+      STDERR.puts "Error optimizing database: #{e.message}"
+      exit 1
+    ensure
+      db.close if db
+    end
+  end
+
+  def handle_on_session
+    session_data = {
+      shell: ENV['SHELL'],
+      tty: get_tty,
+      cwd: Dir.pwd,
+      pid: Process.pid,
+      parent_pid: Process.ppid,
+      timezone: get_timezone
+    }
+
+    # Store session in SQLite database and get the generated session_id
+    session_id = store_session(session_data)
+
+    if session_id
+      puts session_id
+    else
+      STDERR.puts "Failed to create session"
+      exit 1
+    end
+  end
+
+  def handle_on_preexec
+    cmd = @argv[0]
+    session_id = @argv[1]&.to_i  # Convert to integer
+    dir = Dir.pwd
+
+    # Store command in database
+    command_data = {
+      session_id: session_id,
+      command: cmd,
+      cwd: dir
+    }
+
+    history_id = store_command(command_data)
+
+    if history_id
+      puts history_id
+    else
+      STDERR.puts "Failed to store command"
+      exit 1
+    end
+  end
+
+  def handle_on_postcmd
+    history_id = @argv[0]&.to_i  # Convert to integer
+    duration = @argv[1].to_f/1000.0 # convert ms to s, keep float
+    exit_code = @argv[2]&.to_i
+
+    # Update command with completion data
+    update_command_completion(history_id, duration.round(3), exit_code)
+  end
+end
+
+# Main execution
+if __FILE__ == $0
+  app = HistlogApp.new(ARGV)
+  app.run
+end
