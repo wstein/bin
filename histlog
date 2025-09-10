@@ -1028,11 +1028,27 @@ end
 
 # Output results in JSON format
 def output_json_results(results)
+  # Get database connection to fetch path arguments
+  db_path = get_db_path
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  begin
     json_results = results.map do |row|
-      {
+      # Fetch path arguments for this command
+      path_args = db.execute(<<-SQL, [row['cmd_text_id']])
+        SELECT pa.arg_position, p.path, p.type
+        FROM path_args pa
+        JOIN paths p ON pa.path_id = p.id
+        WHERE pa.command_id = ?
+        ORDER BY pa.arg_position
+      SQL
+
+      # Build the base result
+      result = {
         cmd_text_id: row['cmd_text_id'],
         cmd_text: row['cmd_text'],
-  start_time: row['start_time'],
+        start_time: row['start_time'],
         duration: row['duration'],
         exit_code: row['exit_code'],
         is_private: row['is_private'] == 1,
@@ -1044,8 +1060,27 @@ def output_json_results(results)
         shell: row['shell_path'],
         tty: row['tty_device'],
       }
+
+      # Add path arguments if any exist
+      if path_args.any?
+        result[:path_args] = path_args.map do |arg|
+          {
+            position: arg['arg_position'],
+            path: arg['path'],
+            type: arg['type']
+          }
+        end
+      else
+        result[:path_args] = []
+      end
+
+      result
+    end
+
+    puts JSON.pretty_generate(json_results)
+  ensure
+    db.close if db
   end
-  puts JSON.pretty_generate(json_results)
 end
 
 # Output results for display
