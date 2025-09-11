@@ -628,6 +628,7 @@ end
 
 # Interactive query interface function
 def query_interactive(args)
+  # Remove stray opts.on lines; these should be inside OptionParser.new do |opts| ... end
   # Parse command line options
   options = {
     search_term: nil,
@@ -668,7 +669,13 @@ def query_interactive(args)
   }
 
   OptionParser.new do |opts|
+    opts.on("--regex PATTERN", "Filter commands using Ruby or SQLite regex (PATTERN)") do |pattern|
+      options[:regex] = true
+      options[:search_term] = pattern
+    end
     opts.banner = "Usage: histlog query [search] [options]"
+  opts.on("--delete", "Delete matching commands after confirmation") { options[:delete] = true }
+  opts.on("--force-delete", "Delete matching commands without confirmation") { options[:force_delete] = true }
   opts.on("--asc", "Sort results in ascending order (oldest first)") { options[:asc] = true }
   opts.on("--desc", "Sort results in descending order (newest first)") { options[:desc] = true }
 
@@ -795,7 +802,10 @@ def execute_interactive_query(options)
     where_conditions = []
 
     # Search term filter (optional)
-    if options[:search_term] && !options[:search_term].empty?
+    if options[:regex] && options[:search_term] && !options[:search_term].empty?
+      where_conditions << "cmd.command REGEXP ?"
+      params << options[:search_term]
+    elsif options[:search_term] && !options[:search_term].empty?
       where_conditions << "cmd.command LIKE ?"
       params << "%#{options[:search_term]}%"
     end
@@ -1005,7 +1015,55 @@ def execute_interactive_query(options)
     end
 
     # Execute query
-    results = db.execute(full_query, params)
+    begin
+      results = db.execute(full_query, params)
+    rescue SQLite3::SQLException => e
+      # Fallback: if REGEXP is not supported, filter in Ruby
+      if options[:regex] && options[:search_term] && e.message =~ /no such function: REGEXP/
+        results = db.execute(full_query.sub(/cmd\.command REGEXP \?/, '1'), params[0..-2]) # get all
+        begin
+          re = Regexp.new(options[:search_term])
+          results = results.select { |row| row['cmd_text'] =~ re }
+        rescue RegexpError => re_err
+          STDERR.puts "Invalid regex: #{re_err.message}"
+          results = []
+        end
+      else
+        raise e
+      end
+    end
+
+    # Handle delete options
+    if options[:delete] || options[:force_delete]
+      if results.empty?
+        puts "No matching commands to delete."
+        db.close
+        return
+      end
+      # List matching commands
+      puts "Matching commands to delete:"
+      results.each do |row|
+        puts "  [ID: #{row['command_id']}] #{row['cmd_text']}"
+      end
+      if options[:delete]
+        print "Are you sure you want to delete these commands? Type 'yes' to confirm: "
+        confirm = STDIN.gets.strip
+        unless confirm.downcase == 'yes'
+          puts "Aborted. No commands deleted."
+          db.close
+          return
+        end
+      end
+      # Delete matching commands
+      ids = results.map { |row| row['command_id'] }
+      ids.each do |id|
+        db.execute("DELETE FROM commands WHERE id = ?", [id])
+        db.execute("DELETE FROM path_args WHERE command_id = ?", [id])
+      end
+      puts "Deleted #{ids.size} commands."
+      db.close
+      return
+    end
 
     # Output results
     if options[:json]
