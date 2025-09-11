@@ -1,5 +1,111 @@
 #!/usr/bin/env ruby
-# frozen_string_literal: true
+
+def show_paths_command(args)
+  options = {
+    files: false,
+    dirs: false,
+    searchterm: nil,
+    regex: false,
+    count: false,
+    asc: false,
+    desc: false,
+    sort_by: nil
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
+    opts.on("--files", "Show all unique file paths") { options[:files] = true }
+    opts.on("--dirs", "Show all unique directory paths") { options[:dirs] = true }
+    opts.on("--regex", "Interpret searchterm as a Ruby regex") { options[:regex] = true }
+    opts.on("--count", "Show usage frequency for each path") { options[:count] = true }
+    opts.on("--asc", "Order results ascending") { options[:asc] = true }
+    opts.on("--desc", "Order results descending") { options[:desc] = true }
+    opts.on("--sort-by FIELD", "Sort by exec, args, path, or type") { |field| options[:sort_by] = field }
+  end.parse!(args)
+  # Accept positional searchterm
+  if args.length > 0 && !args[0].start_with?('-')
+    options[:searchterm] = args.shift
+  end
+
+  db_path = get_db_path
+  unless File.exist?(db_path)
+    puts "No histlog.db found in current directory"
+    return
+  end
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  types = []
+  types << 'file' if options[:files]
+  types << 'dir' if options[:dirs]
+  if types.empty?
+    types = ['file', 'dir']
+  end
+
+  order = options[:desc] ? 'DESC' : 'ASC'
+  select_count = options[:count] ? ', COUNT(*) as usage_count' : ''
+  group_by = options[:count] ? ' GROUP BY path' : ''
+  type_cond = types.length == 2 ? "type IN ('f','d')" : "type = '#{types[0] == 'file' ? 'f' : 'd'}'"
+  query = "SELECT path, type#{select_count} FROM paths WHERE #{type_cond}"
+  params = []
+  if options[:searchterm]
+    if options[:regex]
+      query << " AND path REGEXP ?"
+      params << options[:searchterm]
+    else
+      query << " AND path LIKE ?"
+      params << "%#{options[:searchterm]}%"
+    end
+  end
+  query << group_by
+  query << " ORDER BY "
+  if options[:count]
+    query << "usage_count #{order}, path #{order}"
+  else
+    query << "path #{order}"
+  end
+
+  begin
+    rows = db.execute(query, params)
+  rescue SQLite3::SQLException => e
+    if options[:regex] && options[:searchterm] && e.message =~ /no such function: REGEXP/
+      # fallback: get all, filter in Ruby
+      fallback_query = query.sub(/path REGEXP \?/, '1')
+      rows = db.execute(fallback_query, params[0..-2])
+      begin
+        re = Regexp.new(options[:searchterm])
+        rows = rows.select { |row| row['path'] =~ re }
+      rescue RegexpError => re_err
+        STDERR.puts "Invalid regex: #{re_err.message}"
+        rows = []
+      end
+    else
+      raise e
+    end
+  end
+
+  # Debug print if no results
+  puts "exec\targs\ttype\tpath"
+  puts "----\t----\t----\t----"
+
+  if rows.empty?
+    puts "No results found."
+    return
+  end
+
+  # For each path, count how many times it was referenced as an arg (args_count)
+  # and how many commands were executed in that folder (exec_count)
+  rows.each do |row|
+    path = row['path']
+    type = row['type'] == "f" ? 'file' : 'dir'
+    # Count how many times this path was referenced as an arg
+    args_count = db.get_first_value("SELECT COUNT(*) FROM path_args WHERE path_id = (SELECT id FROM paths WHERE path = ?)", path)
+    # Count how many commands were executed in this folder (cwd_old or cwd_new)
+  path_id = db.get_first_value("SELECT id FROM paths WHERE path = ?", path)
+  exec_count = db.get_first_value("SELECT COUNT(*) FROM commands WHERE path_old_id = ? OR path_new_id = ?", path_id, path_id)
+  puts "#{exec_count}\t#{args_count}\t#{type}\t#{path}"
+  end
+end
 
 require 'sqlite3'
 require 'json'
@@ -1845,6 +1951,7 @@ def show_help(show_plumbing = false)
   puts "  init [SHELL]    Generate shell configuration (fish, zsh, nu)"
   puts "  query [STRING]  Command search and display"
   puts "  stats           Show command history statistics"
+  puts "  paths           List all unique file or directory paths (--files, --dirs)"
   puts "  sessions        Show session information"
   puts "  import [FILE]   Import history from shell history files"
   puts "  optimize        Optimize database performance"
@@ -1983,7 +2090,7 @@ class HistlogApp
     end
 
     # Define known commands
-    known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', '_on_session', '_on_preexec', '_on_postcmd']
+  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -2008,6 +2115,8 @@ class HistlogApp
       import_shell_history(@argv)
     when 'optimize'
       handle_optimize
+    when 'paths'
+      show_paths_command(@argv)
     when '_on_session'
       handle_on_session
     when '_on_preexec'
