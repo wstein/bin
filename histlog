@@ -128,76 +128,76 @@ def initialize_db
   # Create shells table
   db.execute <<-SQL
     CREATE TABLE IF NOT EXISTS shells (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      path TEXT UNIQUE NOT NULL,
-      version TEXT,
-      created_at REAL DEFAULT (julianday('now'))
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		path TEXT UNIQUE NOT NULL,
+		version TEXT,
+		created_at REAL DEFAULT (julianday('now'))
     )
   SQL
 
   # Create ttys table
   db.execute <<-SQL
     CREATE TABLE IF NOT EXISTS ttys (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device TEXT NOT NULL,
-      created_at REAL DEFAULT (julianday('now'))
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		device TEXT NOT NULL,
+		created_at REAL DEFAULT (julianday('now'))
     );
   SQL
 
   # Create paths table
   db.execute <<-SQL
     CREATE TABLE IF NOT EXISTS paths (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      path TEXT NOT NULL,
-      type TEXT NOT NULL CHECK (type IN ('f', 'd')),
-      created_at REAL DEFAULT (julianday('now'))
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		path TEXT NOT NULL,
+		type TEXT NOT NULL CHECK (type IN ('f', 'd')),
+		created_at REAL DEFAULT (julianday('now'))
     );
   SQL
 
   # Create sessions table
   db.execute <<-SQL
     CREATE TABLE IF NOT EXISTS sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-  shell_id INTEGER,
-  tty_id INTEGER,
-      path_id INTEGER,
-      pid INTEGER,
-      parent_pid INTEGER,
-      timezone TEXT,
-      created_at REAL DEFAULT (julianday('now')),
-  FOREIGN KEY (shell_id) REFERENCES shells (id),
-  FOREIGN KEY (tty_id) REFERENCES ttys (id),
-      FOREIGN KEY (path_id) REFERENCES paths (id)
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		shell_id INTEGER,
+		tty_id INTEGER,
+		path_id INTEGER,
+		pid INTEGER,
+		parent_pid INTEGER,
+		timezone TEXT,
+		created_at REAL DEFAULT (julianday('now')),
+		FOREIGN KEY (shell_id) REFERENCES shells (id),
+		FOREIGN KEY (tty_id) REFERENCES ttys (id),
+		FOREIGN KEY (path_id) REFERENCES paths (id)
     )
   SQL
 
   # Create cmd_texts table for command text
   db.execute <<-SQL
     CREATE TABLE IF NOT EXISTS cmd_texts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      command TEXT UNIQUE NOT NULL,
-      created_at REAL DEFAULT (julianday('now'))
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		command TEXT UNIQUE NOT NULL,
+		created_at REAL DEFAULT (julianday('now'))
     )
   SQL
 
   # Create commands table (formerly: entries/history) for command executions
   db.execute <<-SQL
     CREATE TABLE IF NOT EXISTS commands (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER,
-  cmd_text_id INTEGER,
-  path_old_id INTEGER,                         -- Working directory at preexec
-  path_new_id INTEGER,                         -- Working directory at postcmd
-  start_time REAL,                              -- Unix epoch seconds when command started
-      duration REAL,
-      exit_code INTEGER,
-      is_private INTEGER DEFAULT 0,              -- 1 if command started with space
-      is_assisted INTEGER DEFAULT 0,             -- 1 if command was AI-assisted/injected
-      created_at REAL DEFAULT (julianday('now')),
-  FOREIGN KEY (session_id) REFERENCES sessions (id),
-  FOREIGN KEY (cmd_text_id) REFERENCES cmd_texts (id),
-  FOREIGN KEY (path_old_id) REFERENCES paths (id),
-  FOREIGN KEY (path_new_id) REFERENCES paths (id)
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER,
+		cmd_text_id INTEGER,
+		path_old_id INTEGER,                         -- Working directory at preexec
+		path_new_id INTEGER,                         -- Working directory at postcmd
+		start_time REAL,                              -- Unix epoch seconds when command started
+		duration REAL,
+		exit_code INTEGER,
+		is_private INTEGER DEFAULT 0,              -- 1 if command started with space
+		is_assisted INTEGER DEFAULT 0,             -- 1 if command was AI-assisted/injected
+		created_at REAL DEFAULT (julianday('now')),
+		FOREIGN KEY (session_id) REFERENCES sessions (id),
+		FOREIGN KEY (cmd_text_id) REFERENCES cmd_texts (id),
+		FOREIGN KEY (path_old_id) REFERENCES paths (id),
+		FOREIGN KEY (path_new_id) REFERENCES paths (id)
     )
   SQL
 
@@ -206,11 +206,12 @@ def initialize_db
     CREATE TABLE IF NOT EXISTS path_args (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     command_id INTEGER,
-  path_id INTEGER,
-      arg_position INTEGER,                       -- Position of argument in command
-      created_at REAL DEFAULT (julianday('now')),
+    path_id INTEGER,
+    arg_position INTEGER,                       -- Position of argument in command
+    created_at REAL DEFAULT (julianday('now')),
     FOREIGN KEY (command_id) REFERENCES commands (id),
-  FOREIGN KEY (path_id) REFERENCES paths (id)
+    FOREIGN KEY (path_id) REFERENCES paths (id),
+    UNIQUE (command_id, path_id, arg_position)
     )
   SQL
 
@@ -259,16 +260,16 @@ def initialize_db
   db.execute <<-SQL
     CREATE VIEW sessions_view AS
     SELECT
-      s.id as session_id,
-      s.pid,
-      s.parent_pid,
-      s.timezone,
-      s.created_at,
-      datetime(s.created_at) as created_time,
-      sh.path as shell_path,
-      sh.version as shell_version,
-      t.device as tty_device,
-      p.path as working_directory
+		s.id as session_id,
+		s.pid,
+		s.parent_pid,
+		s.timezone,
+		s.created_at,
+		datetime(s.created_at) as created_time,
+		sh.path as shell_path,
+		sh.version as shell_version,
+		t.device as tty_device,
+		p.path as working_directory
     FROM sessions s
     LEFT JOIN shells sh ON s.shell_id = sh.id
     LEFT JOIN ttys t ON s.tty_id = t.id
@@ -279,28 +280,28 @@ def initialize_db
   db.execute <<-SQL
     CREATE VIEW IF NOT EXISTS history_view AS
     SELECT
-      cmd.id as cmd_text_id,
-      cmd.session_id as session_id,
-      s.pid as session_pid,
-      s.parent_pid as session_parent_pid,
-      datetime(s.created_at) as session_started,
-      sh.path as shell_path,
-      t.device as tty_device,
-      c.command,
-  datetime(cmd.start_time, 'unixepoch') as command_started,
-  cmd.start_time as start_time,
-      cmd.duration,
-      cmd.exit_code,
-      cmd.is_private,
-      p_old.path as cwd_old,
-      p_new.path as cwd_new,
-      CASE
-        WHEN p_old.path IS NOT NULL AND p_new.path IS NOT NULL AND p_old.path != p_new.path THEN 1
-        ELSE 0
-      END as directory_changed
-  FROM commands cmd
+		cmd.id as cmd_text_id,
+		cmd.session_id as session_id,
+		s.pid as session_pid,
+		s.parent_pid as session_parent_pid,
+		datetime(s.created_at) as session_started,
+		sh.path as shell_path,
+		t.device as tty_device,
+		c.command,
+		datetime(cmd.start_time, 'unixepoch') as command_started,
+		cmd.start_time as start_time,
+		cmd.duration,
+		cmd.exit_code,
+		cmd.is_private,
+		p_old.path as cwd_old,
+		p_new.path as cwd_new,
+		CASE
+		WHEN p_old.path IS NOT NULL AND p_new.path IS NOT NULL AND p_old.path != p_new.path THEN 1
+		ELSE 0
+		END as directory_changed
+	FROM commands cmd
     LEFT JOIN sessions s ON cmd.session_id = s.id
-  JOIN cmd_texts c ON cmd.cmd_text_id = c.id
+  	JOIN cmd_texts c ON cmd.cmd_text_id = c.id
     LEFT JOIN shells sh ON s.shell_id = sh.id
     LEFT JOIN ttys t ON s.tty_id = t.id
     LEFT JOIN paths p_old ON cmd.path_old_id = p_old.id
@@ -569,28 +570,27 @@ def parse_command_arguments(db, command_id, command_text)
   args = command_text.scan(/(?:[^\s"']+|"[^"]*"|'[^']*')+/).map { |arg| arg.gsub(/^["']|["']$/, '') }
 
   args.each_with_index do |arg, position|
+    # Skip arg0 (the command itself)
+    next if position == 0
     # Skip arguments with null bytes or invalid characters
     next if arg.include?("\x00") || arg.empty?
 
-    # Check if argument is a valid path (including the command itself at position 0)
+    # Check if argument is a valid path
     begin
       if File.exist?(arg)
-        # Resolve to absolute path
         abs_path = File.expand_path(arg)
         path_type = File.directory?(abs_path) ? 'd' : 'f'
-
-        # Store path and get paths_id
-  path_id = get_or_create_path_id(db, abs_path, path_type)
-
-        # Store argument reference
-        db.execute(
-          "INSERT INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)",
-          [command_id, path_id, position]
-        )
+        path_id = get_or_create_path_id(db, abs_path, path_type)
+        existing = db.execute("SELECT 1 FROM path_args WHERE command_id = ? AND path_id = ? AND arg_position = ? LIMIT 1", [command_id, path_id, position])
+        unless existing.any?
+          db.execute(
+            "INSERT INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)",
+            [command_id, path_id, position]
+          )
+        end
       end
-    rescue => e
-      # Ignore errors for individual arguments
-      STDERR.puts "Warning: Could not process argument '#{arg}': #{e.message}"
+    rescue
+      # Silently ignore errors
     end
   end
 end
@@ -601,7 +601,7 @@ def update_command_completion(command_id, duration, exit_code)
     # Get current working directory for cwd_new_id
   cwd_new_id = get_or_create_path_id(db, Dir.pwd)
 
-    # Update entries row with completion data
+    # Update commands row with completion data
     db.execute(
   "UPDATE commands SET duration = ?, exit_code = ?, path_new_id = ? WHERE id = ?",
   [duration, exit_code, cwd_new_id, command_id]
@@ -669,6 +669,8 @@ def query_interactive(args)
 
   OptionParser.new do |opts|
     opts.banner = "Usage: histlog query [search] [options]"
+  opts.on("--asc", "Sort results in ascending order (oldest first)") { options[:asc] = true }
+  opts.on("--desc", "Sort results in descending order (newest first)") { options[:desc] = true }
 
     # Search and basic filters
     opts.on("--session [ID]", "Commands from current/most recent or specific session") do |id|
@@ -709,11 +711,9 @@ def query_interactive(args)
     opts.on("--frequent", "Commands used > 10 times") { options[:frequent] = true }
     opts.on("--unique", "Commands used exactly once") { options[:unique] = true }
 
-      # Context filters
-      opts.on("--shell SHELL", "Commands from specific shell") { |shell| options[:shell] = shell }
+    # Context filters
+    opts.on("--shell SHELL", "Commands from specific shell") { |shell| options[:shell] = shell }
     opts.on("--tty TTY", "Commands from specific TTY device") { |tty| options[:tty] = tty }
-  # Current session shortcut (uses __histlog_session_id)
-  opts.on("--current", "Commands from the current shell session (requires __histlog_session_id env)") { options[:current] = true }
 
     # Argument filters
     opts.on("--with-args", "Commands that had arguments") { options[:with_args] = true }
@@ -768,8 +768,8 @@ def execute_interactive_query(options)
     # Base SELECT with joins
     base_query = <<-SQL
     SELECT
-      c.id AS cmd_text_id,
-  cmd.command AS cmd_text,
+      c.id AS command_id,
+      cmd.command AS cmd_text,
       c.created_at,
       c.start_time,
       c.duration,
@@ -826,24 +826,12 @@ def execute_interactive_query(options)
       end
     end
 
-    # Current session shortcut: require the environment-provided session id
-    if options[:current]
-      # Read current session id from environment (new name matching table `sessions`)
-      current_session_id = ENV['__histlog_session_id']
-      unless current_session_id && !current_session_id.to_s.strip.empty?
-        STDERR.puts "Error: __histlog_session_id environment variable not set; cannot determine current session"
-        return
-      end
-      where_conditions << "s.id = ?"
-      params << current_session_id.to_i
-    end
-
     # Directory filter
     if options[:dir]
       dir_path = options[:dir_path] || Dir.pwd
       abs_dir = File.expand_path(dir_path)
-      where_conditions << "(p_old.path = ? OR p_new.path = ?)"
-      params << abs_dir << abs_dir
+      where_conditions << "p_old.path = ?"
+      params << abs_dir
     end
 
     # Status filters
@@ -968,12 +956,14 @@ def execute_interactive_query(options)
 
     # Argument count filters
     if options[:with_args]
-  base_query += " JOIN path_args a ON c.id = a.command_id"
-      where_conditions << "a.arg_position > 0"  # Position 0 is the command itself
+      # Select commands with at least one argument (not just path_args)
+      where_conditions << "(LENGTH(TRIM(cmd.command)) - LENGTH(REPLACE(TRIM(cmd.command), ' ', ''))) > 0"
     elsif options[:no_args]
-  where_conditions << "NOT EXISTS (SELECT 1 FROM path_args a WHERE a.command_id = c.id AND a.arg_position > 0)"
+      # Select commands with no arguments (not just no path_args)
+      where_conditions << "(LENGTH(TRIM(cmd.command)) - LENGTH(REPLACE(TRIM(cmd.command), ' ', ''))) = 0"
     elsif options[:arg_count]
-  where_conditions << "(SELECT COUNT(*) FROM path_args a WHERE a.command_id = c.id AND a.arg_position > 0) = ?"
+      # Select commands with exactly N arguments (argument count = number of spaces)
+      where_conditions << "(LENGTH(TRIM(cmd.command)) - LENGTH(REPLACE(TRIM(cmd.command), ' ', ''))) = ?"
       params << options[:arg_count]
     end
 
@@ -998,11 +988,16 @@ def execute_interactive_query(options)
       full_query += " WHERE " + where_conditions.join(" AND ")
     end
 
-    # Add GROUP BY to handle potential duplicates from JOINs, but preserve individual command executions
+  # Add GROUP BY to handle potential duplicates from JOINs, but preserve individual command executions
   full_query += " GROUP BY c.id"
 
-    # Order by most recent first
-    full_query += " ORDER BY c.created_at DESC"
+  # Order by creation time, user-controlled
+    if options[:desc]
+      order = "DESC"
+	else
+	  order = "ASC"
+	end
+	full_query += " ORDER BY c.created_at #{order}"
 
     # Add limit if specified
     if options[:limit]
@@ -1036,7 +1031,7 @@ def output_json_results(results)
   begin
     json_results = results.map do |row|
       # Fetch path arguments for this command
-      path_args = db.execute(<<-SQL, [row['cmd_text_id']])
+      path_args = db.execute(<<-SQL, [row['command_id']])
         SELECT pa.arg_position, p.path, p.type
         FROM path_args pa
         JOIN paths p ON pa.path_id = p.id
@@ -1044,9 +1039,9 @@ def output_json_results(results)
         ORDER BY pa.arg_position
       SQL
 
-      # Build the base result
+	  # Build the base result
       result = {
-        cmd_text_id: row['cmd_text_id'],
+        command_id: row['command_id'],
         cmd_text: row['cmd_text'],
         start_time: row['start_time'],
         duration: row['duration'],
@@ -1059,7 +1054,8 @@ def output_json_results(results)
         pid: row['pid'],
         shell: row['shell_path'],
         tty: row['tty_device'],
-      }
+      }.reject { |_, v| v.nil? }
+
 
       # Add path arguments if any exist
       if path_args.any?
@@ -1070,8 +1066,6 @@ def output_json_results(results)
             type: arg['type']
           }
         end
-      else
-        result[:path_args] = []
       end
 
       result
@@ -1098,8 +1092,8 @@ def output_interactive_results(results, options)
     if options && options[:show_time] && row['start_time']
       begin
         t = Time.at(row['start_time'].to_f)
-        # Format in local timezone (ISO 8601 with offset)
-        time_prefix = t.getlocal.iso8601 + " "
+        # Simplified format: YYYY-MM-DD HH:MM
+        time_prefix = t.strftime("%Y-%m-%d %H:%M:%S") + " "
       rescue
         time_prefix = ""
       end
@@ -1752,16 +1746,16 @@ def import_commands_to_db(commands, options)
         if cmd_data[:start_time]
           # Convert Unix timestamp to Julian Day format (database uses julianday)
           julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
-          # Insert command into current `entries` table, marking it as an imported row
+          # Insert command into current `commands` table, marking it as an imported row
           # session-related fields are NULL for imported commands
           db.execute(
-            "INSERT INTO entries (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, julian_day, cmd_data[:start_time].to_f]
           )
         else
           # Insert command without explicit timestamp (DB will use default created_at)
           db.execute(
-            "INSERT INTO entries (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, nil]
           )
         end
@@ -1847,13 +1841,14 @@ def fish_config
 
       function __histlog_preexec --on-event fish_preexec
         # Export the current command id for external tools
-        set -gx __histlog_entries_id (
+        set -gx __histlog_command_id (
           $__histlog_path _on_preexec $argv[1] $__histlog_session_id
         )
       end
 
       function __histlog_postcmd --on-event fish_postexec
-        $__histlog_path _on_postcmd $__histlog_entries_id $CMD_DURATION $status
+        $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
+		  set --erase __histlog_command_id
       end
   FISH
 end
@@ -1871,11 +1866,12 @@ def zsh_config
     fi
 
     function __histlog_preexec() {
-      export __histlog_entries_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
+      export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
     }
 
     function __histlog_postexec() {
-      $__histlog_path _on_postcmd "$__histlog_entries_id" "$CMD_DURATION" "$?"
+      $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
+	  unset __histlog_command_id
     }
 
     # Zsh hooks
@@ -1887,7 +1883,7 @@ end
 
 def nu_config
   histlog_path = File.expand_path(__FILE__)
-  <<~NU
+  <<~NUSHELL
     #!/usr/bin/env nu
     # histlog configuration for nushell
     # Add this to your config.nu
@@ -1900,13 +1896,14 @@ def nu_config
 
     $env.config.hooks = {
       pre_execution: [
-        { $env.__histlog_entries_id = (^$env.__histlog_path _on_preexec (commandline) $env.__histlog_session_id) }
+        { $env.__histlog_command_id = (^$env.__histlog_path _on_preexec (commandline) $env.__histlog_session_id) }
       ]
       pre_prompt: [
-        { ^$env.__histlog_path _on_postcmd $env.__histlog_entries_id $env.CMD_DURATION_MS $env.LAST_EXIT_CODE }
+        { ^$env.__histlog_path _on_postcmd $env.__histlog_command_id $env.CMD_DURATION_MS $env.LAST_EXIT_CODE }
+		{ $env.__histlog_command_id = null }
       ]
     }
-  NU
+  NUSHELL
 end
 
 # Main application class
