@@ -1996,25 +1996,25 @@ def fish_config
     # histlog configuration for fish shell
     # Add this to your config.fish or source this file
 
-      if test -z "$__histlog_session_id"
-        # Export histlog path and session id so external commands can read them
-        set -gx __histlog_path "#{histlog_path}"
-        set -gx __histlog_session_id (
-          $__histlog_path _on_session
-        )
-      end
+    status --is-interactive; or exit
 
-      function __histlog_preexec --on-event fish_preexec
-        # Export the current command id for external tools
-        set -gx __histlog_command_id (
-          $__histlog_path _on_preexec $argv[1] $__histlog_session_id
-        )
-      end
+    if test -z "$__histlog_session_id"
+      set -gx __histlog_path "#{histlog_path}"
+      set -gx __histlog_session_id (
+        $__histlog_path _on_session
+      )
+    end
 
-      function __histlog_postcmd --on-event fish_postexec
-        $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
-		  set --erase __histlog_command_id
-      end
+    function __histlog_preexec --on-event fish_preexec
+      set -gx __histlog_command_id (
+        $__histlog_path _on_preexec $argv[1] $__histlog_session_id
+      )
+    end
+
+    function __histlog_postcmd --on-event fish_postexec
+      $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
+      set --erase __histlog_command_id
+    end
   FISH
 end
 
@@ -2024,6 +2024,8 @@ def zsh_config
     #!/usr/bin/env zsh
     # histlog configuration for zsh shell
     # Add this to ~/.zshrc or source this file
+
+    [[ $- != *i* ]] && return
 
     if [[ -z $__histlog_session_id ]]; then
       export __histlog_path="#{histlog_path}"
@@ -2036,10 +2038,9 @@ def zsh_config
 
     function __histlog_postexec() {
       $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
-	  unset __histlog_command_id
+      unset __histlog_command_id
     }
 
-    # Zsh hooks
     autoload -Uz add-zsh-hook
     add-zsh-hook preexec __histlog_preexec
     add-zsh-hook precmd __histlog_postexec
@@ -2053,7 +2054,8 @@ def nu_config
     # histlog configuration for nushell
     # Add this to your config.nu
 
-    # Initialize session once and set environment variables so external commands see them
+    if (not $env.INTERACTIVE) { return }
+
     if ($env.__histlog_session_id? | is-empty) {
       $env.__histlog_path = "#{histlog_path}"
       $env.__histlog_session_id = ^$env.__histlog_path _on_session
@@ -2065,7 +2067,7 @@ def nu_config
       ]
       pre_prompt: [
         { ^$env.__histlog_path _on_postcmd $env.__histlog_command_id $env.CMD_DURATION_MS $env.LAST_EXIT_CODE }
-		{ $env.__histlog_command_id = null }
+        { $env.__histlog_command_id = null }
       ]
     }
   NUSHELL
