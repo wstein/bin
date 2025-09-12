@@ -1101,7 +1101,7 @@ def query_interactive(args)
     no_args: false,
     arg_count: nil,
     limit: nil,
-    json: false
+    format: nil
   }
 
   OptionParser.new do |opts|
@@ -1116,7 +1116,7 @@ def query_interactive(args)
   opts.on("--desc", "Sort results in descending order (newest first)") { options[:desc] = true }
 
     # Search and basic filters
-    opts.on("--session [ID]", "Commands from current/most recent or specific session") do |id|
+    opts.on("--session [ID]", "Commands from current session (requires __histlog_session_id) or specific session ID") do |id|
       options[:session] = true
       options[:session_id] = id.to_i if id
     end
@@ -1152,7 +1152,7 @@ def query_interactive(args)
     # Frequency filters
     opts.on("--rare", "Commands used < 3 times") { options[:rare] = true }
     opts.on("--frequent", "Commands used > 10 times") { options[:frequent] = true }
-    opts.on("--unique", "Commands used exactly once") { options[:unique] = true }
+    opts.on("--unique", "Remove duplicate commands (show only first occurrence)") { options[:unique] = true }
 
     # Context filters
     opts.on("--shell SHELL", "Commands from specific shell") { |shell| options[:shell] = shell }
@@ -1173,9 +1173,12 @@ def query_interactive(args)
 
     # Environment filters
     opts.on("--assisted", "Only show AI-assisted commands") { options[:assisted] = true }
-    opts.on("--no-assisted", "Exclude AI-assisted commands") { options[:no_assisted] = true }    # Output format
-    opts.on("--json", "Output as JSON with full metadata") { options[:json] = true }
-  opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
+    opts.on("--no-assisted", "Exclude AI-assisted commands") { options[:no_assisted] = true }
+
+    # Output format
+    opts.on("--json", "Output as JSON with full metadata") { options[:format] = 'json' }
+    opts.on("--format FORMAT", "Output format (json, fish, zsh, nu, bash, powershell, plain)") { |f| options[:format] = f.downcase }
+    opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
     opts.on("--limit N", Integer, "Limit number of results (default: no limit)") { |n| options[:limit] = n }
 
     opts.on("-h", "--help", "Show this help") do
@@ -1259,15 +1262,8 @@ def execute_interactive_query(options)
             where_conditions << "s.id = ?"
             params << current_session_id.to_i
         else
-          # Fallback: use the most recent session
-            recent_session_result = db.execute("SELECT id FROM sessions ORDER BY created_at DESC LIMIT 1")
-            if recent_session_result && recent_session_result[0]
-              where_conditions << "s.id = ?"
-              params << recent_session_result[0][0]
-          else
-            # If no sessions exist, this will return no results
-            where_conditions << "s.id IS NULL"
-          end
+          # If no current session ID, return no results
+          where_conditions << "s.id IS NULL"
         end
       end
     end
@@ -1414,7 +1410,7 @@ def execute_interactive_query(options)
     end
 
     # Frequency filters require subqueries
-    if options[:rare] || options[:frequent] || options[:unique]
+    if options[:rare] || options[:frequent]
       frequency_subquery = <<-SQL
   (SELECT COUNT(*) FROM commands c2 WHERE c2.cmd_text_id = c.cmd_text_id)
       SQL
@@ -1423,9 +1419,12 @@ def execute_interactive_query(options)
         where_conditions << "#{frequency_subquery} < 3"
       elsif options[:frequent]
         where_conditions << "#{frequency_subquery} > 10"
-      elsif options[:unique]
-        where_conditions << "#{frequency_subquery} = 1"
       end
+    end
+
+    # Unique filter - show only first occurrence of each command (deduplication)
+    if options[:unique]
+      where_conditions << "c.id = (SELECT MIN(c2.id) FROM commands c2 WHERE c2.cmd_text_id = c.cmd_text_id)"
     end
 
   # Combine query parts
@@ -1437,13 +1436,19 @@ def execute_interactive_query(options)
   # Add GROUP BY to handle potential duplicates from JOINs, but preserve individual command executions
   full_query += " GROUP BY c.id"
 
-  # Order by creation time, user-controlled
-    if options[:desc]
-      order = "DESC"
-	else
-	  order = "ASC"
-	end
-	full_query += " ORDER BY c.created_at #{order}"
+  # Order by creation time - when limit is used, get most recent N first, then reverse for display
+    if options[:limit]
+      # For limited results, get the most recent N commands first
+      full_query += " ORDER BY c.created_at DESC"
+    else
+      # For unlimited results, respect user's sort preference (default: most recent first)
+      if options[:asc]
+        order = "ASC"
+      else
+        order = "DESC"
+      end
+      full_query += " ORDER BY c.created_at #{order}"
+    end
 
     # Add limit if specified
     if options[:limit]
@@ -1504,9 +1509,14 @@ def execute_interactive_query(options)
       return
     end
 
+    # When using limit, reverse results to show oldest-to-newest order for display
+    if options[:limit]
+      results.reverse!
+    end
+
     # Output results
-    if options[:json]
-      output_json_results(results)
+    if options[:format]
+      output_formatted_results(results, options)
     else
       output_interactive_results(results, options)
     end
@@ -1515,6 +1525,33 @@ def execute_interactive_query(options)
     STDERR.puts "Database error: #{e.message}"
   ensure
     db.close if db
+  end
+end
+
+# Output results in various formats
+def output_formatted_results(results, options)
+  format = options[:format]
+
+  # Validate format
+  valid_formats = ['json', 'fish', 'zsh', 'nu', 'bash', 'powershell', 'plain']
+  unless valid_formats.include?(format)
+    STDERR.puts "Error: Unsupported format '#{format}'"
+    STDERR.puts "Supported formats: #{valid_formats.join(', ')}"
+    exit 1
+  end
+
+  if results.empty?
+    puts "No commands found matching the criteria."
+    return
+  end
+
+  case format
+  when 'json'
+    output_json_results(results)
+  when 'plain'
+    output_plain_results(results, options)
+  else
+    output_shell_history_results(results, format, options)
   end
 end
 
@@ -1572,6 +1609,47 @@ def output_json_results(results)
   ensure
     db.close if db
   end
+end
+
+# Output results in plain format with timestamps
+def output_plain_results(results, options)
+  results.each do |row|
+    command = row['cmd_text']
+    if row['start_time']
+      timestamp = Time.at(row['start_time'].to_f).strftime('%Y-%m-%d %H:%M:%S')
+      puts "[#{timestamp}] #{command}"
+    else
+      puts command
+    end
+  end
+end
+
+# Output results in shell history formats
+def output_shell_history_results(results, format, options)
+  # Convert query results to the format expected by format_commands_for_shell
+  # We need to reverse for shell formats to get chronological order (oldest first)
+  formatted_results = results.reverse.map do |row|
+    result = {
+      'command' => row['cmd_text'],
+      'start_time' => row['start_time']
+    }
+
+    # Add command_id for fish format to get paths
+    if format == 'fish'
+      result['command_id'] = row['command_id']
+    end
+
+    result
+  end
+
+  # Format results using the shared formatting function
+  format_options = {
+    format: format,
+    include_timestamps: true
+  }
+
+  formatted_commands = format_commands_for_shell(formatted_results, format, format_options)
+  formatted_commands.each { |line| puts line }
 end
 
 # Output results for display
@@ -2074,175 +2152,6 @@ def import_shell_history(args)
   puts "Successfully imported #{imported_count} commands"
 end
 
-# Export shell history function
-def export_shell_history(args)
-  # Parse command line options
-  options = {
-    output_file: nil,
-    format: nil,
-    unique: false,
-    dry_run: false,
-    verbose: false,
-    limit: nil,
-    include_timestamps: true
-  }
-
-  OptionParser.new do |opts|
-    opts.banner = "Usage: histlog export [format] [options] [output_file]"
-
-    opts.on("-f", "--file FILE", "Output file path (defaults to stdout)") do |file|
-      options[:output_file] = file
-    end
-
-    opts.on("-u", "--unique", "Export only unique commands (remove duplicates)") do
-      options[:unique] = true
-    end
-
-    opts.on("-n", "--dry-run", "Show what would be exported without writing") do
-      options[:dry_run] = true
-    end
-
-    opts.on("-v", "--verbose", "Show detailed export progress") do
-      options[:verbose] = true
-    end
-
-    opts.on("-l", "--limit COUNT", Integer, "Limit number of exported commands") do |limit|
-      options[:limit] = limit
-    end
-
-    opts.on("--no-timestamps", "Don't include timestamps (plain commands only)") do
-      options[:include_timestamps] = false
-    end
-
-    opts.on("-h", "--help", "Show this help") do
-      puts opts
-      exit 0
-    end
-  end.parse!(args)
-
-  # Get format and output file from positional arguments
-  if args.length > 0 && !args[0].start_with?('-')
-    options[:format] = args.shift.downcase
-  end
-
-  if args.length > 0 && !args[0].start_with?('-')
-    options[:output_file] ||= args.shift
-  end
-
-  # Determine format - priority: explicit format > auto-detect from filename > default
-  if options[:format].nil?
-    if options[:output_file] && options[:output_file] != '-'
-      options[:format] = detect_format_from_filename(options[:output_file])
-    else
-      options[:format] = 'plain'  # Default for stdout
-    end
-  end
-
-  # Validate format
-  unless ['fish', 'zsh', 'nu', 'nushell', 'plain'].include?(options[:format])
-    STDERR.puts "Error: Unsupported format '#{options[:format]}'"
-    STDERR.puts "Supported formats: fish, zsh, nu, plain"
-    exit 1
-  end
-
-  # Normalize nushell format name
-  options[:format] = 'nu' if options[:format] == 'nushell'
-
-  db_path = get_db_path
-  unless File.exist?(db_path)
-    STDERR.puts "No histlog.db found in current directory"
-    STDERR.puts "Use 'histlog init' to set up shell integration and start logging commands"
-    return
-  end
-
-  db = SQLite3::Database.new(db_path)
-  db.results_as_hash = true
-
-  # Build query to get commands with paths
-  if options[:format] == 'fish'
-    # For fish format, we need to get paths as well
-    query = "SELECT ct.command, c.start_time, c.id as command_id"
-    query += " FROM commands c"
-    query += " JOIN cmd_texts ct ON c.cmd_text_id = ct.id"
-    query += " WHERE c.cmd_text_id IS NOT NULL"
-  else
-    # For other formats, simple query without paths
-    query = "SELECT ct.command, c.start_time"
-    query += " FROM commands c"
-    query += " JOIN cmd_texts ct ON c.cmd_text_id = ct.id"
-    query += " WHERE c.cmd_text_id IS NOT NULL"
-  end
-
-  if options[:unique]
-    query += " GROUP BY ct.command"
-  end
-
-  query += " ORDER BY c.start_time DESC"
-
-  if options[:limit]
-    query += " LIMIT #{options[:limit]}"
-  end
-
-  puts "Exporting commands in #{options[:format]} format..." if options[:verbose]
-
-  begin
-    rows = db.execute(query)
-  rescue SQLite3::SQLException => e
-    STDERR.puts "Database error: #{e.message}"
-    exit 1
-  end
-
-  if rows.empty?
-    puts "No commands found to export"
-    return
-  end
-
-  puts "Found #{rows.length} commands to export" if options[:verbose]
-
-  # All shell formats (fish, zsh, nu) use chronological order (oldest first)
-  # We query DESC to get the most recent N commands, then reverse to chronological order
-  if ['fish', 'zsh', 'nu'].include?(options[:format])
-    rows = rows.reverse
-  end
-
-  # Format commands according to target shell format
-  formatted_commands = format_commands_for_shell(rows, options[:format], options)
-
-  if options[:dry_run]
-    puts "\nSample export output (first 10 entries):"
-    formatted_commands.first(10).each_with_index do |line, i|
-      puts "  #{i+1}. #{line}"
-    end
-    puts "..."
-    puts "\nTotal: #{formatted_commands.length} entries would be exported"
-    return
-  end
-
-  # Write to file or stdout
-  if options[:output_file] && options[:output_file] != '-'
-    File.open(options[:output_file], 'w') do |file|
-      formatted_commands.each { |line| file.puts line }
-    end
-    puts "Exported #{formatted_commands.length} commands to #{options[:output_file]}"
-  else
-    formatted_commands.each { |line| puts line }
-  end
-end
-
-# Detect output format from filename
-def detect_format_from_filename(filename)
-  case filename.downcase
-  when /fish_history/, /\.fish$/
-    'fish'
-  when /\.zsh_history$/, /\.zhistory$/, /\.zsh$/
-    'zsh'
-  when /nushell/, /\.nu$/, /history\.txt$/
-    'nu'
-  else
-    'plain'
-  end
-end
-
 # Format commands for specific shell format
 def format_commands_for_shell(rows, format, options)
   formatted = []
@@ -2280,6 +2189,24 @@ def format_commands_for_shell(rows, format, options)
 
   when 'nu'
     # Nushell history is plain text, one command per line
+    rows.each do |row|
+      formatted << row['command']
+    end
+
+  when 'bash'
+    # Bash history format - simple commands, timestamps optional
+    rows.each do |row|
+      if options[:include_timestamps] && row['start_time']
+        # Bash can use timestamps with HISTTIMEFORMAT, stored as comments
+        formatted << "##{row['start_time'].to_i}"
+        formatted << row['command']
+      else
+        formatted << row['command']
+      end
+    end
+
+  when 'powershell'
+    # PowerShell history is typically just commands, one per line
     rows.each do |row|
       formatted << row['command']
     end
@@ -2655,14 +2582,12 @@ def show_help(show_plumbing = false)
   puts "  paths           List all unique file or directory paths (--files, --dirs)"
   puts "  sessions        Show session information"
   puts "  import [FILE]   Import history from shell history files"
-  puts "  export [FILE]   Export commands to shell history format (--unique)"
   puts "  cleanup         Remove orphaned entries from database"
   puts "  info            Show database and system information"
   puts "  optimize        Optimize database performance"
   puts ""
   puts "Query Filters:"
-  puts "  --session [ID]  Commands from current or specific session"
-  puts "  --current        Commands from the current shell session (requires __histlog_session_id env)"
+  puts "  --session [ID]  Commands from current session (requires __histlog_session_id) or specific session ID"
   puts "  --dir [PATH]    Commands from current or specific directory"
   puts "  --failed        Only failed commands (exit != 0)"
   puts "  --success       Only successful commands (exit = 0)"
@@ -2674,6 +2599,7 @@ def show_help(show_plumbing = false)
   puts "  --slow          Slow commands (> 10s)"
   puts "  --has-paths     Commands that accessed filesystem paths"
   puts "  --json          Output as JSON"
+  puts "  --format FORMAT Output in shell history format (json, fish, zsh, nu, bash, powershell, plain)"
   puts ""
 
   if show_plumbing
@@ -2796,7 +2722,7 @@ class HistlogApp
     end
 
     # Define known commands
-  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'export', 'optimize', 'help', 'init', 'paths', 'cleanup', 'info', '_on_session', '_on_preexec', '_on_postcmd']
+  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', 'info', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -2819,8 +2745,6 @@ class HistlogApp
       query_sessions(@argv)
     when 'import'
       import_shell_history(@argv)
-    when 'export'
-      export_shell_history(@argv)
     when 'optimize'
       handle_optimize
     when 'paths'
