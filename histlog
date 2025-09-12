@@ -107,6 +107,181 @@ def show_paths_command(args)
   end
 end
 
+# Cleanup orphaned entries from all tables
+def cleanup_orphaned_entries(db, verbose = false)
+  removed_counts = {}
+
+  # Remove orphaned paths (not referenced by commands or path_args)
+  db.execute(<<-SQL)
+    DELETE FROM paths
+    WHERE id NOT IN (SELECT path_old_id FROM commands WHERE path_old_id IS NOT NULL)
+      AND id NOT IN (SELECT path_new_id FROM commands WHERE path_new_id IS NOT NULL)
+      AND id NOT IN (SELECT path_id FROM path_args WHERE path_id IS NOT NULL)
+  SQL
+  removed_counts[:paths] = db.changes
+
+  # Remove orphaned cmd_texts (not referenced by any command)
+  db.execute(<<-SQL)
+    DELETE FROM cmd_texts
+    WHERE id NOT IN (SELECT cmd_text_id FROM commands WHERE cmd_text_id IS NOT NULL)
+  SQL
+  removed_counts[:cmd_texts] = db.changes
+
+  # Remove orphaned path_args (should not happen if foreign keys enforced)
+  db.execute(<<-SQL)
+    DELETE FROM path_args
+    WHERE path_id NOT IN (SELECT id FROM paths)
+       OR command_id NOT IN (SELECT id FROM commands)
+  SQL
+  removed_counts[:path_args] = db.changes
+
+  # Remove orphaned ttys (not referenced by any session)
+  begin
+    db.execute(<<-SQL)
+      DELETE FROM ttys
+      WHERE id NOT IN (SELECT tty_id FROM sessions WHERE tty_id IS NOT NULL)
+    SQL
+    removed_counts[:ttys] = db.changes
+  rescue SQLite3::SQLException => e
+    removed_counts[:ttys] = 0
+    puts "Warning: Could not cleanup ttys: #{e.message}" if verbose
+  end
+
+  # Remove orphaned shells (not referenced by any session)
+  begin
+    db.execute(<<-SQL)
+      DELETE FROM shells
+      WHERE id NOT IN (SELECT shell_id FROM sessions WHERE shell_id IS NOT NULL)
+    SQL
+    removed_counts[:shells] = db.changes
+  rescue SQLite3::SQLException => e
+    removed_counts[:shells] = 0
+    puts "Warning: Could not cleanup shells: #{e.message}" if verbose
+  end
+
+  # Remove orphaned sessions (not referenced by any command)
+  begin
+    db.execute(<<-SQL)
+      DELETE FROM sessions
+      WHERE id NOT IN (SELECT session_id FROM commands WHERE session_id IS NOT NULL)
+    SQL
+    removed_counts[:sessions] = db.changes
+  rescue SQLite3::SQLException => e
+    removed_counts[:sessions] = 0
+    puts "Warning: Could not cleanup sessions: #{e.message}" if verbose
+  end
+
+  if verbose
+    puts "Cleanup summary:"
+    removed_counts.each do |table, count|
+      puts "  #{table}: #{count} orphaned entries removed"
+    end
+  end
+
+  total_removed = removed_counts.values.sum
+  puts "Orphaned entries cleaned up (#{total_removed} total)." unless verbose
+
+  removed_counts
+end
+
+# Handle cleanup command
+def handle_cleanup(args)
+  options = {
+    verbose: false,
+    dry_run: false
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog cleanup [options]"
+    opts.on("-v", "--verbose", "Show detailed cleanup progress") { options[:verbose] = true }
+    opts.on("-n", "--dry-run", "Show what would be cleaned without making changes") { options[:dry_run] = true }
+    opts.on("-h", "--help", "Show this help") do
+      puts opts
+      exit 0
+    end
+  end.parse!(args)
+
+  db_path = get_db_path
+  unless File.exist?(db_path)
+    puts "No histlog.db found in current directory"
+    return
+  end
+
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  if options[:dry_run]
+    puts "=== Dry Run: Orphaned Entries Found ==="
+
+    # Count orphaned paths
+    orphan_paths = db.get_first_value(<<-SQL)
+      SELECT COUNT(*) FROM paths p
+      LEFT JOIN commands c1 ON p.id = c1.path_old_id
+      LEFT JOIN commands c2 ON p.id = c2.path_new_id
+      LEFT JOIN path_args pa ON p.id = pa.path_id
+      WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
+    SQL
+    puts "Would remove #{orphan_paths} orphaned paths"
+
+    # Count orphaned cmd_texts
+    orphan_cmd_texts = db.get_first_value(<<-SQL)
+      SELECT COUNT(*) FROM cmd_texts ct
+      LEFT JOIN commands c ON ct.id = c.cmd_text_id
+      WHERE c.id IS NULL
+    SQL
+    puts "Would remove #{orphan_cmd_texts} orphaned cmd_texts"
+
+    # Count orphaned path_args
+    orphan_path_args = db.get_first_value(<<-SQL)
+      SELECT COUNT(*) FROM path_args pa
+      LEFT JOIN paths p ON pa.path_id = p.id
+      LEFT JOIN commands c ON pa.command_id = c.id
+      WHERE p.id IS NULL OR c.id IS NULL
+    SQL
+    puts "Would remove #{orphan_path_args} orphaned path_args"
+
+    # Count orphaned ttys, shells, sessions (with error handling)
+    begin
+      orphan_ttys = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM ttys t
+        LEFT JOIN sessions s ON t.id = s.tty_id
+        WHERE s.id IS NULL
+      SQL
+      puts "Would remove #{orphan_ttys} orphaned ttys"
+    rescue SQLite3::SQLException => e
+      puts "Cannot check ttys: #{e.message}"
+    end
+
+    begin
+      orphan_shells = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM shells s
+        LEFT JOIN sessions sess ON s.id = sess.shell_id
+        WHERE sess.id IS NULL
+      SQL
+      puts "Would remove #{orphan_shells} orphaned shells"
+    rescue SQLite3::SQLException => e
+      puts "Cannot check shells: #{e.message}"
+    end
+
+    begin
+      orphan_sessions = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM sessions s
+        LEFT JOIN commands c ON s.id = c.session_id
+        WHERE c.id IS NULL
+      SQL
+      puts "Would remove #{orphan_sessions} orphaned sessions"
+    rescue SQLite3::SQLException => e
+      puts "Cannot check sessions: #{e.message}"
+    end
+
+    puts "\nRun 'histlog cleanup' without --dry-run to perform cleanup."
+  else
+    cleanup_orphaned_entries(db, options[:verbose])
+  end
+
+  db.close
+end
+
 require 'sqlite3'
 require 'json'
 require 'fileutils'
@@ -1167,6 +1342,9 @@ def execute_interactive_query(options)
         db.execute("DELETE FROM path_args WHERE command_id = ?", [id])
       end
       puts "Deleted #{ids.size} commands."
+
+      # Cleanup orphaned entries after deletion
+      cleanup_orphaned_entries(db)
       db.close
       return
     end
@@ -2018,6 +2196,7 @@ def show_help(show_plumbing = false)
   puts "  paths           List all unique file or directory paths (--files, --dirs)"
   puts "  sessions        Show session information"
   puts "  import [FILE]   Import history from shell history files"
+  puts "  cleanup         Remove orphaned entries from database"
   puts "  optimize        Optimize database performance"
   puts ""
   puts "Query Filters:"
@@ -2156,7 +2335,7 @@ class HistlogApp
     end
 
     # Define known commands
-  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', '_on_session', '_on_preexec', '_on_postcmd']
+  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -2183,6 +2362,8 @@ class HistlogApp
       handle_optimize
     when 'paths'
       show_paths_command(@argv)
+    when 'cleanup'
+      handle_cleanup(@argv)
     when '_on_session'
       handle_on_session
     when '_on_preexec'
