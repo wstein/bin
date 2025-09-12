@@ -282,6 +282,160 @@ def handle_cleanup(args)
   db.close
 end
 
+# Handle info command - show database and system information
+def handle_info(args)
+  options = {
+    verbose: false
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog info [options]"
+    opts.on("-v", "--verbose", "Show detailed system information") { options[:verbose] = true }
+    opts.on("-h", "--help", "Show this help") do
+      puts opts
+      exit 0
+    end
+  end.parse!(args)
+
+  db_path = get_db_path
+
+  puts "=== Histlog Database Information ==="
+  puts "Database path: #{db_path}"
+
+  if File.exist?(db_path)
+    puts "Database exists: Yes"
+    puts "Database size: #{format_bytes(File.size(db_path))}"
+    puts "Last modified: #{File.mtime(db_path).strftime('%Y-%m-%d %H:%M:%S')}"
+
+    # Connect to get database info
+    db = SQLite3::Database.new(db_path)
+    db.results_as_hash = true
+
+    # Get table counts
+    puts "\n=== Table Statistics ==="
+    tables = %w[commands cmd_texts paths path_args sessions shells ttys]
+    tables.each do |table|
+      begin
+        count = db.get_first_value("SELECT COUNT(*) FROM #{table}")
+        puts "#{table.ljust(12)}: #{count} records"
+      rescue SQLite3::SQLException => e
+        puts "#{table.ljust(12)}: (error: #{e.message})"
+      end
+    end
+
+    # Database settings
+    puts "\n=== Database Configuration ==="
+    begin
+      journal_mode = db.get_first_value("PRAGMA journal_mode")
+      synchronous = db.get_first_value("PRAGMA synchronous")
+      cache_size = db.get_first_value("PRAGMA cache_size")
+      page_size = db.get_first_value("PRAGMA page_size")
+
+      puts "Journal mode: #{journal_mode}"
+      puts "Synchronous: #{synchronous}"
+      puts "Cache size: #{cache_size} pages"
+      puts "Page size: #{page_size} bytes"
+    rescue SQLite3::SQLException => e
+      puts "Could not retrieve database settings: #{e.message}"
+    end
+
+    # Integrity check
+    puts "\n=== Database Health ==="
+    begin
+      integrity = db.get_first_value("PRAGMA integrity_check")
+      puts "Integrity check: #{integrity}"
+    rescue SQLite3::SQLException => e
+      puts "Integrity check failed: #{e.message}"
+    end
+
+    if options[:verbose]
+      # Show recent activity
+      puts "\n=== Recent Activity ==="
+      begin
+        recent = db.execute(<<-SQL, [Time.now.to_f - 86400])
+          SELECT COUNT(*) as count, DATE(start_time, 'unixepoch') as date
+          FROM commands
+          WHERE start_time > ?
+          GROUP BY DATE(start_time, 'unixepoch')
+          ORDER BY date DESC
+          LIMIT 7
+        SQL
+
+        if recent.any?
+          puts "Commands executed in last 7 days:"
+          recent.each do |row|
+            puts "  #{row['date']}: #{row['count']} commands"
+          end
+        else
+          puts "No recent command activity found"
+        end
+      rescue SQLite3::SQLException => e
+        puts "Could not retrieve recent activity: #{e.message}"
+      end
+
+      # Show table sizes
+      puts "\n=== Detailed Table Information ==="
+      tables.each do |table|
+        begin
+          result = db.execute("SELECT COUNT(*) as count, MIN(created_at) as first, MAX(created_at) as last FROM #{table}").first
+          if result && result['count'] > 0
+            first_date = result['first'] ? Time.at((result['first'] - 2440587.5) * 86400).strftime('%Y-%m-%d') : 'unknown'
+            last_date = result['last'] ? Time.at((result['last'] - 2440587.5) * 86400).strftime('%Y-%m-%d') : 'unknown'
+            puts "#{table}:"
+            puts "  Records: #{result['count']}"
+            puts "  First entry: #{first_date}"
+            puts "  Last entry: #{last_date}"
+          end
+        rescue SQLite3::SQLException => e
+          puts "#{table}: (error: #{e.message})"
+        end
+      end
+    end
+
+    db.close
+  else
+    puts "Database exists: No"
+    puts "Run 'histlog help' to get started"
+  end
+
+  # System information
+  puts "\n=== System Information ==="
+  puts "Histlog script: #{File.expand_path(__FILE__)}"
+  puts "Ruby version: #{RUBY_VERSION}"
+  puts "SQLite3 gem: #{SQLite3::VERSION}" rescue puts "SQLite3 gem: (not available)"
+  puts "Operating system: #{RUBY_PLATFORM}"
+
+  # Environment variables
+  puts "\n=== Environment ==="
+  puts "HISTLOG_DB: #{ENV['HISTLOG_DB'] || '(not set)'}"
+  puts "Session ID: #{ENV['__histlog_session_id'] || '(not set)'}"
+  puts "Current shell: #{ENV['SHELL'] || '(unknown)'}"
+  puts "Current TTY: #{get_tty rescue '(unknown)'}"
+
+  if options[:verbose]
+    puts "\n=== Shell Integration Status ==="
+    shells = {
+      'fish' => '~/.config/fish/config.fish',
+      'zsh' => '~/.zshrc',
+      'bash' => '~/.bashrc'
+    }
+
+    shells.each do |shell, config_file|
+      expanded_path = File.expand_path(config_file)
+      if File.exist?(expanded_path)
+        content = File.read(expanded_path)
+        if content.include?('histlog')
+          puts "#{shell.capitalize}: ✓ Integrated (found in #{config_file})"
+        else
+          puts "#{shell.capitalize}: ✗ Not integrated (#{config_file} exists but no histlog found)"
+        end
+      else
+        puts "#{shell.capitalize}: ? Config file not found (#{config_file})"
+      end
+    end
+  end
+end
+
 require 'sqlite3'
 require 'json'
 require 'fileutils'
@@ -2197,6 +2351,7 @@ def show_help(show_plumbing = false)
   puts "  sessions        Show session information"
   puts "  import [FILE]   Import history from shell history files"
   puts "  cleanup         Remove orphaned entries from database"
+  puts "  info            Show database and system information"
   puts "  optimize        Optimize database performance"
   puts ""
   puts "Query Filters:"
@@ -2335,7 +2490,7 @@ class HistlogApp
     end
 
     # Define known commands
-  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', '_on_session', '_on_preexec', '_on_postcmd']
+  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', 'info', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -2364,6 +2519,8 @@ class HistlogApp
       show_paths_command(@argv)
     when 'cleanup'
       handle_cleanup(@argv)
+    when 'info'
+      handle_info(@argv)
     when '_on_session'
       handle_on_session
     when '_on_preexec'
