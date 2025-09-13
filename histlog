@@ -3008,6 +3008,10 @@ class HistlogApp
       puts "Running VACUUM..."
       db.execute "VACUUM"
 
+      # Close the database connection before measuring final size
+      db.close
+      db = nil
+
       new_size = File.size(get_db_path)
       savings = original_size - new_size
       percentage = savings > 0 ? (savings.to_f / original_size * 100).round(2) : 0
@@ -3023,7 +3027,7 @@ class HistlogApp
       STDERR.puts "Error optimizing database: #{e.message}"
       exit 1
     ensure
-      db.close if db
+      db.close if db && !db.closed?
     end
   end
 
