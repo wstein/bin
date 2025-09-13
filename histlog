@@ -1509,15 +1509,18 @@ def execute_interactive_query(options)
       return
     end
 
-    # When using limit, reverse results to show oldest-to-newest order for display
-    if options[:limit]
-      results.reverse!
-    end
-
     # Output results
     if options[:format]
+      # For formatted output, ensure chronological order (oldest to newest)
+      if options[:limit]
+        results.reverse!
+      end
       output_formatted_results(results, options)
     else
+      # For interactive output, ensure chronological order (oldest to newest)
+      if options[:limit]
+        results.reverse!
+      end
       output_interactive_results(results, options)
     end
 
@@ -1627,8 +1630,7 @@ end
 # Output results in shell history formats
 def output_shell_history_results(results, format, options)
   # Convert query results to the format expected by format_commands_for_shell
-  # We need to reverse for shell formats to get chronological order (oldest first)
-  formatted_results = results.reverse.map do |row|
+  formatted_results = results.map do |row|
     result = {
       'command' => row['cmd_text'],
       'start_time' => row['start_time']
