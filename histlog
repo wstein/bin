@@ -899,23 +899,34 @@ end
 def get_or_create_cmd_text_id(db, command)
   # Try to find existing command by text
   result = db.execute("SELECT id FROM cmd_texts WHERE command = ?", [command])
-  return result[0][0] if result && result[0]
+  if result && result[0]
+    # Handle both hash and array results (db.results_as_hash setting affects this)
+    id_val = result[0].is_a?(Hash) ? result[0]["id"] : result[0][0]
+    return id_val && id_val.to_i > 0 ? id_val.to_i : nil
+  end
 
   # Insert new command text
   begin
     result = db.execute(
-    "INSERT INTO cmd_texts (command) VALUES (?) RETURNING id",
+      "INSERT INTO cmd_texts (command) VALUES (?) RETURNING id",
       [command]
     )
-    return result[0][0] if result && result[0]
+    if result && result[0]
+      # Handle both hash and array results
+      id_val = result[0].is_a?(Hash) ? result[0]["id"] : result[0][0]
+      return id_val && id_val.to_i > 0 ? id_val.to_i : nil
+    end
   rescue SQLite3::Exception => e
     if e.message.include?("syntax error") || e.message.include?("RETURNING")
-  db.execute("INSERT INTO cmd_texts (command) VALUES (?)", [command])
-      return db.last_insert_row_id
+      db.execute("INSERT INTO cmd_texts (command) VALUES (?)", [command])
+      last_id = db.last_insert_row_id
+      return last_id && last_id.to_i > 0 ? last_id.to_i : nil
     else
       raise e
     end
   end
+
+  return nil
 end
 
 def store_command(command_data)
@@ -1001,7 +1012,14 @@ def store_command(command_data)
 end
 
 def parse_command_arguments(db, command_id, command_text)
-  # Parse command into arguments (basic shell-like parsing)
+  # Parse command into arguments and extract file/directory paths
+  #
+  # Path Detection Limitations:
+  # - Only detects paths that currently exist on the filesystem
+  # - Fish history stores raw arguments, but we need absolute paths for tracking
+  # - Relative paths are resolved to absolute paths
+  # - Non-existent paths are ignored (e.g., deleted files, typos, etc.)
+  #
   # This is a simplified parser - could be enhanced for more complex cases
   args = command_text.scan(/(?:[^\s"']+|"[^"]*"|'[^']*')+/).map { |arg| arg.gsub(/^["']|["']$/, '') }
 
@@ -1216,7 +1234,7 @@ def execute_interactive_query(options)
     base_query = <<-SQL
     SELECT
       c.id AS command_id,
-      cmd.command AS cmd_text,
+      COALESCE(cmd.command, '') AS cmd_text,
       c.created_at,
       c.start_time,
       c.duration,
@@ -1230,7 +1248,7 @@ def execute_interactive_query(options)
       sh.path as shell_path,
       t.device as tty_device
   FROM commands c
-  JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+  LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
       LEFT JOIN sessions s ON c.session_id = s.id
       LEFT JOIN shells sh ON s.shell_id = sh.id
       LEFT JOIN ttys t ON s.tty_id = t.id
@@ -2286,16 +2304,32 @@ def parse_json_history_file(file_path, verbose = false)
     content = File.read(file_path)
     json_data = JSON.parse(content)
 
-    commands = json_data.map do |entry|
+    # Create a lookup dictionary for original IDs (for future use if needed)
+    id_lookup = {}
+
+    commands = json_data.map.with_index do |entry, index|
+      # Explicitly ignore any existing IDs from input data to avoid conflicts
+      original_command_id = entry['command_id']
+      original_session_id = entry['session_id']
+
+      # Store original ID mapping for potential future use
+      if original_command_id
+        id_lookup[original_command_id] = index
+      end
+
+      # Only extract command data, ignore all ID fields
       {
         command: entry['cmd_text'] || entry['command'],
         start_time: entry['start_time'],
         exit_code: entry['exit_code'],
-        is_private: entry['is_private']
+        is_private: entry['is_private'],
+        # Store original IDs for reference but don't use them in DB operations
+        _original_command_id: original_command_id,
+        _original_session_id: original_session_id
       }
     end
 
-    puts "Parsed #{commands.length} JSON entries" if verbose
+    puts "Parsed #{commands.length} JSON entries (ignoring existing IDs)" if verbose
     commands
   rescue JSON::ParserError => e
     STDERR.puts "Error parsing JSON file: #{e.message}"
@@ -2314,16 +2348,32 @@ def parse_yaml_history_file(file_path, verbose = false)
     require 'yaml'
     yaml_data = YAML.load_file(file_path)
 
-    commands = yaml_data.map do |entry|
+    # Create a lookup dictionary for original IDs (for future use if needed)
+    id_lookup = {}
+
+    commands = yaml_data.map.with_index do |entry, index|
+      # Explicitly ignore any existing IDs from input data to avoid conflicts
+      original_command_id = entry['command_id']
+      original_session_id = entry['session_id']
+
+      # Store original ID mapping for potential future use
+      if original_command_id
+        id_lookup[original_command_id] = index
+      end
+
+      # Only extract command data, ignore all ID fields
       {
         command: entry['cmd_text'] || entry['command'],
         start_time: entry['start_time'],
         exit_code: entry['exit_code'],
-        is_private: entry['is_private']
+        is_private: entry['is_private'],
+        # Store original IDs for reference but don't use them in DB operations
+        _original_command_id: original_command_id,
+        _original_session_id: original_session_id
       }
     end
 
-    puts "Parsed #{commands.length} YAML entries" if verbose
+    puts "Parsed #{commands.length} YAML entries (ignoring existing IDs)" if verbose
     commands
   rescue Psych::SyntaxError => e
     STDERR.puts "Error parsing YAML file: #{e.message}"
@@ -2639,7 +2689,12 @@ def parse_fish_history(file_path, verbose = false)
         # Ignore invalid timestamps
       end
     elsif line.start_with?('  paths:') && current_command
-      # Fish also stores paths, but we'll parse them from command text instead
+      # Fish stores paths used by the command, but we intentionally ignore them
+      # Reason: Fish paths are raw/relative arguments, but path tracking requires absolute paths
+      # Path tracking is only available for live commands, not imported history
+      next
+    elsif line.start_with?('    - ') && current_command
+      # Skip individual path entries in fish paths section
       next
     end
 
@@ -2698,9 +2753,20 @@ end
 
 # Import parsed commands into the database
 def import_commands_to_db(commands, options)
+  # Import parsed commands into the database
+  #
+  # Note: Path tracking is NOT performed on imported commands because:
+  # - Shell history files store raw arguments, not absolute paths
+  # - Path tracking requires absolute paths that currently exist
+  # - This ensures consistency and accuracy of path data
+  #
   db = initialize_db
   db.results_as_hash = true
   imported_count = 0
+
+  # Create lookup dictionaries to map original IDs to new database IDs
+  command_id_lookup = {}
+  session_id_lookup = {}
 
   begin
     commands.each_with_index do |cmd_data, index|
@@ -2713,15 +2779,19 @@ def import_commands_to_db(commands, options)
         is_private = original_command.start_with?(' ') ? 1 : 0
         clean_command = original_command.lstrip
 
-  # Get or create cmd_text_id
-  cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+        # Get or create cmd_text_id (always create new entries, ignore any original IDs)
+        cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+
+        # Store original ID references but don't use them in database operations
+        original_command_id = cmd_data[:_original_command_id]
+        original_session_id = cmd_data[:_original_session_id]
 
         # Only use actual timestamp if available, otherwise let DB use default
         if cmd_data[:start_time]
           # Convert Unix timestamp to Julian Day format (database uses julianday)
           julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
           # Insert command into current `commands` table, marking it as an imported row
-          # session-related fields are NULL for imported commands
+          # session-related fields are NULL for imported commands (create new sessions as needed)
           db.execute(
             "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, julian_day, cmd_data[:start_time].to_f]
@@ -2734,6 +2804,15 @@ def import_commands_to_db(commands, options)
           )
         end
 
+        # Get the newly created command ID and store in lookup dictionary
+        new_command_id = db.last_insert_row_id
+        if original_command_id
+          command_id_lookup[original_command_id] = new_command_id
+        end
+
+        # Note: We don't parse command arguments for path tracking on imported commands
+        # because shell history files store raw arguments, not absolute paths
+
         imported_count += 1
 
         puts "Imported #{imported_count} commands..." if options[:verbose] && imported_count % 100 == 0
@@ -2741,6 +2820,11 @@ def import_commands_to_db(commands, options)
       rescue SQLite3::Exception => e
         STDERR.puts "Warning: Could not import command '#{cmd_data[:command]}': #{e.message}" if options[:verbose]
       end
+    end
+
+    # Print ID mapping summary if verbose and we have original IDs
+    if options[:verbose] && command_id_lookup.any?
+      puts "Created ID mappings for #{command_id_lookup.size} commands with original IDs"
     end
 
   rescue SQLite3::Exception => e
