@@ -1614,7 +1614,12 @@ def output_json_results(results)
       result
     end
 
-    puts JSON.pretty_generate(json_results)
+    begin
+      puts JSON.pretty_generate(json_results)
+    rescue Errno::EPIPE
+      # Broken pipe - output was closed (e.g., piped to head/less and user quit)
+      exit 0
+    end
   ensure
     db.close if db
   end
@@ -1671,7 +1676,12 @@ def output_yaml_results(results)
       result
     end
 
-    puts yaml_results.to_yaml
+    begin
+      puts yaml_results.to_yaml
+    rescue Errno::EPIPE
+      # Broken pipe - output was closed (e.g., piped to head/less and user quit)
+      exit 0
+    end
   ensure
     db.close if db
   end
@@ -1679,14 +1689,19 @@ end
 
 # Output results in plain format with timestamps
 def output_plain_results(results, options)
-  results.each do |row|
-    command = row['cmd_text']
-    if row['start_time']
-      timestamp = Time.at(row['start_time'].to_f).strftime('%Y-%m-%d %H:%M:%S')
-      puts "[#{timestamp}] #{command}"
-    else
-      puts command
+  begin
+    results.each do |row|
+      command = row['cmd_text']
+      if row['start_time']
+        timestamp = Time.at(row['start_time'].to_f).strftime('%Y-%m-%d %H:%M:%S')
+        puts "[#{timestamp}] #{command}"
+      else
+        puts command
+      end
     end
+  rescue Errno::EPIPE
+    # Broken pipe - output was closed (e.g., piped to head/less and user quit)
+    exit 0
   end
 end
 
@@ -1714,7 +1729,12 @@ def output_shell_history_results(results, format, options)
   }
 
   formatted_commands = format_commands_for_shell(formatted_results, format, format_options)
-  formatted_commands.each { |line| puts line }
+  begin
+    formatted_commands.each { |line| puts line }
+  rescue Errno::EPIPE
+    # Broken pipe - output was closed (e.g., piped to head/less and user quit)
+    exit 0
+  end
 end
 
 # Output results for display
@@ -1725,30 +1745,36 @@ def output_interactive_results(results, options)
   end
 
   # Simple output: just print commands (optionally prefixed by ISO8601 start_time)
-  results.each do |row|
-  command = row['cmd_text'] || row['command']
-    lines = command.split("\n")
-    time_prefix = ""
-    if options && options[:show_time] && row['start_time']
-      begin
-        t = Time.at(row['start_time'].to_f)
-        # Simplified format: YYYY-MM-DD HH:MM
-        time_prefix = t.strftime("%Y-%m-%d %H:%M:%S") + " "
-      rescue
-        time_prefix = ""
+  begin
+    results.each do |row|
+    command = row['cmd_text'] || row['command']
+      lines = command.split("\n")
+      time_prefix = ""
+      if options && options[:show_time] && row['start_time']
+        begin
+          t = Time.at(row['start_time'].to_f)
+          # Simplified format: YYYY-MM-DD HH:MM
+          time_prefix = t.strftime("%Y-%m-%d %H:%M:%S") + " "
+        rescue
+          time_prefix = ""
+        end
+      end
+
+      if results.length == 1
+        # Single result: show full command, even if multiline
+        puts time_prefix + command
+      elsif lines.length > 1
+        # Multiple results with multiline command: show first line + "..."
+        puts time_prefix + "#{lines.first}..."
+      else
+        # Multiple results with single line command: show as-is
+        puts time_prefix + command
       end
     end
-
-    if results.length == 1
-      # Single result: show full command, even if multiline
-      puts time_prefix + command
-    elsif lines.length > 1
-      # Multiple results with multiline command: show first line + "..."
-      puts time_prefix + "#{lines.first}..."
-    else
-      # Multiple results with single line command: show as-is
-      puts time_prefix + command
-    end
+  rescue Errno::EPIPE
+    # Broken pipe - output was closed (e.g., piped to head/less and user quit)
+    # This is normal, just exit quietly
+    exit 0
   end
 end
 
