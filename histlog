@@ -1177,7 +1177,8 @@ def query_interactive(args)
 
     # Output format
     opts.on("--json", "Output as JSON with full metadata") { options[:format] = 'json' }
-    opts.on("--format FORMAT", "Output format (json, fish, zsh, nu, bash, powershell, plain)") { |f| options[:format] = f.downcase }
+    opts.on("--yaml", "Output as YAML with full metadata") { options[:format] = 'yaml' }
+    opts.on("--format FORMAT", "Output format (json, yaml, fish, zsh, nu, bash, powershell, plain)") { |f| options[:format] = f.downcase }
     opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
     opts.on("--limit N", Integer, "Limit number of results (default: no limit)") { |n| options[:limit] = n }
 
@@ -1536,7 +1537,7 @@ def output_formatted_results(results, options)
   format = options[:format]
 
   # Validate format
-  valid_formats = ['json', 'fish', 'zsh', 'nu', 'bash', 'powershell', 'plain']
+  valid_formats = ['json', 'yaml', 'fish', 'zsh', 'nu', 'bash', 'powershell', 'plain']
   unless valid_formats.include?(format)
     STDERR.puts "Error: Unsupported format '#{format}'"
     STDERR.puts "Supported formats: #{valid_formats.join(', ')}"
@@ -1551,6 +1552,8 @@ def output_formatted_results(results, options)
   case format
   when 'json'
     output_json_results(results)
+  when 'yaml'
+    output_yaml_results(results)
   when 'plain'
     output_plain_results(results, options)
   else
@@ -1609,6 +1612,63 @@ def output_json_results(results)
     end
 
     puts JSON.pretty_generate(json_results)
+  ensure
+    db.close if db
+  end
+end
+
+# Output results in YAML format
+def output_yaml_results(results)
+  require 'yaml'
+
+  # Get database connection to fetch path arguments
+  db_path = get_db_path
+  db = SQLite3::Database.new(db_path)
+  db.results_as_hash = true
+
+  begin
+    yaml_results = results.map do |row|
+      # Fetch path arguments for this command
+      path_args = db.execute(<<-SQL, [row['command_id']])
+        SELECT pa.arg_position, p.path, p.type
+        FROM path_args pa
+        JOIN paths p ON pa.path_id = p.id
+        WHERE pa.command_id = ?
+        ORDER BY pa.arg_position
+      SQL
+
+	  # Build the base result
+      result = {
+        'command_id' => row['command_id'],
+        'cmd_text' => row['cmd_text'],
+        'start_time' => row['start_time'],
+        'duration' => row['duration'],
+        'exit_code' => row['exit_code'],
+        'is_private' => row['is_private'] == 1,
+        'is_assisted' => row['is_assisted'] == 1,
+        'cwd_old' => row['cwd_old'],
+        'cwd_new' => row['cwd_new'],
+        'session_id' => row['session_id'],
+        'pid' => row['pid'],
+        'shell' => row['shell_path'],
+        'tty' => row['tty_device'],
+      }.reject { |_, v| v.nil? }
+
+      # Add path arguments if any exist
+      if path_args.any?
+        result['path_args'] = path_args.map do |arg|
+          {
+            'position' => arg['arg_position'],
+            'path' => arg['path'],
+            'type' => arg['type']
+          }
+        end
+      end
+
+      result
+    end
+
+    puts yaml_results.to_yaml
   ensure
     db.close if db
   end
@@ -2064,16 +2124,24 @@ def import_shell_history(args)
   # Parse command line options
   options = {
     history_file: nil,
-    shell: nil,
+    input_format: nil,
     dry_run: false,
     verbose: false
   }
 
   OptionParser.new do |opts|
-    opts.banner = "Usage: histlog import [options] [history_file]"
+    opts.banner = "Usage: histlog import [--format FORMAT] [--json] [--yaml] [FILE]"
 
-    opts.on("-s", "--shell SHELL", "Shell type (fish, zsh, nu)") do |shell|
-      options[:shell] = shell.downcase
+    opts.on("--format FORMAT", "Input format: fish, zsh, nu, bash, powershell, plain, json, yaml") do |format|
+      options[:input_format] = format.downcase
+    end
+
+    opts.on("--json", "Import from JSON format (shortcut for --format json)") do
+      options[:input_format] = 'json'
+    end
+
+    opts.on("--yaml", "Import from YAML format (shortcut for --format yaml)") do
+      options[:input_format] = 'yaml'
     end
 
     opts.on("-f", "--file FILE", "History file path (defaults to shell's default)") do |file|
@@ -2097,27 +2165,46 @@ def import_shell_history(args)
   # Get history file from command line if provided
   options[:history_file] = args.first if args.first && !options[:history_file]
 
-  # If a history file is provided but no shell, try to detect shell from that file
-  if options[:history_file] && options[:shell].nil?
-    detected_shell = detect_shell_from_history_file(options[:history_file])
-    options[:shell] = detected_shell if detected_shell
+  # Determine input format
+  if options[:input_format]
+    # Use explicitly specified format
+    input_format = options[:input_format]
+
+    # For JSON/YAML formats, default to histlog.json/histlog.yaml if no file specified
+    if !options[:history_file]
+      case input_format
+      when 'json'
+        options[:history_file] = 'histlog.json'
+      when 'yaml'
+        options[:history_file] = 'histlog.yaml'
+      else
+        # For shell formats, auto-detect default file
+        detected_shell, default_file = detect_shell_and_history_file()
+        options[:history_file] = default_file
+      end
+    end
+  else
+    # Auto-detect format from file or shell
+    if options[:history_file]
+      # Try to detect format from file extension or content
+      if options[:history_file].end_with?('.json')
+        input_format = 'json'
+      elsif options[:history_file].end_with?('.yaml', '.yml')
+        input_format = 'yaml'
+      else
+        input_format = detect_shell_from_history_file(options[:history_file])
+      end
+    else
+      # Auto-detect shell and use its default file
+      detected_shell, default_file = detect_shell_and_history_file()
+      input_format = detected_shell
+      options[:history_file] = default_file
+    end
   end
 
-  # Auto-detect default shell and history file only if history_file not specified
-  if !options[:history_file]
-    detected_shell, default_file = detect_shell_and_history_file()
-    options[:shell] ||= detected_shell
-    options[:history_file] ||= default_file
-  end
-
-  # If shell is still unknown but we have a file, make one more attempt to detect
-  if options[:shell].nil? && options[:history_file]
-    options[:shell] = detect_shell_from_history_file(options[:history_file])
-  end
-
-  unless options[:shell] && options[:history_file]
-    STDERR.puts "Error: Could not determine shell type or history file location"
-    STDERR.puts "Use --shell and --file options to specify manually"
+  unless input_format && options[:history_file]
+    STDERR.puts "Error: Could not determine input format or history file location"
+    STDERR.puts "Use --format and --file options to specify manually"
     exit 1
   end
 
@@ -2126,11 +2213,19 @@ def import_shell_history(args)
     exit 1
   end
 
-  puts "Importing #{options[:shell]} history from: #{options[:history_file]}"
+  puts "Importing from #{input_format} format: #{options[:history_file]}"
   puts "Mode: #{options[:dry_run] ? 'DRY RUN' : 'IMPORT'}"
 
-  # Parse history file based on shell type
-  commands = parse_history_file(options[:history_file], options[:shell], options[:verbose])
+  # Parse history file based on input format
+  case input_format
+  when 'json'
+    commands = parse_json_history_file(options[:history_file], options[:verbose])
+  when 'yaml'
+    commands = parse_yaml_history_file(options[:history_file], options[:verbose])
+  else
+    # Shell formats (fish, zsh, nu, bash, etc.)
+    commands = parse_history_file(options[:history_file], input_format, options[:verbose])
+  end
 
   if commands.empty?
     puts "No commands found in history file"
@@ -2152,6 +2247,62 @@ def import_shell_history(args)
   # Import commands into database
   imported_count = import_commands_to_db(commands, options)
   puts "Successfully imported #{imported_count} commands"
+end
+
+# Parse JSON history file
+def parse_json_history_file(file_path, verbose = false)
+  puts "Parsing JSON file: #{file_path}" if verbose
+
+  begin
+    content = File.read(file_path)
+    json_data = JSON.parse(content)
+
+    commands = json_data.map do |entry|
+      {
+        command: entry['cmd_text'] || entry['command'],
+        start_time: entry['start_time'],
+        exit_code: entry['exit_code'],
+        is_private: entry['is_private']
+      }
+    end
+
+    puts "Parsed #{commands.length} JSON entries" if verbose
+    commands
+  rescue JSON::ParserError => e
+    STDERR.puts "Error parsing JSON file: #{e.message}"
+    []
+  rescue => e
+    STDERR.puts "Error reading JSON file: #{e.message}"
+    []
+  end
+end
+
+# Parse YAML history file
+def parse_yaml_history_file(file_path, verbose = false)
+  puts "Parsing YAML file: #{file_path}" if verbose
+
+  begin
+    require 'yaml'
+    yaml_data = YAML.load_file(file_path)
+
+    commands = yaml_data.map do |entry|
+      {
+        command: entry['cmd_text'] || entry['command'],
+        start_time: entry['start_time'],
+        exit_code: entry['exit_code'],
+        is_private: entry['is_private']
+      }
+    end
+
+    puts "Parsed #{commands.length} YAML entries" if verbose
+    commands
+  rescue Psych::SyntaxError => e
+    STDERR.puts "Error parsing YAML file: #{e.message}"
+    []
+  rescue => e
+    STDERR.puts "Error reading YAML file: #{e.message}"
+    []
+  end
 end
 
 # Format commands for specific shell format
@@ -2601,7 +2752,8 @@ def show_help(show_plumbing = false)
   puts "  --slow          Slow commands (> 10s)"
   puts "  --has-paths     Commands that accessed filesystem paths"
   puts "  --json          Output as JSON"
-  puts "  --format FORMAT Output in shell history format (json, fish, zsh, nu, bash, powershell, plain)"
+  puts "  --yaml          Output as YAML"
+  puts "  --format FORMAT Output in shell history format (json, yaml, fish, zsh, nu, bash, powershell, plain)"
   puts ""
 
   if show_plumbing
