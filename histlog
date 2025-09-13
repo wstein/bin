@@ -1112,7 +1112,7 @@ def query_interactive(args)
     opts.banner = "Usage: histlog query [search] [options]"
   opts.on("--delete", "Delete matching commands after confirmation") { options[:delete] = true }
   opts.on("--force-delete", "Delete matching commands without confirmation") { options[:force_delete] = true }
-  opts.on("--asc", "Sort results in ascending order (oldest first)") { options[:asc] = true }
+  opts.on("--asc", "Sort results in ascending order (oldest first) - DEFAULT") { options[:asc] = true }
   opts.on("--desc", "Sort results in descending order (newest first)") { options[:desc] = true }
 
     # Search and basic filters
@@ -1437,19 +1437,20 @@ def execute_interactive_query(options)
   # Add GROUP BY to handle potential duplicates from JOINs, but preserve individual command executions
   full_query += " GROUP BY c.id"
 
-  # Order by creation time - when limit is used, get most recent N first, then reverse for display
-    if options[:limit]
-      # For limited results, get the most recent N commands first
-      full_query += " ORDER BY c.created_at DESC"
+  # Order by start_time (actual execution time), then created_at, then command_id for strict chronological order
+  # For limited results, we need to get the most recent N commands first, then apply user's sort preference
+  if options[:limit]
+    # Always get the most recent N commands first
+    full_query += " ORDER BY c.start_time DESC, c.created_at DESC, c.id DESC"
+  else
+    # For unlimited results, apply user's sort preference directly (default: oldest first - chronological)
+    if options[:desc]
+      order = "DESC"
     else
-      # For unlimited results, respect user's sort preference (default: most recent first)
-      if options[:asc]
-        order = "ASC"
-      else
-        order = "DESC"
-      end
-      full_query += " ORDER BY c.created_at #{order}"
+      order = "ASC"  # Default behavior - chronological order
     end
+    full_query += " ORDER BY c.start_time #{order}, c.created_at #{order}, c.id #{order}"
+  end
 
     # Add limit if specified
     if options[:limit]
@@ -1512,14 +1513,16 @@ def execute_interactive_query(options)
 
     # Output results
     if options[:format]
-      # For formatted output, ensure chronological order (oldest to newest)
-      if options[:limit]
+      # For limited results, reverse to get chronological order (oldest first) by default
+      # Only don't reverse if --desc is explicitly specified
+      if options[:limit] && !options[:desc]
         results.reverse!
       end
       output_formatted_results(results, options)
     else
-      # For interactive output, ensure chronological order (oldest to newest)
-      if options[:limit]
+      # For limited results, reverse to get chronological order (oldest first) by default
+      # Only don't reverse if --desc is explicitly specified
+      if options[:limit] && !options[:desc]
         results.reverse!
       end
       output_interactive_results(results, options)
