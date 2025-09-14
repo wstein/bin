@@ -2851,6 +2851,7 @@ def show_help(show_plumbing = false)
   puts "  cleanup         Remove orphaned entries from database"
   puts "  info            Show database and system information"
   puts "  optimize        Optimize database performance"
+  puts "  mcp [OPTIONS]   Start Model Context Protocol server"
   puts ""
   puts "Query Filters:"
   puts "  --session [ID]  Commands from current session (requires __histlog_session_id) or specific session ID"
@@ -2971,6 +2972,621 @@ def nu_config
 end
 
 # Main application class
+# MCP Server Implementation
+def handle_mcp_server(args)
+  require 'json'
+
+  options = {
+    port: nil,
+    stdio: false
+  }
+
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog mcp [--stdio] [--port PORT]"
+    opts.on("--stdio", "Use stdio transport (default)") { options[:stdio] = true }
+    opts.on("--port PORT", Integer, "Use TCP transport on specified port") { |p| options[:port] = p }
+    opts.on("-h", "--help", "Show this help") do
+      puts opts
+      exit 0
+    end
+  end.parse!(args)
+
+  # Default to stdio if no transport specified
+  options[:stdio] = true if !options[:port]
+
+  if options[:stdio]
+    run_mcp_stdio_server
+  else
+    run_mcp_tcp_server(options[:port])
+  end
+end
+
+def run_mcp_stdio_server
+  STDERR.puts "Starting MCP server on stdio..."
+  
+  loop do
+    begin
+      line = STDIN.gets
+      break if line.nil?
+      
+      line = line.strip
+      next if line.empty?
+      
+      request = JSON.parse(line)
+      response = handle_mcp_request(request)
+      puts JSON.generate(response)
+      STDOUT.flush
+    rescue JSON::ParserError => e
+      error_response = {
+        jsonrpc: "2.0",
+        error: {
+          code: -32700,
+          message: "Parse error: #{e.message}"
+        }
+      }
+      puts JSON.generate(error_response)
+      STDOUT.flush
+    rescue => e
+      STDERR.puts "MCP Server error: #{e.message}"
+      STDERR.puts e.backtrace.join("\n")
+    end
+  end
+end
+
+def run_mcp_tcp_server(port)
+  require 'socket'
+  STDERR.puts "Starting MCP server on port #{port}..."
+  
+  server = TCPServer.new(port)
+  
+  loop do
+    client = server.accept
+    
+    Thread.new(client) do |conn|
+      begin
+        loop do
+          line = conn.gets
+          break if line.nil?
+          
+          line = line.strip
+          next if line.empty?
+          
+          request = JSON.parse(line)
+          response = handle_mcp_request(request)
+          conn.puts JSON.generate(response)
+          conn.flush
+        end
+      rescue => e
+        STDERR.puts "MCP Client error: #{e.message}"
+      ensure
+        conn.close
+      end
+    end
+  end
+end
+
+def handle_mcp_request(request)
+  method = request["method"]
+  params = request["params"] || {}
+  id = request["id"]
+
+  case method
+  when "initialize"
+    {
+      jsonrpc: "2.0",
+      id: id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: {
+          tools: {}
+        },
+        serverInfo: {
+          name: "histlog",
+          version: "1.0.0"
+        }
+      }
+    }
+
+  when "tools/list"
+    {
+      jsonrpc: "2.0",
+      id: id,
+      result: {
+        tools: [
+          {
+            name: "query_commands",
+            description: "Search command history with optional filters",
+            inputSchema: {
+              type: "object",
+              properties: {
+                search_term: { type: "string", description: "Search term to filter commands" },
+                limit: { type: "integer", description: "Maximum number of results (default: 50)" },
+                session: { type: "integer", description: "Filter by session ID" },
+                dir: { type: "string", description: "Filter by working directory path" },
+                failed: { type: "boolean", description: "Only show failed commands (exit code != 0)" },
+                success: { type: "boolean", description: "Only show successful commands (exit code = 0)" },
+                exitcode: { type: "integer", description: "Filter by specific exit code" },
+                unique: { type: "boolean", description: "Show only unique commands (deduplicated)" },
+                shell: { type: "string", description: "Filter by shell name (fish, zsh, bash, etc.)" },
+                private: { type: "boolean", description: "Filter by private status (commands starting with space)" },
+                imported: { type: "boolean", description: "Filter by import status (true for imported, false for live commands)" },
+                assisted: { type: "boolean", description: "Filter by AI assistance status" },
+                today: { type: "boolean", description: "Only show commands from today" },
+                week: { type: "boolean", description: "Only show commands from this week" }
+              }
+            }
+          },
+          {
+            name: "get_command_stats",
+            description: "Get statistics about command usage",
+            inputSchema: {
+              type: "object",
+              properties: {
+                limit: { type: "integer", description: "Number of top commands to show (default: 10)" }
+              }
+            }
+          },
+          {
+            name: "get_database_info",
+            description: "Get information about the histlog database",
+            inputSchema: {
+              type: "object",
+              properties: {}
+            }
+          },
+          {
+            name: "analyze_patterns",
+            description: "Analyze command usage patterns and provide insights",
+            inputSchema: {
+              type: "object",
+              properties: {
+                days: { type: "integer", description: "Number of days to analyze (default: 30)" }
+              }
+            }
+          },
+          {
+            name: "query_paths",
+            description: "Search and filter filesystem paths tracked by histlog",
+            inputSchema: {
+              type: "object",
+              properties: {
+                search_term: { type: "string", description: "Search term to filter paths" },
+                type: { type: "string", enum: ["file", "dir", "both"], description: "Filter by path type (default: both)" },
+                limit: { type: "integer", description: "Maximum number of results (default: 50)" },
+                sort_by: { type: "string", enum: ["path", "usage", "exec_count", "arg_count"], description: "Sort results by (default: usage)" }
+              }
+            }
+          },
+          {
+            name: "get_path_stats",
+            description: "Get statistics about filesystem path usage",
+            inputSchema: {
+              type: "object",
+              properties: {
+                limit: { type: "integer", description: "Number of top paths to show (default: 10)" }
+              }
+            }
+          },
+          {
+            name: "analyze_path_patterns",
+            description: "Analyze filesystem path usage patterns and access frequency",
+            inputSchema: {
+              type: "object",
+              properties: {
+                days: { type: "integer", description: "Number of days to analyze (default: 30)" },
+                depth: { type: "integer", description: "Directory depth to analyze (default: 3)" }
+              }
+            }
+          }
+        ]
+      }
+    }
+
+  when "tools/call"
+    tool_name = params["name"]
+    tool_args = params["arguments"] || {}
+    
+    case tool_name
+    when "query_commands"
+      result = mcp_query_commands(tool_args)
+    when "get_command_stats"
+      result = mcp_get_command_stats(tool_args)
+    when "get_database_info"
+      result = mcp_get_database_info(tool_args)
+    when "analyze_patterns"
+      result = mcp_analyze_patterns(tool_args)
+    when "query_paths"
+      result = mcp_query_paths(tool_args)
+    when "get_path_stats"
+      result = mcp_get_path_stats(tool_args)
+    when "analyze_path_patterns"
+      result = mcp_analyze_path_patterns(tool_args)
+    else
+      return {
+        jsonrpc: "2.0",
+        id: id,
+        error: {
+          code: -32601,
+          message: "Unknown tool: #{tool_name}"
+        }
+      }
+    end
+
+    {
+      jsonrpc: "2.0",
+      id: id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      }
+    }
+
+  else
+    {
+      jsonrpc: "2.0",
+      id: id,
+      error: {
+        code: -32601,
+        message: "Unknown method: #{method}"
+      }
+    }
+  end
+rescue => e
+  {
+    jsonrpc: "2.0",
+    id: id,
+    error: {
+      code: -32603,
+      message: "Internal error: #{e.message}"
+    }
+  }
+end
+
+# MCP Tool Implementations
+
+def mcp_query_commands(args)
+  mcp_log_debug("query_commands called with args: #{args.inspect}")
+  
+  search_term = args["search_term"]
+  limit = args["limit"] || 50
+  session_id = args["session"]
+  dir_filter = args["dir"]
+  failed = args["failed"]
+  success = args["success"]
+  exitcode = args["exitcode"]
+  unique = args["unique"]
+  shell_filter = args["shell"]
+  private_filter = args["private"]
+  imported_filter = args["imported"]
+  assisted_filter = args["assisted"]
+  today = args["today"]
+  week = args["week"]
+
+  db = initialize_db
+  db.results_as_hash = true
+
+  # Base query with all joins needed for filters
+  query = <<~SQL
+    SELECT #{unique ? 'DISTINCT' : ''}
+      c.id as command_id,
+      COALESCE(cmd.command, '') AS cmd_text,
+      c.start_time,
+      c.exit_code,
+      c.is_private,
+      c.is_assisted,
+      c.duration,
+      c.session_id,
+      s.shell_id,
+      sh.name as shell_name,
+      po.path as old_path,
+      pn.path as new_path
+    FROM commands c
+    LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+    LEFT JOIN sessions s ON c.session_id = s.id
+    LEFT JOIN shells sh ON s.shell_id = sh.id
+    LEFT JOIN paths po ON c.path_old_id = po.id
+    LEFT JOIN paths pn ON c.path_new_id = pn.id
+    WHERE 1=1
+  SQL
+
+  params = []
+
+  # Add all the filter conditions
+  if search_term
+    query << " AND cmd.command LIKE ?"
+    params << "%#{search_term}%"
+  end
+
+  if session_id
+    query << " AND c.session_id = ?"
+    params << session_id
+  end
+
+  if dir_filter
+    query << " AND (po.path LIKE ? OR pn.path LIKE ?)"
+    params << "%#{dir_filter}%"
+    params << "%#{dir_filter}%"
+  end
+
+  if exitcode
+    query << " AND c.exit_code = ?"
+    params << exitcode
+  elsif failed
+    query << " AND c.exit_code != 0"
+  elsif success
+    query << " AND c.exit_code = 0"
+  end
+
+  if shell_filter
+    query << " AND sh.name LIKE ?"
+    params << "%#{shell_filter}%"
+  end
+
+  if private_filter == true
+    query << " AND c.is_private = 1"
+  elsif private_filter == false
+    query << " AND c.is_private = 0"
+  end
+
+  if imported_filter == true
+    # Imported commands typically have no session_id or have specific markers
+    query << " AND c.session_id IS NULL"
+  elsif imported_filter == false
+    # Live commands have session_id
+    query << " AND c.session_id IS NOT NULL"
+  end
+
+  if assisted_filter == true
+    query << " AND c.is_assisted = 1"
+  elsif assisted_filter == false
+    query << " AND c.is_assisted = 0"
+  end
+
+  if today
+    query << " AND date(c.start_time, 'unixepoch') = date('now')"
+  elsif week
+    query << " AND c.start_time > (strftime('%s', 'now') - 7 * 24 * 3600)"
+  end
+
+  query << " ORDER BY c.start_time DESC LIMIT ?"
+  params << limit
+
+  mcp_log_debug("Executing SQL query: #{query}")
+  mcp_log_debug("Query parameters: #{params.inspect}")
+
+  begin
+    results = db.execute(query, params)
+    
+    if results.empty?
+      return "No commands found matching the criteria."
+    end
+
+    output = "Found #{results.length} commands:\n\n"
+    results.each do |row|
+      timestamp = row['start_time'] ? Time.at(row['start_time']).strftime('%Y-%m-%d %H:%M:%S') : 'Unknown'
+      exit_code = row['exit_code'] || 'Unknown'
+      duration = row['duration'] ? "#{row['duration']}s" : 'Unknown'
+      status = row['exit_code'] == 0 ? '✓' : '✗'
+      
+      # Build status indicators
+      indicators = []
+      indicators << "private" if row['is_private'] == 1
+      indicators << "assisted" if row['is_assisted'] == 1
+      indicators << "session:#{row['session_id']}" if row['session_id']
+      indicators << "shell:#{row['shell_name']}" if row['shell_name']
+      indicators << "dir:#{row['old_path']}" if row['old_path'] && row['old_path'] != row['new_path']
+      
+      output << "#{status} [#{timestamp}] #{row['cmd_text']}"
+      output << " (exit: #{exit_code}, duration: #{duration})" if row['exit_code'] || row['duration']
+      output << " [#{indicators.join(', ')}]" unless indicators.empty?
+      output << "\n"
+    end
+
+    return output
+  ensure
+    db.close if db
+  end
+end
+
+def mcp_get_command_stats(args)
+  limit = args["limit"] || 10
+
+  db = initialize_db
+  db.results_as_hash = true
+
+  begin
+    # Get total commands
+    total = db.get_first_value("SELECT COUNT(*) FROM commands")
+    
+    # Get most used commands
+    most_used = db.execute(<<~SQL, [limit])
+      SELECT 
+        cmd.command,
+        COUNT(*) as usage_count,
+        AVG(c.duration) as avg_duration
+      FROM commands c
+      LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+      WHERE cmd.command IS NOT NULL AND cmd.command != ''
+      GROUP BY cmd.command
+      ORDER BY usage_count DESC
+      LIMIT ?
+    SQL
+
+    # Get success rate
+    success_stats = db.execute(<<~SQL).first
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN exit_code = 0 THEN 1 ELSE 0 END) as successful,
+        AVG(duration) as avg_duration
+      FROM commands 
+      WHERE exit_code IS NOT NULL
+    SQL
+
+    output = "=== Command Statistics ===\n\n"
+    output << "Total commands: #{total}\n"
+    
+    if success_stats && success_stats['total'] > 0
+      success_rate = (success_stats['successful'].to_f / success_stats['total'] * 100).round(1)
+      avg_duration = success_stats['avg_duration'] ? "#{success_stats['avg_duration'].round(2)}s" : 'Unknown'
+      output << "Success rate: #{success_rate}% (#{success_stats['successful']}/#{success_stats['total']})\n"
+      output << "Average duration: #{avg_duration}\n"
+    end
+
+    output << "\n=== Most Used Commands ===\n"
+    most_used.each_with_index do |row, i|
+      avg_dur = row['avg_duration'] ? "#{row['avg_duration'].round(2)}s" : 'N/A'
+      output << "#{i+1}. #{row['command']} (#{row['usage_count']} times, avg: #{avg_dur})\n"
+    end
+
+    return output
+  ensure
+    db.close if db
+  end
+end
+
+def mcp_get_database_info(args)
+  db_path = get_db_path
+  
+  unless File.exist?(db_path)
+    return "No histlog database found at #{db_path}"
+  end
+
+  db = initialize_db
+  db.results_as_hash = true
+
+  begin
+    file_size = File.size(db_path)
+    file_size_mb = (file_size / 1024.0 / 1024.0).round(2)
+    last_modified = File.mtime(db_path).strftime('%Y-%m-%d %H:%M:%S')
+
+    commands_count = db.get_first_value("SELECT COUNT(*) FROM commands")
+    cmd_texts_count = db.get_first_value("SELECT COUNT(*) FROM cmd_texts")
+    paths_count = db.get_first_value("SELECT COUNT(*) FROM paths")
+    sessions_count = db.get_first_value("SELECT COUNT(*) FROM sessions")
+
+    # Get date range
+    date_range = db.execute("SELECT MIN(start_time) as earliest, MAX(start_time) as latest FROM commands WHERE start_time IS NOT NULL").first
+    
+    output = "=== Histlog Database Information ===\n\n"
+    output << "Database path: #{db_path}\n"
+    output << "File size: #{file_size_mb} MB (#{file_size} bytes)\n"
+    output << "Last modified: #{last_modified}\n\n"
+    
+    output << "=== Record Counts ===\n"
+    output << "Commands: #{commands_count}\n"
+    output << "Unique command texts: #{cmd_texts_count}\n"
+    output << "Tracked paths: #{paths_count}\n"
+    output << "Sessions: #{sessions_count}\n\n"
+    
+    if date_range && date_range['earliest'] && date_range['latest']
+      earliest = Time.at(date_range['earliest']).strftime('%Y-%m-%d %H:%M:%S')
+      latest = Time.at(date_range['latest']).strftime('%Y-%m-%d %H:%M:%S')
+      output << "=== Date Range ===\n"
+      output << "Earliest command: #{earliest}\n"
+      output << "Latest command: #{latest}\n"
+    end
+
+    return output
+  ensure
+    db.close if db
+  end
+end
+
+def mcp_analyze_patterns(args)
+  days = args["days"] || 30
+
+  db = initialize_db
+  db.results_as_hash = true
+
+  begin
+    cutoff_time = Time.now.to_i - (days * 24 * 3600)
+    
+    # Commands by hour of day
+    hourly_pattern = db.execute(<<~SQL, [cutoff_time])
+      SELECT 
+        strftime('%H', start_time, 'unixepoch', 'localtime') as hour,
+        COUNT(*) as count
+      FROM commands 
+      WHERE start_time > ? AND start_time IS NOT NULL
+      GROUP BY hour
+      ORDER BY hour
+    SQL
+
+    # Commands by day of week
+    daily_pattern = db.execute(<<~SQL, [cutoff_time])
+      SELECT 
+        strftime('%w', start_time, 'unixepoch', 'localtime') as dow,
+        COUNT(*) as count
+      FROM commands 
+      WHERE start_time > ? AND start_time IS NOT NULL
+      GROUP BY dow
+      ORDER BY dow
+    SQL
+
+    # Most failed commands
+    failed_commands = db.execute(<<~SQL, [cutoff_time, 5])
+      SELECT 
+        cmd.command,
+        COUNT(*) as failure_count,
+        COUNT(*) * 100.0 / (
+          SELECT COUNT(*) FROM commands c2 
+          LEFT JOIN cmd_texts cmd2 ON c2.cmd_text_id = cmd2.id
+          WHERE cmd2.command = cmd.command AND c2.start_time > ?
+        ) as failure_rate
+      FROM commands c
+      LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+      WHERE c.exit_code != 0 AND c.start_time > ? 
+        AND cmd.command IS NOT NULL AND cmd.command != ''
+      GROUP BY cmd.command
+      HAVING COUNT(*) > 1
+      ORDER BY failure_count DESC
+      LIMIT ?
+    SQL
+
+    output = "=== Command Usage Patterns (Last #{days} Days) ===\n\n"
+
+    if hourly_pattern.any?
+      output << "=== Usage by Hour of Day ===\n"
+      hourly_pattern.each do |row|
+        hour = row['hour'].to_i
+        count = row['count']
+        bar = '█' * [(count / 10.0).ceil, 1].max
+        output << "#{hour.to_s.rjust(2)}:00 #{bar} #{count}\n"
+      end
+      output << "\n"
+    end
+
+    if daily_pattern.any?
+      days_of_week = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      output << "=== Usage by Day of Week ===\n"
+      daily_pattern.each do |row|
+        dow = row['dow'].to_i
+        count = row['count']
+        day_name = days_of_week[dow]
+        bar = '█' * [(count / 50.0).ceil, 1].max
+        output << "#{day_name.ljust(9)} #{bar} #{count}\n"
+      end
+      output << "\n"
+    end
+
+    if failed_commands.any?
+      output << "=== Most Frequently Failed Commands ===\n"
+      failed_commands.each_with_index do |row, i|
+        failure_rate = row['failure_rate'].round(1)
+        output << "#{i+1}. #{row['command']} (#{row['failure_count']} failures, #{failure_rate}% failure rate)\n"
+      end
+    end
+
+    return output
+  ensure
+    db.close if db
+  end
+end
+
 class HistlogApp
   def initialize(argv)
     @argv = argv
@@ -2989,7 +3605,7 @@ class HistlogApp
     end
 
     # Define known commands
-  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', 'info', '_on_session', '_on_preexec', '_on_postcmd']
+  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', 'info', 'mcp', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -3020,6 +3636,8 @@ class HistlogApp
       handle_cleanup(@argv)
     when 'info'
       handle_info(@argv)
+    when 'mcp'
+      handle_mcp_server(@argv)
     when '_on_session'
       handle_on_session
     when '_on_preexec'
