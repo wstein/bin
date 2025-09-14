@@ -1777,15 +1777,31 @@ def output_interactive_results(results, options)
     exit 0
   end
 end
-
 # Show advanced command statistics
 def show_advanced_stats(args)
-  # Connect to database
-  db_path = get_db_path
-  unless File.exist?(db_path)
-    puts "No histlog.db found in current directory"
-    return
-  end
+	OptionParser.new do |opts|
+		opts.banner = "Usage: histlog stats [options]"
+		opts.on("-h", "--help", "Show this help message") do
+			puts opts
+			puts
+			puts "Shows a summary of command history, most frequent commands, most accessed paths, and common failures."
+			puts "Example output:"
+			puts "\n=== Command History Summary ==="
+			puts "Total commands executed: 56"
+			puts "Unique commands: 42"
+			puts "Failed commands: 7 (12.5%)"
+			puts "Arguments tracked as paths: 12"
+			puts "\n=== Most Frequent Commands ==="
+			puts "Count  Avg Time Command"
+			exit 0
+		end
+	end.parse!(args)
+	# Connect to database
+	db_path = get_db_path
+	unless File.exist?(db_path)
+		puts "No histlog.db found in current directory"
+		return
+	end
 
   db = SQLite3::Database.new(db_path)
   db.results_as_hash = true
@@ -1804,69 +1820,6 @@ def show_advanced_stats(args)
   puts "Failed commands: #{failed_commands} (#{(failed_commands.to_f / total_commands * 100).round(2)}%)" if total_commands > 0
   puts "Arguments tracked as paths: #{tracked_paths}"
 
-    # If --verbose, show orphaned entry stats for all relevant tables
-    if args.include?("--verbose") || args.include?("-v")
-      puts "\n=== Orphaned Entries ==="
-      # Orphaned paths: not referenced by commands (cwd) or path_args
-      orphan_paths = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM paths p
-        LEFT JOIN commands c1 ON p.id = c1.path_old_id
-        LEFT JOIN commands c2 ON p.id = c2.path_new_id
-        LEFT JOIN path_args pa ON p.id = pa.path_id
-        WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
-      SQL
-      puts "Orphaned paths: #{orphan_paths}"
-
-      # Orphaned cmd_texts: not referenced by any command
-      orphan_cmd_texts = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM cmd_texts ct
-        LEFT JOIN commands c ON ct.id = c.cmd_text_id
-        WHERE c.id IS NULL
-      SQL
-      puts "Orphaned cmd_texts: #{orphan_cmd_texts}"
-
-      # Orphaned path_args: path_id or command_id does not exist (should not happen if foreign keys enforced)
-      orphan_path_args = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM path_args pa
-        LEFT JOIN paths p ON pa.path_id = p.id
-        LEFT JOIN commands c ON pa.command_id = c.id
-        WHERE p.id IS NULL OR c.id IS NULL
-      SQL
-      puts "Orphaned path_args: #{orphan_path_args}"
-
-
-      # Orphaned ttys: not referenced by any session
-      begin
-        orphan_ttys = db.get_first_value(<<-SQL)
-          SELECT COUNT(*) FROM ttys t
-          LEFT JOIN sessions s ON t.id = s.tty_id
-          WHERE s.id IS NULL
-        SQL
-        puts "Orphaned ttys: #{orphan_ttys}"
-      rescue SQLite3::SQLException => e
-        puts "Orphaned ttys: (error: #{e.message})"
-      end
-
-      # Orphaned shells: not referenced by any session
-      begin
-        orphan_shells = db.get_first_value(<<-SQL)
-          SELECT COUNT(*) FROM shells s
-          LEFT JOIN sessions sess ON s.id = sess.shell_id
-          WHERE sess.id IS NULL
-        SQL
-        puts "Orphaned shells: #{orphan_shells}"
-      rescue SQLite3::SQLException => e
-        puts "Orphaned shells: (error: #{e.message})"
-      end
-
-      # Orphaned sessions: not referenced by any command
-      orphan_sessions = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM sessions s
-        LEFT JOIN commands c ON s.id = c.session_id
-        WHERE c.id IS NULL
-      SQL
-      puts "Orphaned sessions: #{orphan_sessions}"
-    end
 
   if total_commands > 0
     # Most used commands
