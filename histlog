@@ -1470,17 +1470,54 @@ def execute_interactive_query(options)
     full_query += " ORDER BY c.start_time #{order}, c.created_at #{order}, c.id #{order}"
   end
 
-    # Add limit if specified
-    if options[:limit]
-      full_query += " LIMIT #{options[:limit]}"
-    end
+    # We'll handle LIMIT at execution time to account for any rows filtered out in Ruby
+    # (for example, excluding currently-running commands where duration IS NULL).
+    # Do not append a SQL LIMIT here; instead we'll iteratively fetch enough rows below.
 
-    # Execute query
+    # Execute query. If a limit was requested, do an iterative fetch that
+    # over-requests rows (exponential backoff) until we have enough non-running
+    # rows or there are no more rows to fetch. This avoids returning fewer
+    # results than the requested limit when some rows are filtered out in Ruby.
     begin
-      all_results = db.execute(full_query, params)
-      results = all_results.reject do |row|
-        # Exclude if duration is null (still running)
-        row['duration'].nil?
+      if options[:limit]
+        requested = options[:limit]
+        current_limit = [requested * 2, 50].max
+        max_limit = 5000
+        results = []
+        offset = 0
+
+        loop do
+          # Build limited query for this iteration
+          limited_query = full_query + " LIMIT #{current_limit} OFFSET #{offset}"
+          all_results = db.execute(limited_query, params)
+
+          # Filter out running commands (duration nil)
+          filtered = all_results.reject { |row| row['duration'].nil? }
+
+          # Append unique new results
+          results.concat(filtered)
+
+          # If we have enough results, stop
+          break if results.size >= requested
+
+          # If fewer rows were returned than requested in SQL, no more data available
+          break if all_results.size < current_limit
+
+          # Otherwise, advance offset and increase limit to fetch more rows
+          offset += current_limit
+          current_limit = [current_limit * 2, max_limit].min
+          # If we've reached the max_limit, avoid infinite loop
+          break if current_limit >= max_limit
+        end
+
+        # Truncate to requested size
+        results = results.take(requested)
+      else
+        all_results = db.execute(full_query, params)
+        results = all_results.reject do |row|
+          # Exclude if duration is null (still running)
+          row['duration'].nil?
+        end
       end
     rescue SQLite3::SQLException => e
       # Fallback: if REGEXP is not supported, filter in Ruby
