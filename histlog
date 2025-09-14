@@ -1198,7 +1198,6 @@ def query_interactive(args)
   opts.on("--yaml", "Output as YAML with full metadata") { options[:format] = 'yaml' }
   opts.on("--plain", "Output only commands, one per line") { options[:format] = 'plain' }
   opts.on("--format FORMAT", "Output format (json, yaml, fish, zsh, nu, bash, powershell, plain)") { |f| options[:format] = f.downcase }
-  opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
   opts.on("--limit N", Integer, "Limit number of results (default: no limit)") { |n| options[:limit] = n }
 
     opts.on("-h", "--help", "Show this help") do
