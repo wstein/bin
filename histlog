@@ -1194,11 +1194,12 @@ def query_interactive(args)
     opts.on("--no-assisted", "Exclude AI-assisted commands") { options[:no_assisted] = true }
 
     # Output format
-    opts.on("--json", "Output as JSON with full metadata") { options[:format] = 'json' }
-    opts.on("--yaml", "Output as YAML with full metadata") { options[:format] = 'yaml' }
-    opts.on("--format FORMAT", "Output format (json, yaml, fish, zsh, nu, bash, powershell, plain)") { |f| options[:format] = f.downcase }
-    opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
-    opts.on("--limit N", Integer, "Limit number of results (default: no limit)") { |n| options[:limit] = n }
+  opts.on("--json", "Output as JSON with full metadata") { options[:format] = 'json' }
+  opts.on("--yaml", "Output as YAML with full metadata") { options[:format] = 'yaml' }
+  opts.on("--plain", "Output only commands, one per line") { options[:format] = 'plain' }
+  opts.on("--format FORMAT", "Output format (json, yaml, fish, zsh, nu, bash, powershell, plain)") { |f| options[:format] = f.downcase }
+  opts.on("--time", "Show human-readable start_time with each command in interactive output") { options[:show_time] = true }
+  opts.on("--limit N", Integer, "Limit number of results (default: no limit)") { |n| options[:limit] = n }
 
     opts.on("-h", "--help", "Show this help") do
       puts opts
@@ -1477,7 +1478,11 @@ def execute_interactive_query(options)
 
     # Execute query
     begin
-      results = db.execute(full_query, params)
+      all_results = db.execute(full_query, params)
+      results = all_results.reject do |row|
+        # Exclude if duration is null (still running)
+        row['duration'].nil?
+      end
     rescue SQLite3::SQLException => e
       # Fallback: if REGEXP is not supported, filter in Ruby
       if options[:regex] && options[:search_term] && e.message =~ /no such function: REGEXP/
@@ -1710,15 +1715,9 @@ def output_plain_results(results, options)
   begin
     results.each do |row|
       command = row['cmd_text']
-      if row['start_time']
-        timestamp = Time.at(row['start_time'].to_f).strftime('%Y-%m-%d %H:%M:%S')
-        puts "[#{timestamp}] #{command}"
-      else
-        puts command
-      end
+      puts command
     end
   rescue Errno::EPIPE
-    # Broken pipe - output was closed (e.g., piped to head/less and user quit)
     exit 0
   end
 end
@@ -1762,36 +1761,20 @@ def output_interactive_results(results, options)
     return
   end
 
-  # Simple output: just print commands (optionally prefixed by ISO8601 start_time)
+  # Dracula color codes
+  # Timestamp: #6272a4, Command: default, Result: ✓ #50fa7b, ✗ #ff5555, Duration: #bd93f9
   begin
     results.each do |row|
-    command = row['cmd_text'] || row['command']
-      lines = command.split("\n")
-      time_prefix = ""
-      if options && options[:show_time] && row['start_time']
-        begin
-          t = Time.at(row['start_time'].to_f)
-          # Simplified format: YYYY-MM-DD HH:MM
-          time_prefix = t.strftime("%Y-%m-%d %H:%M:%S") + " "
-        rescue
-          time_prefix = ""
-        end
-      end
-
-      if results.length == 1
-        # Single result: show full command, even if multiline
-        puts time_prefix + command
-      elsif lines.length > 1
-        # Multiple results with multiline command: show first line + "..."
-        puts time_prefix + "#{lines.first}..."
-      else
-        # Multiple results with single line command: show as-is
-        puts time_prefix + command
-      end
+      timestamp = row['start_time'] ? Time.at(row['start_time']).strftime('%Y-%m-%d %H:%M:%S') : 'Unknown'
+      exit_code = row['exit_code'] || 0
+      duration = row['duration'] ? sprintf('%8.3fs', row['duration']) : '-,---s'
+      status = exit_code == 0 ? "\e[38;5;84m✓\e[0m   " : sprintf("\e[38;5;203m✗%-3d\e[0m", exit_code)
+	ts_col = "\e[38;5;14m"
+	dur_col = "\e[33m"
+      command = row['cmd_text'].gsub("\n", "\n                                   ")
+      puts "#{ts_col}#{timestamp} #{dur_col}#{duration} #{status}\e[0m #{command}"
     end
   rescue Errno::EPIPE
-    # Broken pipe - output was closed (e.g., piped to head/less and user quit)
-    # This is normal, just exit quietly
     exit 0
   end
 end
@@ -3432,27 +3415,18 @@ def mcp_query_commands(args)
       return "No commands found matching the criteria."
     end
 
-    output = "Found #{results.length} commands:\n\n"
+    # Dracula color codes
+    # Timestamp: #6272a4, Command: default, Result: ✓ #50fa7b, ✗ #ff5555, Duration: #bd93f9
+    output = ""
     results.each do |row|
       timestamp = row['start_time'] ? Time.at(row['start_time']).strftime('%Y-%m-%d %H:%M:%S') : 'Unknown'
-      exit_code = row['exit_code'] || 'Unknown'
-      duration = row['duration'] ? "#{row['duration']}s" : 'Unknown'
-      status = row['exit_code'] == 0 ? '✓' : '✗'
-
-      # Build status indicators
-      indicators = []
-      indicators << "private" if row['is_private'] == 1
-      indicators << "assisted" if row['is_assisted'] == 1
-      indicators << "session:#{row['session_id']}" if row['session_id']
-      indicators << "shell:#{File.basename(row['shell_path'])}" if row['shell_path']
-      indicators << "dir:#{row['old_path']}" if row['old_path'] && row['old_path'] != row['new_path']
-
-      output << "#{status} [#{timestamp}] #{row['cmd_text']}"
-      output << " (exit: #{exit_code}, duration: #{duration})" if row['exit_code'] || row['duration']
-      output << " [#{indicators.join(', ')}]" unless indicators.empty?
-      output << "\n"
+      exit_code = row['exit_code'] || 0
+      duration = row['duration'] ? sprintf('%.3fs', row['duration']) : 'Unknown'
+      status = exit_code == 0 ? "\e[38;5;84m✓\e[0m" : "\e[38;5;203m✗#{exit_code}\e[0m"
+      ts_col = "\e[38;5;61m"
+      dur_col = "\e[38;5;141m"
+      output << "[#{ts_col}#{timestamp}\e[0m] #{row['cmd_text']} #{status} #{dur_col}#{duration}\e[0m\n"
     end
-
     return output
   ensure
     db.close if db
