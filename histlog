@@ -720,7 +720,7 @@ def initialize_db
 		cmd.session_id as session_id,
 		s.pid as session_pid,
 		s.parent_pid as session_parent_pid,
-		datetime(s.created_at) as session_started,
+		datetime(s.created_at, 'unixepoch') as session_started,
 		sh.path as shell_path,
 		t.device as tty_device,
 		c.command,
@@ -2850,12 +2850,12 @@ def show_help(show_plumbing = false)
   puts "  import [FILE]   Import history from shell history files"
   puts "  cleanup         Remove orphaned entries from database"
   puts "  info            Show database and system information"
-  puts "  optimize        Optimize database performance"
   puts "  mcp [--trace=LEVEL] Start Model Context Protocol server using stdio transport"
+  puts "  maintain        Run database maintenance (see options)"
   puts ""
   puts "Query Filters:"
   puts "  --session [ID]  Commands from current session (requires __histlog_session_id) or specific session ID"
-  puts "  --dir [PATH]    Commands from current or specific directory"
+  puts "  --dir [PATH]    Commands executed in current or specific directory"
   puts "  --failed        Only failed commands (exit != 0)"
   puts "  --success       Only successful commands (exit = 0)"
   puts "  --today         Commands from today"
@@ -2905,7 +2905,7 @@ def show_mcp_help
   puts "  --trace=debug     + internal state + SQL queries"
   puts ""
   puts "Available MCP Tools:"
-  puts "  query_commands        Search command history with filters"
+  puts "  query_commands        Search command history with optional filters"
   puts "  get_command_stats     Get usage statistics and most frequent commands"
   puts "  get_database_info     Show database size, record counts, date ranges"
   puts "  analyze_patterns      Analyze command usage patterns over time"
@@ -3018,7 +3018,7 @@ def nu_config
 end
 
 # Main application class
-# MCP Server Implementation  
+# MCP Server Implementation
 # Provides Model Context Protocol server with histlog data access via stdio transport
 def handle_mcp_server(args)
   require 'json'
@@ -3029,7 +3029,7 @@ def handle_mcp_server(args)
 
   OptionParser.new do |opts|
     opts.banner = "Usage: histlog mcp [--trace=LEVEL]"
-    opts.on("--trace=LEVEL", ["basic", "verbose", "full", "debug"], 
+    opts.on("--trace=LEVEL", ["basic", "verbose", "full", "debug"],
             "Enable tracing (basic: method calls + timing, verbose: + request/response summaries, full: + complete JSON payloads, debug: + internal state + SQL queries)") do |level|
       options[:trace_level] = level
     end
@@ -3039,7 +3039,7 @@ def handle_mcp_server(args)
     end
   end.parse!(args)
 
-  # Set global trace level for use in server functions  
+  # Set global trace level for use in server functions
   @mcp_trace_level = options[:trace_level]
 
   run_mcp_stdio_server
@@ -3048,14 +3048,14 @@ end
 # MCP Logging helpers - support multiple trace levels
 def mcp_log(level, message)
   return unless @mcp_trace_level
-  
+
   # Check if current trace level includes the requested level
   levels = ["basic", "verbose", "full", "debug"]
   current_index = levels.index(@mcp_trace_level)
   requested_index = levels.index(level.to_s)
-  
+
   return if current_index.nil? || requested_index.nil? || requested_index > current_index
-  
+
   timestamp = Time.now.strftime('%Y-%m-%d %H:%M:%S.%3N')
   STDERR.puts "[#{timestamp}] MCP #{level.upcase}: #{message}"
 end
@@ -3065,7 +3065,7 @@ def mcp_log_basic(message)
   mcp_log(:basic, message)
 end
 
-def mcp_log_verbose(message)  
+def mcp_log_verbose(message)
   mcp_log(:verbose, message)
 end
 
@@ -3172,7 +3172,7 @@ def handle_mcp_request(request)
           },
           {
             name: "get_command_stats",
-            description: "Get statistics about command usage",
+            description: "Get usage statistics and most frequent commands",
             inputSchema: {
               type: "object",
               properties: {
@@ -3315,7 +3315,7 @@ end
 
 def mcp_query_commands(args)
   mcp_log_debug("query_commands called with args: #{args.inspect}")
-  
+
   search_term = args["search_term"]
   limit = args["limit"] || 50
   session_id = args["session"]
@@ -3398,7 +3398,7 @@ def mcp_query_commands(args)
   end
 
   if imported_filter == true
-    # Imported commands typically have no session_id or have specific markers
+    # Imported commands typically have no session_id
     query << " AND c.session_id IS NULL"
   elsif imported_filter == false
     # Live commands have session_id
@@ -3642,9 +3642,8 @@ def mcp_analyze_patterns(args)
 
     if failed_commands.any?
       output << "=== Most Frequently Failed Commands ===\n"
-      failed_commands.each_with_index do |row, i|
-        failure_rate = row['failure_rate'].round(1)
-        output << "#{i+1}. #{row['command']} (#{row['failure_count']} failures, #{failure_rate}% failure rate)\n"
+      failed_commands.each do |row|
+        output << "#{row['command']} (#{row['failure_count']} failures, #{row['failure_rate'].round(1)}% failure rate)\n"
       end
     end
 
@@ -3672,7 +3671,7 @@ class HistlogApp
     end
 
     # Define known commands
-  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'optimize', 'help', 'init', 'paths', 'cleanup', 'info', 'mcp', '_on_session', '_on_preexec', '_on_postcmd']
+  known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'help', 'init', 'paths', 'cleanup', 'info', 'mcp', 'maintain', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -3695,8 +3694,6 @@ class HistlogApp
       query_sessions(@argv)
     when 'import'
       import_shell_history(@argv)
-    when 'optimize'
-      handle_optimize
     when 'paths'
       show_paths_command(@argv)
     when 'cleanup'
@@ -3705,12 +3702,8 @@ class HistlogApp
       handle_info(@argv)
     when 'mcp'
       handle_mcp_server(@argv)
-    when '_on_session'
-      handle_on_session
-    when '_on_preexec'
-      handle_on_preexec
-    when '_on_postcmd'
-      handle_on_postcmd
+    when 'maintain'
+      handle_maintain(@argv)
     else
       # This case may be triggered by unhandled options passed as commands
       # Re-insert the "command" and let query_interactive handle it
@@ -3747,109 +3740,154 @@ class HistlogApp
     end
   end
 
-  def handle_optimize
-    puts "Optimizing histlog database..."
-    db = initialize_db
-
-    begin
-      original_size = File.size(get_db_path)
-      puts "Original size: #{format_bytes(original_size)}"
-
-      # Check database integrity first
-      puts "Checking database integrity..."
-      integrity_result = db.execute "PRAGMA integrity_check"
-      if integrity_result[0][0] != "ok"
-        STDERR.puts "Warning: Database integrity issues detected"
-        integrity_result.each { |row| STDERR.puts "  #{row[0]}" }
-      else
-        puts "Database integrity: OK"
-      end
-
-      # Update statistics for query planner
-      puts "Running ANALYZE..."
-      db.execute "ANALYZE"
-
-      # Rebuild indexes for optimal performance
-      puts "Rebuilding indexes..."
-      db.execute "REINDEX"
-
-      # Run VACUUM to defragment and apply page size optimizations
-      puts "Running VACUUM..."
-      db.execute "VACUUM"
-
-      # Close the database connection before measuring final size
-      db.close
-      db = nil
-
-      new_size = File.size(get_db_path)
-      savings = original_size - new_size
-      percentage = savings > 0 ? (savings.to_f / original_size * 100).round(2) : 0
-
-      puts "Optimized size: #{format_bytes(new_size)}"
-      if savings > 0
-        puts "Space saved: #{format_bytes(savings)} (#{percentage}%)"
-      else
-        puts "Database was already optimized"
-      end
-
-    rescue => e
-      STDERR.puts "Error optimizing database: #{e.message}"
-      exit 1
-    ensure
-      db.close if db && !db.closed?
-    end
-  end
-
-  def handle_on_session
-    session_data = {
-      shell: ENV['SHELL'],
-      tty: get_tty,
-      cwd: Dir.pwd,
-      pid: Process.pid,
-      parent_pid: Process.ppid,
-      timezone: get_timezone
+  # Unified maintenance command
+  def handle_maintain(args)
+    require 'optparse'
+    options = {
+      cleanup: false,
+      optimize: false,
+      vacuum: false,
+      integrity: false,
+      all: false
     }
 
-    # Store session in SQLite database and get the generated session_id
-    session_id = store_session(session_data)
+    OptionParser.new do |opts|
+      opts.banner = "Usage: histlog maintain [options]"
+      opts.on("--cleanup", "Remove orphaned entries from database") { options[:cleanup] = true }
+      opts.on("--optimize", "Optimize database (ANALYZE, REINDEX, VACUUM)") { options[:optimize] = true }
+      opts.on("--vacuum", "Run VACUUM to defragment database") { options[:vacuum] = true }
+      opts.on("--integrity", "Run PRAGMA integrity_check") { options[:integrity] = true }
+      opts.on("--all", "Run all maintenance actions") { options[:all] = true }
+      opts.on("-h", "--help", "Show this help") do
+        puts opts
+        exit 0
+      end
+    end.parse!(args)
 
-    if session_id
-      puts session_id
-    else
-      STDERR.puts "Failed to create session"
-      exit 1
+    db_path = get_db_path
+    unless File.exist?(db_path)
+      puts "No histlog.db found in current directory"
+      return
     end
-  end
 
-  def handle_on_preexec
-    cmd = @argv[0]
-    session_id = @argv[1]&.to_i  # Convert to integer
-    dir = Dir.pwd
+    db = SQLite3::Database.new(db_path)
+    db.results_as_hash = true
 
-    # Store command in database
-    command_data = {
-      session_id: session_id,
-      command: cmd,
-      cwd: dir
-    }
+    actions = []
+    actions << :cleanup if options[:cleanup] || options[:all]
+    actions << :optimize if options[:optimize] || options[:all]
+    actions << :vacuum if options[:vacuum] || options[:all]
+    actions << :integrity if options[:integrity] || options[:all]
 
-    history_id = store_command(command_data)
-
-    if history_id
-      puts history_id
-    else
-      STDERR.puts "Failed to store command"
-      exit 1
+    if actions.empty?
+      # No options: show short report and ask for confirmation
+      puts "=== Histlog Maintenance Preview ==="
+      # Preview orphaned entries
+      orphan_paths = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM paths p
+        LEFT JOIN commands c1 ON p.id = c1.path_old_id
+        LEFT JOIN commands c2 ON p.id = c2.path_new_id
+        LEFT JOIN path_args pa ON p.id = pa.path_id
+        WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
+      SQL
+      orphan_cmd_texts = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM cmd_texts ct
+        LEFT JOIN commands c ON ct.id = c.cmd_text_id
+        WHERE c.id IS NULL
+      SQL
+      orphan_path_args = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM path_args pa
+        LEFT JOIN paths p ON pa.path_id = p.id
+        LEFT JOIN commands c ON pa.command_id = c.id
+        WHERE p.id IS NULL OR c.id IS NULL
+      SQL
+      orphan_sessions = db.get_first_value(<<-SQL)
+        SELECT COUNT(*) FROM sessions s
+        LEFT JOIN commands c ON s.id = c.session_id
+        WHERE c.id IS NULL
+      SQL
+      puts "Orphaned paths:      #{orphan_paths}"
+      puts "Orphaned cmd_texts:  #{orphan_cmd_texts}"
+      puts "Orphaned path_args:  #{orphan_path_args}"
+      puts "Orphaned sessions:   #{orphan_sessions}"
+      # Integrity check
+      integrity = db.get_first_value("PRAGMA integrity_check")
+      puts "Integrity check:     #{integrity}"
+      # Database size
+      original_size = File.size(db_path)
+      puts "Database size:      #{format_bytes(original_size)}"
+      puts "\nThis will run: cleanup, optimize, vacuum, integrity check."
+      print "Proceed with all maintenance steps? [y/N]: "
+      answer = $stdin.gets.strip.downcase
+      if answer == 'y' || answer == 'yes'
+        actions = [:cleanup, :optimize, :vacuum, :integrity]
+      else
+        puts "Aborted. No changes made."
+        db.close if db
+        return
+      end
     end
-  end
 
-  def handle_on_postcmd
-    history_id = @argv[0]&.to_i  # Convert to integer
-    duration = @argv[1].to_f/1000.0 # convert ms to s, keep float
-    exit_code = @argv[2]&.to_i
+    actions.each do |action|
+      case action
+      when :cleanup
+        puts "\n--- Running cleanup ---"
+        cleanup_orphaned_entries(db, true)
+      when :optimize
+        puts "\n--- Running optimize ---"
+        begin
+          puts "Running ANALYZE..."
+          db.execute "ANALYZE"
+          puts "Rebuilding indexes..."
+          db.execute "REINDEX"
+          puts "Running VACUUM..."
+          db.execute "VACUUM"
+          puts "Optimize complete."
+        rescue => e
+          STDERR.puts "Error optimizing database: #{e.message}"
+        end
+      when :vacuum
+        puts "\n--- Running VACUUM ---"
+        begin
+          db.execute "VACUUM"
+          puts "VACUUM complete."
+        rescue => e
+          STDERR.puts "Error running VACUUM: #{e.message}"
+        end
+      when :integrity
+        puts "\n--- Running integrity check ---"
+        begin
+          integrity = db.get_first_value("PRAGMA integrity_check")
+          puts "Integrity check: #{integrity}"
+        rescue => e
+          STDERR.puts "Integrity check failed: #{e.message}"
+        end
+      end
+    end
 
-    # Update command with completion data
-    update_command_completion(history_id, duration.round(3), exit_code)
+    # Print summary after execution
+    db.close if db
+    puts "\n=== Maintenance Summary ==="
+    old_size = defined?(original_size) ? original_size : File.size(db_path)
+    new_size = File.size(db_path)
+    puts "Database size before: #{format_bytes(old_size)}"
+    puts "Database size after:  #{format_bytes(new_size)}"
+    savings = old_size - new_size
+    percentage = savings > 0 ? (savings.to_f / old_size * 100).round(2) : 0
+    if savings > 0
+      puts "Space saved:         #{format_bytes(savings)} (#{percentage}%)"
+    else
+      puts "Space saved:         0 (already optimized)"
+    end
+    # Reopen DB for integrity check
+    db2 = SQLite3::Database.new(db_path)
+    db2.results_as_hash = true
+    integrity = db2.get_first_value("PRAGMA integrity_check")
+    puts "Integrity check:     #{integrity}"
+    db2.close if db2
+    puts "Maintenance complete."
+
+    db.close if db
   end
 end
 
