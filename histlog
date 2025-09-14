@@ -1534,14 +1534,14 @@ def execute_interactive_query(options)
       # For limited results, reverse to get chronological order (oldest first) by default
       # Only don't reverse if --desc is explicitly specified
       if options[:limit] && !options[:desc]
-        results.reverse!
+        results = results.reverse
       end
       output_formatted_results(results, options)
     else
       # For limited results, reverse to get chronological order (oldest first) by default
       # Only don't reverse if --desc is explicitly specified
       if options[:limit] && !options[:desc]
-        results.reverse!
+        results = results.reverse
       end
       output_interactive_results(results, options)
     end
@@ -2851,7 +2851,7 @@ def show_help(show_plumbing = false)
   puts "  cleanup         Remove orphaned entries from database"
   puts "  info            Show database and system information"
   puts "  optimize        Optimize database performance"
-  puts "  mcp [OPTIONS]   Start Model Context Protocol server"
+  puts "  mcp [OPTIONS]   Start Model Context Protocol server (default: TCP port 3001)"
   puts ""
   puts "Query Filters:"
   puts "  --session [ID]  Commands from current session (requires __histlog_session_id) or specific session ID"
@@ -2977,23 +2977,22 @@ def handle_mcp_server(args)
   require 'json'
 
   options = {
-    port: nil,
+    port: 3001,  # Default MCP port
     stdio: false
   }
 
   OptionParser.new do |opts|
     opts.banner = "Usage: histlog mcp [--stdio] [--port PORT]"
-    opts.on("--stdio", "Use stdio transport (default)") { options[:stdio] = true }
-    opts.on("--port PORT", Integer, "Use TCP transport on specified port") { |p| options[:port] = p }
+    opts.on("--stdio", "Use stdio transport") { options[:stdio] = true; options[:port] = nil }
+    opts.on("--port [PORT]", Integer, "Use TCP transport on specified port (default: 3001)") { |p| options[:port] = p || 3001; options[:stdio] = false }
     opts.on("-h", "--help", "Show this help") do
       puts opts
       exit 0
     end
   end.parse!(args)
 
-  # Default to stdio if no transport specified
-  options[:stdio] = true if !options[:port]
-
+  # Default to TCP port 3001 if no transport specified
+  # Only use stdio if explicitly requested
   if options[:stdio]
     run_mcp_stdio_server
   else
@@ -3003,15 +3002,15 @@ end
 
 def run_mcp_stdio_server
   STDERR.puts "Starting MCP server on stdio..."
-  
+
   loop do
     begin
       line = STDIN.gets
       break if line.nil?
-      
+
       line = line.strip
       next if line.empty?
-      
+
       request = JSON.parse(line)
       response = handle_mcp_request(request)
       puts JSON.generate(response)
@@ -3036,21 +3035,21 @@ end
 def run_mcp_tcp_server(port)
   require 'socket'
   STDERR.puts "Starting MCP server on port #{port}..."
-  
+
   server = TCPServer.new(port)
-  
+
   loop do
     client = server.accept
-    
+
     Thread.new(client) do |conn|
       begin
         loop do
           line = conn.gets
           break if line.nil?
-          
+
           line = line.strip
           next if line.empty?
-          
+
           request = JSON.parse(line)
           response = handle_mcp_request(request)
           conn.puts JSON.generate(response)
@@ -3185,7 +3184,7 @@ def handle_mcp_request(request)
   when "tools/call"
     tool_name = params["name"]
     tool_args = params["arguments"] || {}
-    
+
     case tool_name
     when "query_commands"
       result = mcp_query_commands(tool_args)
@@ -3281,7 +3280,7 @@ def mcp_query_commands(args)
       c.duration,
       c.session_id,
       s.shell_id,
-      sh.name as shell_name,
+      sh.path as shell_path,
       po.path as old_path,
       pn.path as new_path
     FROM commands c
@@ -3322,7 +3321,7 @@ def mcp_query_commands(args)
   end
 
   if shell_filter
-    query << " AND sh.name LIKE ?"
+    query << " AND sh.path LIKE ?"
     params << "%#{shell_filter}%"
   end
 
@@ -3360,7 +3359,9 @@ def mcp_query_commands(args)
 
   begin
     results = db.execute(query, params)
-    
+
+    mcp_log_debug("Query returned #{results.length} results")
+
     if results.empty?
       return "No commands found matching the criteria."
     end
@@ -3371,15 +3372,15 @@ def mcp_query_commands(args)
       exit_code = row['exit_code'] || 'Unknown'
       duration = row['duration'] ? "#{row['duration']}s" : 'Unknown'
       status = row['exit_code'] == 0 ? '✓' : '✗'
-      
+
       # Build status indicators
       indicators = []
       indicators << "private" if row['is_private'] == 1
       indicators << "assisted" if row['is_assisted'] == 1
       indicators << "session:#{row['session_id']}" if row['session_id']
-      indicators << "shell:#{row['shell_name']}" if row['shell_name']
+      indicators << "shell:#{File.basename(row['shell_path'])}" if row['shell_path']
       indicators << "dir:#{row['old_path']}" if row['old_path'] && row['old_path'] != row['new_path']
-      
+
       output << "#{status} [#{timestamp}] #{row['cmd_text']}"
       output << " (exit: #{exit_code}, duration: #{duration})" if row['exit_code'] || row['duration']
       output << " [#{indicators.join(', ')}]" unless indicators.empty?
@@ -3401,10 +3402,10 @@ def mcp_get_command_stats(args)
   begin
     # Get total commands
     total = db.get_first_value("SELECT COUNT(*) FROM commands")
-    
+
     # Get most used commands
     most_used = db.execute(<<~SQL, [limit])
-      SELECT 
+      SELECT
         cmd.command,
         COUNT(*) as usage_count,
         AVG(c.duration) as avg_duration
@@ -3418,17 +3419,17 @@ def mcp_get_command_stats(args)
 
     # Get success rate
     success_stats = db.execute(<<~SQL).first
-      SELECT 
+      SELECT
         COUNT(*) as total,
         SUM(CASE WHEN exit_code = 0 THEN 1 ELSE 0 END) as successful,
         AVG(duration) as avg_duration
-      FROM commands 
+      FROM commands
       WHERE exit_code IS NOT NULL
     SQL
 
     output = "=== Command Statistics ===\n\n"
     output << "Total commands: #{total}\n"
-    
+
     if success_stats && success_stats['total'] > 0
       success_rate = (success_stats['successful'].to_f / success_stats['total'] * 100).round(1)
       avg_duration = success_stats['avg_duration'] ? "#{success_stats['avg_duration'].round(2)}s" : 'Unknown'
@@ -3450,7 +3451,7 @@ end
 
 def mcp_get_database_info(args)
   db_path = get_db_path
-  
+
   unless File.exist?(db_path)
     return "No histlog database found at #{db_path}"
   end
@@ -3470,18 +3471,18 @@ def mcp_get_database_info(args)
 
     # Get date range
     date_range = db.execute("SELECT MIN(start_time) as earliest, MAX(start_time) as latest FROM commands WHERE start_time IS NOT NULL").first
-    
+
     output = "=== Histlog Database Information ===\n\n"
     output << "Database path: #{db_path}\n"
     output << "File size: #{file_size_mb} MB (#{file_size} bytes)\n"
     output << "Last modified: #{last_modified}\n\n"
-    
+
     output << "=== Record Counts ===\n"
     output << "Commands: #{commands_count}\n"
     output << "Unique command texts: #{cmd_texts_count}\n"
     output << "Tracked paths: #{paths_count}\n"
     output << "Sessions: #{sessions_count}\n\n"
-    
+
     if date_range && date_range['earliest'] && date_range['latest']
       earliest = Time.at(date_range['earliest']).strftime('%Y-%m-%d %H:%M:%S')
       latest = Time.at(date_range['latest']).strftime('%Y-%m-%d %H:%M:%S')
@@ -3504,13 +3505,13 @@ def mcp_analyze_patterns(args)
 
   begin
     cutoff_time = Time.now.to_i - (days * 24 * 3600)
-    
+
     # Commands by hour of day
     hourly_pattern = db.execute(<<~SQL, [cutoff_time])
-      SELECT 
+      SELECT
         strftime('%H', start_time, 'unixepoch', 'localtime') as hour,
         COUNT(*) as count
-      FROM commands 
+      FROM commands
       WHERE start_time > ? AND start_time IS NOT NULL
       GROUP BY hour
       ORDER BY hour
@@ -3518,10 +3519,10 @@ def mcp_analyze_patterns(args)
 
     # Commands by day of week
     daily_pattern = db.execute(<<~SQL, [cutoff_time])
-      SELECT 
+      SELECT
         strftime('%w', start_time, 'unixepoch', 'localtime') as dow,
         COUNT(*) as count
-      FROM commands 
+      FROM commands
       WHERE start_time > ? AND start_time IS NOT NULL
       GROUP BY dow
       ORDER BY dow
@@ -3529,17 +3530,17 @@ def mcp_analyze_patterns(args)
 
     # Most failed commands
     failed_commands = db.execute(<<~SQL, [cutoff_time, 5])
-      SELECT 
+      SELECT
         cmd.command,
         COUNT(*) as failure_count,
         COUNT(*) * 100.0 / (
-          SELECT COUNT(*) FROM commands c2 
+          SELECT COUNT(*) FROM commands c2
           LEFT JOIN cmd_texts cmd2 ON c2.cmd_text_id = cmd2.id
           WHERE cmd2.command = cmd.command AND c2.start_time > ?
         ) as failure_rate
       FROM commands c
       LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
-      WHERE c.exit_code != 0 AND c.start_time > ? 
+      WHERE c.exit_code != 0 AND c.start_time > ?
         AND cmd.command IS NOT NULL AND cmd.command != ''
       GROUP BY cmd.command
       HAVING COUNT(*) > 1
