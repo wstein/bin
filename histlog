@@ -3704,6 +3704,12 @@ class HistlogApp
       handle_mcp_server(@argv)
     when 'maintain'
       handle_maintain(@argv)
+    when '_on_session'
+      handle_on_session
+    when '_on_preexec'
+      handle_on_preexec
+    when '_on_postcmd'
+      handle_on_postcmd
     else
       # This case may be triggered by unhandled options passed as commands
       # Re-insert the "command" and let query_interactive handle it
@@ -3888,6 +3894,58 @@ class HistlogApp
     puts "Maintenance complete."
 
     db.close if db
+  end
+
+  def handle_on_session
+    session_data = {
+      shell: ENV['SHELL'],
+      tty: get_tty,
+      cwd: Dir.pwd,
+      pid: Process.pid,
+      parent_pid: Process.ppid,
+      timezone: get_timezone
+    }
+
+    # Store session in SQLite database and get the generated session_id
+    session_id = store_session(session_data)
+
+    if session_id
+      puts session_id
+    else
+      STDERR.puts "Failed to create session"
+      exit 1
+    end
+  end
+
+  def handle_on_preexec
+    cmd = @argv[0]
+    session_id = @argv[1]&.to_i  # Convert to integer
+    dir = Dir.pwd
+
+    # Store command in database
+    command_data = {
+      session_id: session_id,
+      command: cmd,
+      cwd: dir
+    }
+
+    history_id = store_command(command_data)
+
+    if history_id
+      puts history_id
+    else
+      STDERR.puts "Failed to store command"
+      exit 1
+    end
+  end
+
+  def handle_on_postcmd
+    history_id = @argv[0]&.to_i  # Convert to integer
+    duration = @argv[1].to_f/1000.0 # convert ms to s, keep float
+    exit_code = @argv[2]&.to_i
+
+    # Update command with completion data
+    update_command_completion(history_id, duration.round(3), exit_code)
   end
 end
 
