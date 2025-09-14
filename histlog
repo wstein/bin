@@ -2851,7 +2851,7 @@ def show_help(show_plumbing = false)
   puts "  cleanup         Remove orphaned entries from database"
   puts "  info            Show database and system information"
   puts "  optimize        Optimize database performance"
-  puts "  mcp [OPTIONS]   Start Model Context Protocol server (default: TCP port 3001)"
+  puts "  mcp [--trace=LEVEL] Start Model Context Protocol server using stdio transport"
   puts ""
   puts "Query Filters:"
   puts "  --session [ID]  Commands from current session (requires __histlog_session_id) or specific session ID"
@@ -2884,6 +2884,52 @@ def show_help(show_plumbing = false)
   puts ""
   puts "Use 'histlog --help-all' to see plumbing commands"
   puts "Use 'histlog query --help' for complete filter options"
+  puts "Use 'histlog mcp --help' for MCP server options and examples"
+end
+
+def show_mcp_help
+  puts "histlog MCP (Model Context Protocol) Server"
+  puts "==========================================="
+  puts ""
+  puts "The MCP server provides programmatic access to histlog data through the"
+  puts "Model Context Protocol using stdio transport, enabling AI assistants and"
+  puts "other clients to query command history, analyze patterns, and access"
+  puts "filesystem path data."
+  puts ""
+  puts "Usage: histlog mcp [--trace=LEVEL]"
+  puts ""
+  puts "Trace Options:"
+  puts "  --trace=basic     Method calls + timing"
+  puts "  --trace=verbose   + request/response summaries"
+  puts "  --trace=full      + complete JSON payloads"
+  puts "  --trace=debug     + internal state + SQL queries"
+  puts ""
+  puts "Available MCP Tools:"
+  puts "  query_commands        Search command history with filters"
+  puts "  get_command_stats     Get usage statistics and most frequent commands"
+  puts "  get_database_info     Show database size, record counts, date ranges"
+  puts "  analyze_patterns      Analyze command usage patterns over time"
+  puts "  query_paths          Search tracked filesystem paths"
+  puts "  get_path_stats       Get filesystem usage statistics"
+  puts "  analyze_path_patterns Analyze path access patterns"
+  puts ""
+  puts "Examples:"
+  puts "  histlog mcp                    # Start stdio server (no tracing)"
+  puts "  histlog mcp --trace=basic      # Basic tracing: methods + timing"
+  puts "  histlog mcp --trace=verbose    # + request/response summaries"
+  puts "  histlog mcp --trace=full       # + complete JSON payloads"
+  puts "  histlog mcp --trace=debug      # + internal state + SQL queries"
+  puts ""
+  puts "VS Code Integration:"
+  puts "Add to your VS Code mcp.json file:"
+  puts '  "histlog": {'
+  puts '    "command": "/path/to/histlog",'
+  puts '    "args": ["mcp"]'
+  puts '  }'
+  puts ""
+  puts "The server uses stdio transport and provides rich querying capabilities"
+  puts "with filters for sessions, directories, exit codes, time ranges, and more."
+  puts "Perfect for command analysis, troubleshooting, and development workflow insights."
 end
 
 # Shell configuration functions
@@ -2972,36 +3018,68 @@ def nu_config
 end
 
 # Main application class
-# MCP Server Implementation
+# MCP Server Implementation  
+# Provides Model Context Protocol server with histlog data access via stdio transport
 def handle_mcp_server(args)
   require 'json'
 
   options = {
-    port: 3001,  # Default MCP port
-    stdio: false
+    trace_level: nil  # basic, verbose, full, debug
   }
 
   OptionParser.new do |opts|
-    opts.banner = "Usage: histlog mcp [--stdio] [--port PORT]"
-    opts.on("--stdio", "Use stdio transport") { options[:stdio] = true; options[:port] = nil }
-    opts.on("--port [PORT]", Integer, "Use TCP transport on specified port (default: 3001)") { |p| options[:port] = p || 3001; options[:stdio] = false }
+    opts.banner = "Usage: histlog mcp [--trace=LEVEL]"
+    opts.on("--trace=LEVEL", ["basic", "verbose", "full", "debug"], 
+            "Enable tracing (basic: method calls + timing, verbose: + request/response summaries, full: + complete JSON payloads, debug: + internal state + SQL queries)") do |level|
+      options[:trace_level] = level
+    end
     opts.on("-h", "--help", "Show this help") do
-      puts opts
+      show_mcp_help
       exit 0
     end
   end.parse!(args)
 
-  # Default to TCP port 3001 if no transport specified
-  # Only use stdio if explicitly requested
-  if options[:stdio]
-    run_mcp_stdio_server
-  else
-    run_mcp_tcp_server(options[:port])
-  end
+  # Set global trace level for use in server functions  
+  @mcp_trace_level = options[:trace_level]
+
+  run_mcp_stdio_server
+end
+
+# MCP Logging helpers - support multiple trace levels
+def mcp_log(level, message)
+  return unless @mcp_trace_level
+  
+  # Check if current trace level includes the requested level
+  levels = ["basic", "verbose", "full", "debug"]
+  current_index = levels.index(@mcp_trace_level)
+  requested_index = levels.index(level.to_s)
+  
+  return if current_index.nil? || requested_index.nil? || requested_index > current_index
+  
+  timestamp = Time.now.strftime('%Y-%m-%d %H:%M:%S.%3N')
+  STDERR.puts "[#{timestamp}] MCP #{level.upcase}: #{message}"
+end
+
+# Convenience methods for different trace levels
+def mcp_log_basic(message)
+  mcp_log(:basic, message)
+end
+
+def mcp_log_verbose(message)  
+  mcp_log(:verbose, message)
+end
+
+def mcp_log_full(message)
+  mcp_log(:full, message)
+end
+
+def mcp_log_debug(message)
+  mcp_log(:debug, message)
 end
 
 def run_mcp_stdio_server
-  STDERR.puts "Starting MCP server on stdio..."
+  STDERR.puts "Starting MCP server using stdio transport..."
+  mcp_log_basic("MCP stdio server initialized")
 
   loop do
     begin
@@ -3012,10 +3090,15 @@ def run_mcp_stdio_server
       next if line.empty?
 
       request = JSON.parse(line)
+      mcp_log_full("Request: #{JSON.generate(request)}")
+
       response = handle_mcp_request(request)
+
+      mcp_log_full("Response: #{JSON.generate(response)}")
       puts JSON.generate(response)
       STDOUT.flush
     rescue JSON::ParserError => e
+      mcp_log_basic("Parse error: #{e.message}")
       error_response = {
         jsonrpc: "2.0",
         error: {
@@ -3032,45 +3115,16 @@ def run_mcp_stdio_server
   end
 end
 
-def run_mcp_tcp_server(port)
-  require 'socket'
-  STDERR.puts "Starting MCP server on port #{port}..."
-
-  server = TCPServer.new(port)
-
-  loop do
-    client = server.accept
-
-    Thread.new(client) do |conn|
-      begin
-        loop do
-          line = conn.gets
-          break if line.nil?
-
-          line = line.strip
-          next if line.empty?
-
-          request = JSON.parse(line)
-          response = handle_mcp_request(request)
-          conn.puts JSON.generate(response)
-          conn.flush
-        end
-      rescue => e
-        STDERR.puts "MCP Client error: #{e.message}"
-      ensure
-        conn.close
-      end
-    end
-  end
-end
-
 def handle_mcp_request(request)
   method = request["method"]
   params = request["params"] || {}
   id = request["id"]
 
+  mcp_log_basic("Processing method: #{method}")
+
   case method
   when "initialize"
+    mcp_log_verbose("Initialize request")
     {
       jsonrpc: "2.0",
       id: id,
@@ -3087,6 +3141,7 @@ def handle_mcp_request(request)
     }
 
   when "tools/list"
+    mcp_log_verbose("Tools list request")
     {
       jsonrpc: "2.0",
       id: id,
@@ -3185,6 +3240,10 @@ def handle_mcp_request(request)
     tool_name = params["name"]
     tool_args = params["arguments"] || {}
 
+    mcp_log_basic("Tool call: #{tool_name}")
+    mcp_log_verbose("Tool args: #{JSON.generate(tool_args)}")
+
+    start_time = Time.now
     case tool_name
     when "query_commands"
       result = mcp_query_commands(tool_args)
@@ -3201,6 +3260,7 @@ def handle_mcp_request(request)
     when "analyze_path_patterns"
       result = mcp_analyze_path_patterns(tool_args)
     else
+      mcp_log_basic("Unknown tool requested: #{tool_name}")
       return {
         jsonrpc: "2.0",
         id: id,
@@ -3210,6 +3270,9 @@ def handle_mcp_request(request)
         }
       }
     end
+
+    duration = ((Time.now - start_time) * 1000).round(2)
+    mcp_log_basic("Tool #{tool_name} completed in #{duration}ms")
 
     {
       jsonrpc: "2.0",
@@ -3225,6 +3288,7 @@ def handle_mcp_request(request)
     }
 
   else
+    mcp_log_basic("Unknown method requested: #{method}")
     {
       jsonrpc: "2.0",
       id: id,
@@ -3235,6 +3299,8 @@ def handle_mcp_request(request)
     }
   end
 rescue => e
+  mcp_log_basic("Request error: #{e.message}")
+  mcp_log_debug("Error backtrace: #{e.backtrace.join('\n')}")
   {
     jsonrpc: "2.0",
     id: id,
