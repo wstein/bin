@@ -1,5 +1,69 @@
 #!/usr/bin/env ruby
 
+module HistlogConfig
+  module_function
+
+  DEFAULT_DB_PATH = File.expand_path('~/.local/share/histlog/histlog.db')
+
+  COMMAND_OPTION_DEFAULTS = {
+    paths: {
+      files: false,
+      dirs: false,
+      searchterm: nil,
+      regex: false,
+      count: false,
+      asc: false,
+      desc: false,
+      sort_by: nil,
+      format: nil
+    },
+    cleanup: {
+      verbose: false,
+      dry_run: false
+    },
+    info: {
+      verbose: false
+    }
+  }.freeze
+
+  COLOR_PALETTES = {
+    general: {
+      reset: "\e[0m"
+    },
+    paths: {
+      exec: "\e[38;5;207m",
+      args: "\e[38;5;80m",
+      dir_path: "\e[38;5;12m"
+    },
+    history: {
+      timestamp: "\e[38;5;14m",
+      duration: "\e[33m",
+      status_success: "\e[38;5;84m",
+      status_fail: "\e[38;5;203m",
+      status_header: "\e[38;5;141m"
+    }
+  }.freeze
+
+  def command_options(command)
+    COMMAND_OPTION_DEFAULTS.fetch(command, {}).dup
+  end
+
+  def colors(context = nil)
+    palette = COLOR_PALETTES[:general].dup
+    palette.merge!(COLOR_PALETTES[context]) if context && COLOR_PALETTES.key?(context)
+    palette
+  end
+
+  def db_path
+    env_path = ENV['HISTLOG_DB']&.strip
+    if env_path && !env_path.empty?
+      File.expand_path(env_path)
+    else
+      DEFAULT_DB_PATH
+    end
+  end
+end
+
 def build_paths_option_parser(options)
   OptionParser.new do |opts|
     opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
@@ -15,16 +79,7 @@ def build_paths_option_parser(options)
 end
 
 def show_paths_command(args)
-  options = {
-    files: false,
-    dirs: false,
-    searchterm: nil,
-    regex: false,
-    count: false,
-    asc: false,
-    desc: false,
-    sort_by: nil
-  }
+  options = HistlogConfig.command_options(:paths)
   build_paths_option_parser(options).parse!(args)
   # Accept positional searchterm
   if args.length > 0 && !args[0].start_with?('-')
@@ -104,11 +159,12 @@ def show_paths_command(args)
   # Print header with colored columns (similar style to query interactive output)
   # "Exec" = number of commands executed in this directory (cwd), "Args" = number of times this path was used as a command argument
   # Choose distinct colors for Exec and Args columns
-  exec_col = "\e[38;5;207m"   # pink-ish for exec count
-  args_col = "\e[38;5;80m"    # green-ish for args count
+  palette = HistlogConfig.colors(:paths)
+  exec_col = palette[:exec] # pink-ish for exec count
+  args_col = palette[:args] # green-ish for args count
   # Directory path color (blue 12) — trailing slash will be printed in default color
-  dir_path_col = "\e[38;5;12m"
-  reset_col = "\e[0m"
+  dir_path_col = palette[:dir_path]
+  reset_col = palette[:reset]
 
   header_fmt = "%6s %6s %s"
   sep = "-------------------------"
@@ -251,10 +307,7 @@ end
 
 # Handle cleanup command
 def handle_cleanup(args)
-  options = {
-    verbose: false,
-    dry_run: false
-  }
+  options = HistlogConfig.command_options(:cleanup)
   build_cleanup_option_parser(options).parse!(args)
 
   db_path = get_db_path
@@ -351,9 +404,7 @@ end
 
 # Handle info command - show database and system information
 def handle_info(args)
-  options = {
-    verbose: false
-  }
+  options = HistlogConfig.command_options(:info)
   build_info_option_parser(options).parse!(args)
 
   db_path = get_db_path
@@ -602,11 +653,7 @@ end
 # SQLite database setup
 def get_db_path
   # Prefer explicit environment variable if provided, else default to local db
-  if ENV['HISTLOG_DB'] && !ENV['HISTLOG_DB'].strip.empty?
-    File.expand_path(ENV['HISTLOG_DB'])
-  else
-    File.expand_path('~/.local/share/histlog/histlog.db')
-  end
+  HistlogConfig.db_path
 end
 
 def initialize_db
@@ -1990,14 +2037,15 @@ def output_interactive_results(results, options)
   # Timestamp: #6272a4, Command: default, Result: ✓ #50fa7b, ✗ #ff5555, Duration: #bd93f9
   begin
     # Colors
-    ts_col = "\e[38;5;14m"
-    dur_col = "\e[33m"
-    success_col = "\e[38;5;84m"
-    fail_col = "\e[38;5;203m"
-    reset_col = "\e[0m"
+    palette = HistlogConfig.colors(:history)
+    ts_col = palette[:timestamp]
+    dur_col = palette[:duration]
+    success_col = palette[:status_success]
+    fail_col = palette[:status_fail]
+    reset_col = palette[:reset]
 
     # Header (PascalCase titles) with Status column
-    status_col = "\e[38;5;141m"
+    status_col = palette[:status_header]
     header = "%-19s %8s %-6s %s" % ["Timestamp", "Duration", "Status", "Command"]
     # Separator length matches columns: 19 +1 +8 +1 +6 +1 +7 = 43
     sep = '-' * 43
