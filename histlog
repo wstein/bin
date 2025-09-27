@@ -1,65 +1,67 @@
 #!/usr/bin/env ruby
 
-module HistlogConfig
-  module_function
+module Histlog
+  module Config
+    module_function
 
-  DEFAULT_DB_PATH = File.expand_path('~/.local/share/histlog/histlog.db')
+    DEFAULT_DB_PATH = File.expand_path('~/.local/share/histlog/histlog.db')
 
-  COMMAND_OPTION_DEFAULTS = {
-    paths: {
-      files: false,
-      dirs: false,
-      searchterm: nil,
-      regex: false,
-      count: false,
-      asc: false,
-      desc: false,
-      sort_by: nil,
-      format: nil
-    },
-    cleanup: {
-      verbose: false,
-      dry_run: false
-    },
-    info: {
-      verbose: false
-    }
-  }.freeze
+    COMMAND_OPTION_DEFAULTS = {
+      paths: {
+        files: false,
+        dirs: false,
+        searchterm: nil,
+        regex: false,
+        count: false,
+        asc: false,
+        desc: false,
+        sort_by: nil,
+        format: nil
+      },
+      cleanup: {
+        verbose: false,
+        dry_run: false
+      },
+      info: {
+        verbose: false
+      }
+    }.freeze
 
-  COLOR_PALETTES = {
-    general: {
-      reset: "\e[0m"
-    },
-    paths: {
-      exec: "\e[38;5;207m",
-      args: "\e[38;5;80m",
-      dir_path: "\e[38;5;12m"
-    },
-    history: {
-      timestamp: "\e[38;5;14m",
-      duration: "\e[33m",
-      status_success: "\e[38;5;84m",
-      status_fail: "\e[38;5;203m",
-      status_header: "\e[38;5;141m"
-    }
-  }.freeze
+    COLOR_PALETTES = {
+      general: {
+        reset: "\e[0m"
+      },
+      paths: {
+        exec: "\e[38;5;207m",
+        args: "\e[38;5;80m",
+        dir_path: "\e[38;5;12m"
+      },
+      history: {
+        timestamp: "\e[38;5;14m",
+        duration: "\e[33m",
+        status_success: "\e[38;5;84m",
+        status_fail: "\e[38;5;203m",
+        status_header: "\e[38;5;141m"
+      }
+    }.freeze
 
-  def command_options(command)
-    COMMAND_OPTION_DEFAULTS.fetch(command, {}).dup
-  end
+    def command_options(command)
+      COMMAND_OPTION_DEFAULTS.fetch(command, {}).dup
+    end
 
-  def colors(context = nil)
-    palette = COLOR_PALETTES[:general].dup
-    palette.merge!(COLOR_PALETTES[context]) if context && COLOR_PALETTES.key?(context)
-    palette
-  end
+    def colors(context = nil)
+      palette = COLOR_PALETTES[:general].dup
+      palette.merge!(COLOR_PALETTES[context]) if context && COLOR_PALETTES.key?(context)
+      palette
+    end
 
-  def db_path
-    env_path = ENV['HISTLOG_DB']&.strip
-    if env_path && !env_path.empty?
-      File.expand_path(env_path)
-    else
-      DEFAULT_DB_PATH
+    def db_path
+      env_path = ENV['HISTLOG_DB']&.strip
+      if env_path && !env_path.empty?
+        File.expand_path(env_path)
+      else
+        DEFAULT_DB_PATH
+      end
     end
   end
 end
@@ -79,7 +81,7 @@ def build_paths_option_parser(options)
 end
 
 def show_paths_command(args)
-  options = HistlogConfig.command_options(:paths)
+  options = Histlog::Config.command_options(:paths)
   build_paths_option_parser(options).parse!(args)
   # Accept positional searchterm
   if args.length > 0 && !args[0].start_with?('-')
@@ -159,7 +161,7 @@ def show_paths_command(args)
   # Print header with colored columns (similar style to query interactive output)
   # "Exec" = number of commands executed in this directory (cwd), "Args" = number of times this path was used as a command argument
   # Choose distinct colors for Exec and Args columns
-  palette = HistlogConfig.colors(:paths)
+  palette = Histlog::Config.colors(:paths)
   exec_col = palette[:exec] # pink-ish for exec count
   args_col = palette[:args] # green-ish for args count
   # Directory path color (blue 12) — trailing slash will be printed in default color
@@ -307,7 +309,7 @@ end
 
 # Handle cleanup command
 def handle_cleanup(args)
-  options = HistlogConfig.command_options(:cleanup)
+  options = Histlog::Config.command_options(:cleanup)
   build_cleanup_option_parser(options).parse!(args)
 
   db_path = get_db_path
@@ -404,7 +406,7 @@ end
 
 # Handle info command - show database and system information
 def handle_info(args)
-  options = HistlogConfig.command_options(:info)
+  options = Histlog::Config.command_options(:info)
   build_info_option_parser(options).parse!(args)
 
   db_path = get_db_path
@@ -652,8 +654,543 @@ end
 
 # SQLite database setup
 def get_db_path
-  # Prefer explicit environment variable if provided, else default to local db
-  HistlogConfig.db_path
+  # Prefer explicit environment variable if provided, else default to configured db path
+  Histlog::Config.db_path
+end
+
+# Minimal DB namespace wrapper so existing code can call Histlog::DB.* helpers
+module Histlog
+  module DB
+    module_function
+
+    # Expose path accessor
+    def path
+      Histlog::Config.db_path
+    end
+    # initialize_db implementation
+    def initialize_db
+      db_path = Histlog::Config.db_path
+      db_dir = File.dirname(db_path)
+      FileUtils.mkdir_p(db_dir) unless Dir.exist?(db_dir)
+      db = SQLite3::Database.new(db_path)
+
+      # Enable performance and compression optimizations
+      db.execute "PRAGMA journal_mode = WAL"
+      db.execute "PRAGMA synchronous = NORMAL"
+      db.execute "PRAGMA cache_size = 10000"
+      db.execute "PRAGMA temp_store = MEMORY"
+      db.execute "PRAGMA mmap_size = 268435456"
+      db.execute "PRAGMA page_size = 4096"
+
+      # Create tables and indexes (same as original implementation)
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS shells (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	path TEXT UNIQUE NOT NULL,
+    	version TEXT,
+    	created_at REAL DEFAULT (julianday('now'))
+        )
+      SQL
+
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS ttys (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	device TEXT NOT NULL,
+    	created_at REAL DEFAULT (julianday('now'))
+        );
+      SQL
+
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS paths (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	path TEXT NOT NULL,
+    	type TEXT NOT NULL CHECK (type IN ('f', 'd')),
+    	created_at REAL DEFAULT (julianday('now'))
+        );
+      SQL
+
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS sessions (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	shell_id INTEGER,
+    	tty_id INTEGER,
+    	path_id INTEGER,
+    	pid INTEGER,
+    	parent_pid INTEGER,
+    	timezone TEXT,
+    	created_at REAL DEFAULT (julianday('now')),
+    	FOREIGN KEY (shell_id) REFERENCES shells (id),
+    	FOREIGN KEY (tty_id) REFERENCES ttys (id),
+    	FOREIGN KEY (path_id) REFERENCES paths (id)
+        )
+      SQL
+
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS cmd_texts (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	command TEXT UNIQUE NOT NULL,
+    	created_at REAL DEFAULT (julianday('now'))
+        )
+      SQL
+
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS commands (
+    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+    	session_id INTEGER,
+    	cmd_text_id INTEGER,
+    	path_old_id INTEGER,
+    	path_new_id INTEGER,
+    	start_time REAL,
+    	duration REAL,
+    	exit_code INTEGER,
+    	is_private INTEGER DEFAULT 0,
+    	is_assisted INTEGER DEFAULT 0,
+    	created_at REAL DEFAULT (julianday('now')),
+    	FOREIGN KEY (session_id) REFERENCES sessions (id),
+    	FOREIGN KEY (cmd_text_id) REFERENCES cmd_texts (id),
+    	FOREIGN KEY (path_old_id) REFERENCES paths (id),
+    	FOREIGN KEY (path_new_id) REFERENCES paths (id)
+        )
+      SQL
+
+      db.execute <<-SQL
+        CREATE TABLE IF NOT EXISTS path_args (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        command_id INTEGER,
+        path_id INTEGER,
+        arg_position INTEGER,
+        created_at REAL DEFAULT (julianday('now')),
+        FOREIGN KEY (command_id) REFERENCES commands (id),
+        FOREIGN KEY (path_id) REFERENCES paths (id),
+        UNIQUE (command_id, path_id, arg_position)
+        )
+      SQL
+
+      # Indexes
+      db.execute "CREATE INDEX IF NOT EXISTS idx_shells_path ON shells (path)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_ttys_device ON ttys (device)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_paths_path ON paths (path)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_paths_type ON paths (type)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_shell_id ON sessions (shell_id)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions (created_at)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_path_id ON sessions (path_id)"
+      db.execute "CREATE UNIQUE INDEX IF NOT EXISTS idx_cmd_texts_command ON cmd_texts (command)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_cmd_texts_created_at ON cmd_texts (created_at)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_session_id ON commands (session_id)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_cmd_text_id ON commands (cmd_text_id)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_created_at ON commands (created_at)"
+
+      begin
+        cols = db.execute("PRAGMA table_info(commands)")
+        col_names = cols.map { |r| r[1] }
+        unless col_names.include?('start_time')
+          db.execute "ALTER TABLE commands ADD COLUMN start_time REAL"
+        end
+      rescue SQLite3::Exception
+      end
+
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_start_time ON commands (start_time)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_exit_code ON commands (exit_code)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_command_id ON path_args (command_id)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_path_id ON path_args (path_id)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_path_id ON path_args (path_id)"
+
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_session_id_created_at ON commands (session_id, created_at)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_exit_code_created_at ON commands (exit_code, created_at)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_path_args_command_id_arg_position ON path_args (command_id, arg_position)"
+
+      db.execute "CREATE INDEX IF NOT EXISTS idx_commands_session_created_where_failed ON commands (session_id, created_at) WHERE exit_code != 0"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_paths_path_where_file ON paths (path) WHERE type = 'f'"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_paths_path_where_dir ON paths (path) WHERE type = 'd'"
+
+      db.execute "DROP VIEW IF EXISTS sessions_view"
+      db.execute <<-SQL
+        CREATE VIEW sessions_view AS
+        SELECT
+    	s.id as session_id,
+    	s.pid,
+    	s.parent_pid,
+    	s.timezone,
+    	s.created_at,
+    	datetime(s.created_at) as created_time,
+    	sh.path as shell_path,
+    	sh.version as shell_version,
+    	t.device as tty_device,
+    	p.path as working_directory
+        FROM sessions s
+        LEFT JOIN shells sh ON s.shell_id = sh.id
+        LEFT JOIN ttys t ON s.tty_id = t.id
+        LEFT JOIN paths p ON s.path_id = p.id
+      SQL
+
+      db.execute <<-SQL
+        CREATE VIEW IF NOT EXISTS history_view AS
+        SELECT
+    	cmd.id as cmd_text_id,
+    	cmd.session_id as session_id,
+    	s.pid as session_pid,
+    	s.parent_pid as session_parent_pid,
+    	datetime(s.created_at, 'unixepoch') as session_started,
+    	sh.path as shell_path,
+    	t.device as tty_device,
+    	c.command,
+    	datetime(cmd.start_time, 'unixepoch') as command_started,
+    	cmd.start_time as start_time,
+    	cmd.duration,
+    	cmd.exit_code,
+    	cmd.is_private,
+    	p_old.path as cwd_old,
+    	p_new.path as cwd_new,
+    	CASE
+    	WHEN p_old.path IS NOT NULL AND p_new.path IS NOT NULL AND p_old.path != p_new.path THEN 1
+    	ELSE 0
+    	END as directory_changed
+    	FROM commands cmd
+        LEFT JOIN sessions s ON cmd.session_id = s.id
+    	JOIN cmd_texts c ON cmd.cmd_text_id = c.id
+        LEFT JOIN shells sh ON s.shell_id = sh.id
+        LEFT JOIN ttys t ON s.tty_id = t.id
+        LEFT JOIN paths p_old ON cmd.path_old_id = p_old.id
+        LEFT JOIN paths p_new ON cmd.path_new_id = p_new.id
+      ORDER BY cmd.start_time DESC
+      SQL
+
+      db
+    end
+
+    # Helper: get or create a shell id
+    def get_or_create_shell_id(db, shell_path)
+      return nil unless shell_path
+      result = db.execute("SELECT id FROM shells WHERE path = ?", [shell_path])
+      return result[0][0] if result && result[0]
+      version = begin
+        `#{shell_path} --version 2>/dev/null`.strip
+      rescue
+        nil
+      end
+      begin
+        res = db.execute("INSERT INTO shells (path, version) VALUES (?, ?) RETURNING id", [shell_path, version])
+        res[0][0] if res && res[0]
+      rescue SQLite3::Exception
+        db.execute("INSERT INTO shells (path, version) VALUES (?, ?)", [shell_path, version])
+        db.last_insert_row_id
+      end
+    end
+
+    def get_or_create_tty_id(db, tty_device)
+      return nil unless tty_device
+      result = db.execute("SELECT id FROM ttys WHERE device = ?", [tty_device])
+      return result[0][0] if result && result[0]
+      begin
+        res = db.execute("INSERT INTO ttys (device) VALUES (?) RETURNING id", [tty_device])
+        res[0][0] if res && res[0]
+      rescue SQLite3::Exception
+        db.execute("INSERT INTO ttys (device) VALUES (?)", [tty_device])
+        db.last_insert_row_id
+      end
+    end
+
+    def get_or_create_path_id(db, path, type = nil)
+      return nil unless path
+      begin
+        abs_path = File.expand_path(path)
+      rescue => e
+        STDERR.puts "Warning: Could not normalize path '#{path}': #{e.message}"
+        abs_path = path
+      end
+      result = db.execute("SELECT id FROM paths WHERE path = ?", [abs_path])
+      return result[0][0] if result && result[0]
+      if type.nil?
+        type = File.directory?(abs_path) ? 'd' : 'f'
+      end
+      begin
+        res = db.execute("INSERT INTO paths (path, type) VALUES (?, ?) RETURNING id", [abs_path, type])
+        res[0][0] if res && res[0]
+      rescue SQLite3::Exception
+        db.execute("INSERT INTO paths (path, type) VALUES (?, ?)", [abs_path, type])
+        db.last_insert_row_id
+      end
+    end
+
+    def get_or_create_cmd_text_id(db, command)
+      result = db.execute("SELECT id FROM cmd_texts WHERE command = ?", [command])
+      if result && result[0]
+        id_val = result[0].is_a?(Hash) ? result[0]["id"] : result[0][0]
+        return id_val && id_val.to_i > 0 ? id_val.to_i : nil
+      end
+      begin
+        res = db.execute("INSERT INTO cmd_texts (command) VALUES (?) RETURNING id", [command])
+        if res && res[0]
+          id_val = res[0].is_a?(Hash) ? res[0]["id"] : res[0][0]
+          return id_val && id_val.to_i > 0 ? id_val.to_i : nil
+        end
+      rescue SQLite3::Exception => e
+        if e.message.include?("syntax error") || e.message.include?("RETURNING")
+          db.execute("INSERT INTO cmd_texts (command) VALUES (?)", [command])
+          last_id = db.last_insert_row_id
+          return last_id && last_id.to_i > 0 ? last_id.to_i : nil
+        else
+          raise e
+        end
+      end
+      nil
+    end
+
+    def store_session(session_data)
+      db = initialize_db
+      begin
+        shell_id = get_or_create_shell_id(db, session_data[:shell])
+        tty_id = get_or_create_tty_id(db, session_data[:tty])
+        path_id = get_or_create_path_id(db, session_data[:cwd])
+        begin
+          res = db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+                           [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone]])
+          return res[0][0] if res && res[0]
+        rescue SQLite3::Exception => e
+          if e.message.include?("syntax error") || e.message.include?("RETURNING")
+            STDERR.puts "Warning: RETURNING clause not supported, using fallback method"
+            db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone) VALUES (?, ?, ?, ?, ?, ?)",
+                       [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone]])
+            return db.last_insert_row_id
+          else
+            STDERR.puts "Error storing session: #{e.message}"
+            return nil
+          end
+        end
+      ensure
+        db.close if db
+      end
+    end
+
+    def store_command(command_data)
+      db = initialize_db
+      begin
+        original_command = command_data[:command]
+        is_private = original_command.start_with?(' ') ? 1 : 0
+        clean_command = original_command.lstrip
+        is_assisted = ENV['VSCODE_INJECTION'] == '1' ? 1 : 0
+        cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+        path_old_id = get_or_create_path_id(db, command_data[:cwd])
+        begin
+          res = db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+                           [command_data[:session_id], cmd_text_id, path_old_id, is_private, is_assisted, Time.now.to_f])
+          command_id = res[0][0] if res && res[0]
+          if command_id
+            parse_command_arguments(db, command_id, clean_command)
+          end
+          return command_id
+        rescue SQLite3::Exception => e
+          if e.message.include?("syntax error") || e.message.include?("RETURNING")
+            STDERR.puts "Warning: RETURNING clause not supported, using fallback method"
+            db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, is_private, start_time) VALUES (?, ?, ?, ?, ?)",
+                       [command_data[:session_id], cmd_text_id, path_old_id, is_private, Time.now.to_f])
+            command_id = db.last_insert_row_id
+            if command_id
+              parse_command_arguments(db, command_id, clean_command)
+            end
+            return command_id
+          else
+            STDERR.puts "Error storing command: #{e.message}"
+            return nil
+          end
+        end
+      ensure
+        db.close if db
+      end
+    end
+
+    def parse_command_arguments(db, command_id, command_text)
+      args = command_text.scan(/(?:[^\s"']+|"[^"]*"|'[^']*')+/).map { |arg| arg.gsub(/^["']|["']$/, '') }
+      args.each_with_index do |arg, position|
+        next if position == 0
+        next if arg.include?("\x00") || arg.empty?
+        begin
+          if File.exist?(arg)
+            abs_path = File.expand_path(arg)
+            path_type = File.directory?(abs_path) ? 'd' : 'f'
+            path_id = get_or_create_path_id(db, abs_path, path_type)
+            existing = db.execute("SELECT 1 FROM path_args WHERE command_id = ? AND path_id = ? AND arg_position = ? LIMIT 1", [command_id, path_id, position])
+            unless existing.any?
+              db.execute("INSERT INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)", [command_id, path_id, position])
+            end
+          end
+        rescue
+        end
+      end
+    end
+
+    def update_command_completion(command_id, duration, exit_code)
+      db = initialize_db
+      begin
+        cwd_new_id = get_or_create_path_id(db, Dir.pwd)
+        db.execute("UPDATE commands SET duration = ?, exit_code = ?, path_new_id = ? WHERE id = ?", [duration, exit_code, cwd_new_id, command_id])
+        result = db.execute("SELECT c.command FROM commands cmd JOIN cmd_texts c ON cmd.cmd_text_id = c.id WHERE cmd.id = ?", [command_id])
+        if result && result[0]
+          command_text = result[0][0]
+          parse_command_arguments(db, command_id, command_text)
+        end
+      rescue SQLite3::Exception => e
+        STDERR.puts "Error updating command: #{e.message}"
+      ensure
+        db.close if db
+      end
+    end
+
+    def cleanup_orphaned_entries(db, verbose = false)
+      removed_counts = {}
+      db.execute(<<-SQL)
+        DELETE FROM paths
+        WHERE id NOT IN (SELECT path_old_id FROM commands WHERE path_old_id IS NOT NULL)
+          AND id NOT IN (SELECT path_new_id FROM commands WHERE path_new_id IS NOT NULL)
+          AND id NOT IN (SELECT path_id FROM path_args WHERE path_id IS NOT NULL)
+      SQL
+      removed_counts[:paths] = db.changes
+      db.execute(<<-SQL)
+        DELETE FROM cmd_texts
+        WHERE id NOT IN (SELECT cmd_text_id FROM commands WHERE cmd_text_id IS NOT NULL)
+      SQL
+      removed_counts[:cmd_texts] = db.changes
+      db.execute(<<-SQL)
+        DELETE FROM path_args
+        WHERE path_id NOT IN (SELECT id FROM paths)
+           OR command_id NOT IN (SELECT id FROM commands)
+      SQL
+      removed_counts[:path_args] = db.changes
+      begin
+        db.execute(<<-SQL)
+          DELETE FROM ttys
+          WHERE id NOT IN (SELECT tty_id FROM sessions WHERE tty_id IS NOT NULL)
+        SQL
+        removed_counts[:ttys] = db.changes
+      rescue SQLite3::SQLException => e
+        removed_counts[:ttys] = 0
+        puts "Warning: Could not cleanup ttys: #{e.message}" if verbose
+      end
+      begin
+        db.execute(<<-SQL)
+          DELETE FROM shells
+          WHERE id NOT IN (SELECT shell_id FROM sessions WHERE shell_id IS NOT NULL)
+        SQL
+        removed_counts[:shells] = db.changes
+      rescue SQLite3::SQLException => e
+        removed_counts[:shells] = 0
+        puts "Warning: Could not cleanup shells: #{e.message}" if verbose
+      end
+      begin
+        db.execute(<<-SQL)
+          DELETE FROM sessions
+          WHERE id NOT IN (SELECT session_id FROM commands WHERE session_id IS NOT NULL)
+        SQL
+        removed_counts[:sessions] = db.changes
+      rescue SQLite3::SQLException => e
+        removed_counts[:sessions] = 0
+        puts "Warning: Could not cleanup sessions: #{e.message}" if verbose
+      end
+      if verbose
+        puts "Cleanup summary:"
+        removed_counts.each do |table, count|
+          puts "  #{table}: #{count} orphaned entries removed"
+        end
+      end
+      total_removed = removed_counts.values.sum
+      puts "Orphaned entries cleaned up (#{total_removed} total)." unless verbose
+      removed_counts
+    end
+
+    def get_command_paths(command_id)
+      return [] unless command_id
+      db_path = path
+      return [] unless File.exist?(db_path)
+      db = SQLite3::Database.new(db_path)
+      db.results_as_hash = true
+      begin
+        cmd_info = db.execute(
+          "SELECT ct.command, p1.path as old_path, p2.path as new_path FROM commands c
+           JOIN cmd_texts ct ON c.cmd_text_id = ct.id
+           LEFT JOIN paths p1 ON c.path_old_id = p1.id
+           LEFT JOIN paths p2 ON c.path_new_id = p2.id
+           WHERE c.id = ?",
+          [command_id]
+        ).first
+        return [] unless cmd_info
+        command_text = cmd_info['command']
+        old_path = cmd_info['old_path']
+        new_path = cmd_info['new_path']
+        path_args = db.execute(<<-SQL, [command_id])
+          SELECT pa.arg_position, p.path, p.type
+          FROM path_args pa
+          JOIN paths p ON pa.path_id = p.id
+          WHERE pa.command_id = ?
+          ORDER BY pa.arg_position
+        SQL
+        paths = []
+        if command_text.strip.match(/^cd\s/)
+          cd_match = command_text.strip.match(/^cd(?:\s+([^\s;&|]+))?/)
+          if cd_match && cd_match[1]
+            cd_arg = cd_match[1].strip
+            cd_arg = cd_arg.gsub(/^['"]|['"]$/, '')
+            paths << cd_arg
+          end
+        else
+          seen_paths = Set.new
+          path_args.each do |row|
+            path = row['path']
+            unless seen_paths.include?(path)
+              paths << path
+              seen_paths.add(path)
+            end
+          end
+        end
+        paths
+      rescue SQLite3::SQLException => e
+        []
+      ensure
+        db&.close
+      end
+    end
+
+    def import_commands_to_db(commands, options)
+      db = initialize_db
+      db.results_as_hash = true
+      imported_count = 0
+      command_id_lookup = {}
+      session_id_lookup = {}
+      begin
+        commands.each_with_index do |cmd_data, index|
+          begin
+            next if cmd_data[:command].nil? || cmd_data[:command].strip.empty?
+            original_command = cmd_data[:command]
+            is_private = original_command.start_with?(' ') ? 1 : 0
+            clean_command = original_command.lstrip
+            cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
+            original_command_id = cmd_data[:_original_command_id]
+            original_session_id = cmd_data[:_original_session_id]
+            if cmd_data[:start_time]
+              julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
+              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, julian_day, cmd_data[:start_time].to_f])
+            else
+              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, nil])
+            end
+            new_command_id = db.last_insert_row_id
+            if original_command_id
+              command_id_lookup[original_command_id] = new_command_id
+            end
+            imported_count += 1
+          rescue SQLite3::Exception => e
+            STDERR.puts "Warning: Could not import command '#{cmd_data[:command]}': #{e.message}" if options[:verbose]
+          end
+        end
+        if options[:verbose] && command_id_lookup.any?
+          puts "Created ID mappings for #{command_id_lookup.size} commands with original IDs"
+        end
+      rescue SQLite3::Exception => e
+        STDERR.puts "Database error during import: #{e.message}"
+      ensure
+        db.close if db
+      end
+      imported_count
+    end
+  end
 end
 
 def initialize_db
@@ -1038,7 +1575,7 @@ def get_or_create_cmd_text_id(db, command)
 end
 
 def store_command(command_data)
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   begin
     # Detect if command is private (starts with space) and strip the space
     original_command = command_data[:command]
@@ -1161,7 +1698,7 @@ def parse_command_arguments(db, command_id, command_text)
 end
 
 def update_command_completion(command_id, duration, exit_code)
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   begin
     # Get current working directory for cwd_new_id
     cwd_new_id = get_or_create_path_id(db, Dir.pwd)
@@ -1337,7 +1874,7 @@ end
 # Execute the interactive query with filters
 def execute_interactive_query(options)
   # Read-only queries should not create or mutate the database.
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   unless File.exist?(db_path)
     STDERR.puts "No histlog.db found in current directory"
     return
@@ -1863,7 +2400,7 @@ end
 # Output results in JSON format
 def output_json_results(results)
   # Get database connection to fetch path arguments
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   db = SQLite3::Database.new(db_path)
   db.results_as_hash = true
 
@@ -1925,7 +2462,7 @@ def output_yaml_results(results)
   require 'yaml'
 
   # Get database connection to fetch path arguments
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   db = SQLite3::Database.new(db_path)
   db.results_as_hash = true
 
@@ -2037,7 +2574,7 @@ def output_interactive_results(results, options)
   # Timestamp: #6272a4, Command: default, Result: ✓ #50fa7b, ✗ #ff5555, Duration: #bd93f9
   begin
     # Colors
-    palette = HistlogConfig.colors(:history)
+    palette = Histlog::Config.colors(:history)
     ts_col = palette[:timestamp]
     dur_col = palette[:duration]
     success_col = palette[:status_success]
@@ -2096,7 +2633,7 @@ def show_advanced_stats(args)
     end
   end.parse!(args)
   # Connect to database
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   unless File.exist?(db_path)
     puts "No histlog.db found in current directory"
     return
@@ -2225,7 +2762,7 @@ def show_history_list(args)
     }
   end.parse!(args)
 
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   unless File.exist?(db_path)
     puts "No histlog.db found in current directory"
     return
@@ -2315,7 +2852,7 @@ end
 # Query sessions function
 def query_sessions(args)
   # Connect to database
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   unless File.exist?(db_path)
     puts "No histlog.db found in current directory"
     return
@@ -2705,7 +3242,7 @@ end
 def get_command_paths(command_id)
   return [] unless command_id
 
-  db_path = get_db_path
+  db_path = Histlog::DB.path
   return [] unless File.exist?(db_path)
 
   db = SQLite3::Database.new(db_path)
@@ -3003,7 +3540,7 @@ def import_commands_to_db(commands, options)
   # - Path tracking requires absolute paths that currently exist
   # - This ensures consistency and accuracy of path data
   #
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   db.results_as_hash = true
   imported_count = 0
 
@@ -3575,7 +4112,7 @@ def mcp_query_commands(args)
   today = args["today"]
   week = args["week"]
 
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   db.results_as_hash = true
 
   # Base query with all joins needed for filters
@@ -3697,7 +4234,7 @@ end
 def mcp_get_command_stats(args)
   limit = args["limit"] || 10
 
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   db.results_as_hash = true
 
   begin
@@ -3751,13 +4288,13 @@ def mcp_get_command_stats(args)
 end
 
 def mcp_get_database_info(args)
-  db_path = get_db_path
+  db_path = Histlog::DB.path
 
   unless File.exist?(db_path)
     return "No histlog database found at #{db_path}"
   end
 
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   db.results_as_hash = true
 
   begin
@@ -3801,7 +4338,7 @@ end
 def mcp_analyze_patterns(args)
   days = args["days"] || 30
 
-  db = initialize_db
+  db = Histlog::DB.initialize_db
   db.results_as_hash = true
 
   begin
@@ -4006,7 +4543,7 @@ class HistlogApp
       end
     end.parse!(args)
 
-    db_path = get_db_path
+    db_path = Histlog::DB.path
     unless File.exist?(db_path)
       puts "No histlog.db found in current directory"
       return
@@ -4143,7 +4680,7 @@ class HistlogApp
     }
 
     # Store session in SQLite database and get the generated session_id
-    session_id = store_session(session_data)
+    session_id = Histlog::DB.store_session(session_data)
 
     if session_id
       puts session_id
