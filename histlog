@@ -21,6 +21,7 @@ def show_paths_command(args)
     opts.on("--asc", "Order results ascending") { options[:asc] = true }
     opts.on("--desc", "Order results descending") { options[:desc] = true }
     opts.on("--sort-by FIELD", "Sort by exec, args, path, or type") { |field| options[:sort_by] = field }
+    opts.on("--plain", "Output only paths, one per line") { options[:format] = 'plain' }
   end.parse!(args)
   # Accept positional searchterm
   if args.length > 0 && !args[0].start_with?('-')
@@ -82,6 +83,19 @@ def show_paths_command(args)
     else
       raise e
     end
+  end
+
+  # Plain output: one path per line (directories end with slash) — behave like query --plain
+  if options[:format] == 'plain'
+    rows.each do |row|
+      p = row['path']
+      if row['type'] == 'd'
+        puts p.end_with?('/') ? p : (p + '/')
+      else
+        puts p
+      end
+    end
+    return
   end
 
   # Print header with colored columns (similar style to query interactive output)
