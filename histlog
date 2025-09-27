@@ -1094,7 +1094,8 @@ def query_interactive(args)
     failed: false,
     success: false,
     exit_code: nil,
-    today: false,
+  today: false,
+  yesterday: false,
     week: false,
     since: nil,
     after: nil,
@@ -1149,10 +1150,11 @@ def query_interactive(args)
     opts.on("--success", "Only successful commands (exit_code = 0)") { options[:success] = true }
     opts.on("--exit CODE", Integer, "Commands with specific exit code") { |code| options[:exit_code] = code }
 
-    # Time filters
-    opts.on("--today", "Commands from today") { options[:today] = true }
+  # Time filters
+  opts.on("--today", "Commands from today") { options[:today] = true }
+  opts.on("--yesterday", "Commands from yesterday") { options[:yesterday] = true }
     opts.on("--week", "Commands from this week") { options[:week] = true }
-    opts.on("--since TIME", "Commands since X time ago (e.g., '1 hour')") { |time| options[:since] = time }
+  opts.on("--since TIME", "Commands since X time ago. Shorthand: 120s, 40m, 4h, 7d, 2w. Combined: 1h30m, 2h 15m. Decimal: 1.5h. Also accepts absolute timestamps: '2025-09-27 19:52' or '19:52'.") { |time| options[:since] = time }
     opts.on("--after DATE", "Commands after date (YYYY-MM-DD)") { |date| options[:after] = date }
 
     # Path filters
@@ -1226,6 +1228,104 @@ def execute_interactive_query(options)
   db = SQLite3::Database.new(db_path)
   db.results_as_hash = true
   begin
+    # Helper: parse time span strings into seconds.
+    # Accepts relative shorthand: 120s, 40m, 4h, 7d, 2w and combined tokens like '1h30m'
+    # Accepts verbose forms: '1 hour', '30 minutes', possibly combined ('1 hour 30 minutes')
+    # Also accepts absolute timestamps in these example patterns:
+    #  - '2025-09-27 19:52:17'
+    #  - '2025-09-27 19:52'
+    #  - '09-27 19:52' (assumes current year, if in future uses previous year)
+    #  - '19:52' (assumes today; if in future uses yesterday)
+    # Returns:
+    #  - Numeric seconds (>= 0) representing the duration from parsed time to now
+    #  - -1 if parsed absolute timestamp is in the future
+    #  - nil if parsing fails
+    def parse_time_span_to_seconds(str)
+      return nil if str.nil?
+      raw = str.strip
+      s = raw.downcase
+      now = Time.now
+
+      # Try absolute timestamp parsing with various formats
+      timestamp_formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M',
+        '%Y-%m-%d',
+        '%m-%d %H:%M:%S',
+        '%m-%d %H:%M',
+        '%m-%d',
+        '%H:%M:%S',
+        '%H:%M'
+      ]
+
+      timestamp_formats.each do |fmt|
+        begin
+          parsed = nil
+          if fmt.start_with?('%Y')
+            parsed = Time.strptime(raw, fmt) rescue nil
+          elsif fmt.start_with?('%m-%d')
+            # attach current year
+            try = Time.strptime("#{now.year}-#{raw}", "%Y-#{fmt}") rescue nil
+            parsed = try
+            # if parsed is in the future, try previous year
+            if parsed && parsed > now
+              parsed = Time.new(parsed.year - 1, parsed.month, parsed.day, parsed.hour, parsed.min, parsed.sec)
+            end
+          else
+            # time-only formats: assume today
+            try = Time.strptime(raw, fmt) rescue nil
+            if try
+              parsed = Time.new(now.year, now.month, now.day, try.hour, try.min, try.sec)
+              # if the parsed time is in the future, assume yesterday
+              if parsed > now
+                parsed -= 86400
+              end
+            end
+          end
+
+          if parsed
+            seconds = (now.to_f - parsed.to_f)
+            return -1 if seconds < 0
+            return seconds
+          end
+        rescue ArgumentError
+          # try next format
+        end
+      end
+
+      # Otherwise parse relative tokens (combined and decimals)
+      total = 0.0
+      matched = false
+
+      # Shorthand tokens like '1.5h', repeated tokens '1h30m'
+      s.scan(/(\d+(?:\.\d+)?)\s*([smhdw])/) do |num_s, unit|
+        num = num_s.to_f
+        matched = true
+        case unit
+        when 's' then total += num
+        when 'm' then total += num * 60
+        when 'h' then total += num * 3600
+        when 'd' then total += num * 86400
+        when 'w' then total += num * 7 * 86400
+        end
+      end
+
+      # Verbose tokens like '1 hour', '30 minutes'
+      s.scan(/(\d+(?:\.\d+)?)\s*(second|seconds|minute|minutes|hour|hours|day|days|week|weeks)/) do |num_s, word|
+        num = num_s.to_f
+        matched = true
+        case word
+        when 'second', 'seconds' then total += num
+        when 'minute', 'minutes' then total += num * 60
+        when 'hour', 'hours' then total += num * 3600
+        when 'day', 'days' then total += num * 86400
+        when 'week', 'weeks' then total += num * 7 * 86400
+        end
+      end
+
+      return nil unless matched
+      total % 1 == 0 ? total.to_i : total
+    end
     # Build the base query
     query_parts = []
     params = []
@@ -1337,6 +1437,16 @@ def execute_interactive_query(options)
       today_start_julian = (today_start_unix / 86400.0) + 2440587.5
       where_conditions << "c.created_at >= ?"
       params << today_start_julian
+    elsif options[:yesterday]
+      # Start of yesterday (00:00) and start of today (exclusive upper bound)
+      today_start_unix = Time.new(Time.now.year, Time.now.month, Time.now.day).to_f
+      yesterday_start_unix = (Time.new(Time.now.year, Time.now.month, Time.now.day) - 86400).to_f
+      yesterday_start_julian = (yesterday_start_unix / 86400.0) + 2440587.5
+      today_start_julian = (today_start_unix / 86400.0) + 2440587.5
+      where_conditions << "c.created_at >= ?"
+      params << yesterday_start_julian
+      where_conditions << "c.created_at < ?"
+      params << today_start_julian
     elsif options[:week]
       # Get start of week (Monday)
       now = Time.now
@@ -1346,20 +1456,22 @@ def execute_interactive_query(options)
       where_conditions << "c.created_at >= ?"
       params << week_start_julian
     elsif options[:since]
-      # Parse relative time (simplified)
-      if options[:since] =~ /(\d+)\s*(hour|minute|day)s?/
-        amount = $1.to_i
-        unit = $2
-        seconds_ago = case unit
-        when 'minute' then amount * 60
-        when 'hour' then amount * 3600
-        when 'day' then amount * 86400
-        end
-        since_unix = Time.now.to_f - seconds_ago
-        since_julian = (since_unix / 86400.0) + 2440587.5
-        where_conditions << "c.created_at >= ?"
-        params << since_julian
+      # Parse relative time from flexible formats like '120s', '40m', '4h', '7d', '2w' or verbose '1 hour'
+      seconds = parse_time_span_to_seconds(options[:since])
+      if seconds.nil?
+        STDERR.puts "Invalid time span for --since: '#{options[:since]}'. Use formats like 120s, 40m, 4h, 7d, 2w or '1 hour', or absolute timestamps like '2025-09-27 19:52'."
+        db.close if db
+        exit 2
       end
+      if seconds < 0
+        STDERR.puts "The absolute timestamp provided for --since is in the future: '#{options[:since]}'"
+        db.close if db
+        exit 2
+      end
+      since_unix = Time.now.to_f - seconds
+      since_julian = (since_unix / 86400.0) + 2440587.5
+      where_conditions << "c.created_at >= ?"
+      params << since_julian
     elsif options[:after]
       # Parse date
       begin
