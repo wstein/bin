@@ -85,16 +85,19 @@ def show_paths_command(args)
   end
 
   # Print header with colored columns (similar style to query interactive output)
+  # Choose distinct colors for Exec and Args columns
   exec_col = "\e[38;5;207m"   # pink-ish for exec count
   args_col = "\e[38;5;80m"    # green-ish for args count
-  type_col = "\e[38;5;141m"   # purple for type
+  # Directory path color (blue 12) — trailing slash will be printed in default color
+  dir_path_col = "\e[38;5;12m"
   reset_col = "\e[0m"
 
-  header = "%6s %6s %-6s %s" % ["Exec", "Args", "Type", "Path"]
+  header_fmt = "%6s %6s %s"
   sep = "-------------------------"
   begin
-    puts "#{header}"
-    puts "#{sep}"
+    # Print colored header: Exec and Args colored; Path is default color
+    printf("%s%6s%s %s%6s%s %s\n", exec_col, "Exec", reset_col, args_col, "Args", reset_col, "Path")
+    puts sep
   rescue Errno::EPIPE
     return
   end
@@ -108,7 +111,7 @@ def show_paths_command(args)
   # and how many commands were executed in that folder (exec_count)
   rows.each do |row|
     path = row['path']
-    type = row['type'] == "f" ? 'file' : 'dir'
+    is_dir = row['type'] == 'd'
     # Count how many times this path was referenced as an arg
     args_count = db.get_first_value(
       "SELECT COUNT(*) FROM path_args WHERE path_id = (SELECT id FROM paths WHERE path = ?)", path
@@ -121,8 +124,18 @@ def show_paths_command(args)
     begin
       exec_str = exec_count.to_s.rjust(6)
       args_str = args_count.to_s.rjust(6)
-      type_str = type.ljust(6)
-      puts "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} #{type_col}#{type_str}#{reset_col} #{path}"
+      # Choose coloring for directories vs files
+      # Ensure directory paths end with a slash for clarity
+      if is_dir
+        # Remove any trailing slash before coloring, then append a default-color slash
+        base = path.end_with?('/') ? path.chomp('/') : path
+        display_path = "#{dir_path_col}#{base}#{reset_col}/"
+      else
+        display_path = path
+      end
+
+      # Print Exec and Args with distinct colors; Path displayed with colored base and default slash
+      puts "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} #{display_path}"
     rescue Errno::EPIPE
       return
     end
