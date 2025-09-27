@@ -1,5 +1,19 @@
 #!/usr/bin/env ruby
 
+def build_paths_option_parser(options)
+  OptionParser.new do |opts|
+    opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
+    opts.on("--files", "Show all unique file paths") { options[:files] = true }
+    opts.on("--dirs", "Show all unique directory paths") { options[:dirs] = true }
+    opts.on("--regex", "Interpret searchterm as a Ruby regex") { options[:regex] = true }
+    opts.on("--count", "Show usage frequency for each path") { options[:count] = true }
+    opts.on("--asc", "Order results ascending") { options[:asc] = true }
+    opts.on("--desc", "Order results descending") { options[:desc] = true }
+    opts.on("--sort-by FIELD", "Sort by exec, args, path, or type") { |field| options[:sort_by] = field }
+    opts.on("--plain", "Output only paths, one per line") { options[:format] = 'plain' }
+  end
+end
+
 def show_paths_command(args)
   options = {
     files: false,
@@ -11,18 +25,7 @@ def show_paths_command(args)
     desc: false,
     sort_by: nil
   }
-
-  OptionParser.new do |opts|
-    opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
-    opts.on("--files", "Show all unique file paths") { options[:files] = true }
-    opts.on("--dirs", "Show all unique directory paths") { options[:dirs] = true }
-    opts.on("--regex", "Interpret searchterm as a Ruby regex") { options[:regex] = true }
-    opts.on("--count", "Show usage frequency for each path") { options[:count] = true }
-    opts.on("--asc", "Order results ascending") { options[:asc] = true }
-    opts.on("--desc", "Order results descending") { options[:desc] = true }
-    opts.on("--sort-by FIELD", "Sort by exec, args, path, or type") { |field| options[:sort_by] = field }
-    opts.on("--plain", "Output only paths, one per line") { options[:format] = 'plain' }
-  end.parse!(args)
+  build_paths_option_parser(options).parse!(args)
   # Accept positional searchterm
   if args.length > 0 && !args[0].start_with?('-')
     options[:searchterm] = args.shift
@@ -99,6 +102,7 @@ def show_paths_command(args)
   end
 
   # Print header with colored columns (similar style to query interactive output)
+  # "Exec" = number of commands executed in this directory (cwd), "Args" = number of times this path was used as a command argument
   # Choose distinct colors for Exec and Args columns
   exec_col = "\e[38;5;207m"   # pink-ish for exec count
   args_col = "\e[38;5;80m"    # green-ish for args count
@@ -233,13 +237,7 @@ def cleanup_orphaned_entries(db, verbose = false)
   removed_counts
 end
 
-# Handle cleanup command
-def handle_cleanup(args)
-  options = {
-    verbose: false,
-    dry_run: false
-  }
-
+def build_cleanup_option_parser(options)
   OptionParser.new do |opts|
     opts.banner = "Usage: histlog cleanup [options]"
     opts.on("-v", "--verbose", "Show detailed cleanup progress") { options[:verbose] = true }
@@ -248,7 +246,16 @@ def handle_cleanup(args)
       puts opts
       exit 0
     end
-  end.parse!(args)
+  end
+end
+
+# Handle cleanup command
+def handle_cleanup(args)
+  options = {
+    verbose: false,
+    dry_run: false
+  }
+  build_cleanup_option_parser(options).parse!(args)
 
   db_path = get_db_path
   unless File.exist?(db_path)
@@ -331,12 +338,7 @@ def handle_cleanup(args)
   db.close
 end
 
-# Handle info command - show database and system information
-def handle_info(args)
-  options = {
-    verbose: false
-  }
-
+def build_info_option_parser(options)
   OptionParser.new do |opts|
     opts.banner = "Usage: histlog info [options]"
     opts.on("-v", "--verbose", "Show detailed system information") { options[:verbose] = true }
@@ -344,7 +346,15 @@ def handle_info(args)
       puts opts
       exit 0
     end
-  end.parse!(args)
+  end
+end
+
+# Handle info command - show database and system information
+def handle_info(args)
+  options = {
+    verbose: false
+  }
+  build_info_option_parser(options).parse!(args)
 
   db_path = get_db_path
 
