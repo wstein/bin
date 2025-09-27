@@ -84,9 +84,20 @@ def show_paths_command(args)
     end
   end
 
-  # Debug print if no results
-  puts "exec\targs\ttype\tpath"
-  puts "----\t----\t----\t----"
+  # Print header with colored columns (similar style to query interactive output)
+  exec_col = "\e[38;5;207m"   # pink-ish for exec count
+  args_col = "\e[38;5;80m"    # green-ish for args count
+  type_col = "\e[38;5;141m"   # purple for type
+  reset_col = "\e[0m"
+
+  header = "%6s %6s %-6s %s" % ["Exec", "Args", "Type", "Path"]
+  sep = "-------------------------"
+  begin
+    puts "#{header}"
+    puts "#{sep}"
+  rescue Errno::EPIPE
+    return
+  end
 
   if rows.empty?
     puts "No results found."
@@ -106,7 +117,15 @@ def show_paths_command(args)
     path_id = db.get_first_value("SELECT id FROM paths WHERE path = ?", path)
     exec_count = db.get_first_value("SELECT COUNT(*) FROM commands WHERE path_old_id = ? OR path_new_id = ?", path_id,
                                     path_id)
-    puts "#{exec_count}\t#{args_count}\t#{type}\t#{path}"
+    # Colorize counts and type, align columns nicely
+    begin
+      exec_str = exec_count.to_s.rjust(6)
+      args_str = args_count.to_s.rjust(6)
+      type_str = type.ljust(6)
+      puts "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} #{type_col}#{type_str}#{reset_col} #{path}"
+    rescue Errno::EPIPE
+      return
+    end
   end
 end
 
@@ -1933,15 +1952,39 @@ def output_interactive_results(results, options)
   # Dracula color codes
   # Timestamp: #6272a4, Command: default, Result: ✓ #50fa7b, ✗ #ff5555, Duration: #bd93f9
   begin
+    # Colors
+    ts_col = "\e[38;5;14m"
+    dur_col = "\e[33m"
+    success_col = "\e[38;5;84m"
+    fail_col = "\e[38;5;203m"
+    reset_col = "\e[0m"
+
+    # Header (PascalCase titles) with Status column
+    status_col = "\e[38;5;141m"
+    header = "%-19s %8s %-6s %s" % ["Timestamp", "Duration", "Status", "Command"]
+    # Separator length matches columns: 19 +1 +8 +1 +6 +1 +7 = 43
+    sep = '-' * 43
+    # Colored header using same column widths
+    printf("%s%-19s%s  %s%8s%s %s%-4s%s %s\n", ts_col, "Timestamp", reset_col, dur_col, "Duration", reset_col,
+           status_col, "Stat", reset_col, "Command")
+    puts sep
+
     results.each do |row|
       timestamp = row['start_time'] ? Time.at(row['start_time']).strftime('%Y-%m-%d %H:%M:%S') : 'Unknown'
-      exit_code = row['exit_code'] || 0
       duration = row['duration'] ? sprintf('%8.3fs', row['duration']) : '-,---s'
-      status = exit_code == 0 ? "\e[38;5;84m✓\e[0m   " : sprintf("\e[38;5;203m✗%-3d\e[0m", exit_code)
-      ts_col = "\e[38;5;14m"
-      dur_col = "\e[33m"
+      exit_code = row['exit_code'] || 0
+      status_text = exit_code == 0 ? "✓" : "✗#{exit_code}"
+      # Pad status to 6 chars so columns align visually (padding applied before adding ANSI colors)
+      status_padded = status_text.ljust(4)
+      colored_status = if exit_code == 0
+                         "#{success_col}#{status_padded}#{reset_col}"
+                       else
+                         "#{fail_col}#{status_padded}#{reset_col}"
+                       end
       command = row['cmd_text'].gsub("\n", "\n                                   ")
-      puts "#{ts_col}#{timestamp} #{dur_col}#{duration} #{status}\e[0m #{command}"
+      # Print timestamp and duration aligned, then colored status, then command
+      printf("%s%-19s%s %s%8s%s %s %s\n", ts_col, timestamp, reset_col, dur_col, duration, reset_col, colored_status,
+             command)
     end
   rescue Errno::EPIPE
     exit 0
