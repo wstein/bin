@@ -1,0 +1,200 @@
+= Aggregate directories derived from file arguments
+Werner Stein <wstein>
+:revnumber: 1
+:doctype: article
+
+== Overview
+
+This document specifies a new optional behavior for the `histlog paths` command: the ability to aggregate directory entries derived from file arguments so directory statistics include counts contributed by files whose path roots are within those directories.
+
+The current `paths` output lists paths (both directories and files) together with aggregated counts such as `Exec` and `Args`. In practice a file path like `/tmp/fish/test.txt` contributes only its own counts; the containing directory `/tmp/fish/` may not appear unless it was explicitly used as a path on its own. The new feature ensures the directory part of each file path is present in the output and receives aggregated counts from its contained files when the feature is enabled.
+
+This is useful for quickly understanding per-directory usage even when commands reference files directly rather than the directory.
+
+
+== Small "contract" for the new feature
+
+- Name: --lift-files (primary), optional short flag `-a`.
+- Name: --roll-up-dirs (primary), optional short flag `-A`.
+- Inputs:
+  - The same input that `histlog paths` currently uses to compute path statistics: a set of path rows, where each row has at least `path` (string), `exec` (int), and `args` (int).
+  - CLI flags `--lift-files` (`-a`) and/or `--roll-up-dirs` (`-A`).
+- Outputs:
+  - The same table previously emitted by `histlog paths`, augmented with new directory rows based on the aggregation rules.
+- Aggregation rules: The flags are orthogonal and can be used independently or together. The order in which they are specified does not matter (e.g., `-aA` is equivalent to `-Aa`).
+  - `--lift-files` (`-a`): For every **file path** in the original dataset, its `Exec` and `Args` counts are "lifted" into its immediate parent directory. This flag does not affect existing directory paths.
+  - `--roll-up-dirs` (`-A`): For every **directory path** in the dataset (including those created by `-a`), its `Exec` and `Args` counts are "rolled up" into all of its ancestor directories up to the root (`/`). When used alone, it only operates on the original directories in the dataset.
+- Path canonicalization:
+  - Paths from the database are assumed to be absolute and canonical (they do not contain `.` or `..` components).
+  - The primary canonicalization step during aggregation is to ensure that all directory paths used as keys in the counts map have a consistent trailing slash (e.g., `/tmp/fish/`). File paths must not have a trailing slash.
+- Implementation constraints:
+  - Do not double-count: use a snapshot of original rows to drive aggregation. When combining flags, the `-a` aggregation should complete before the `-A` aggregation begins.
+  - Preserve existing output formatting (column widths, header, sort order).
+
+
+== Motivation and examples
+
+The two flags provide distinct views of path usage. `-a` shows the impact of files on their containing directories, while `-A` shows the impact of directory usage on the overall filesystem hierarchy.
+
+Given the following original output:
+
+[source, subs="quotes"]
+----
+> histlog paths fish
+  Exec   Args Path
+-------------------------
+    23      0 /Users/werner/.config/fish/
+     0      2 /Users/werner/.config/fish/fish_variables
+     1      0 /tmp/
+     0      1 /tmp/fish/test.txt
+----
+
+=== Using `-a` (--lift-files)
+
+This lifts file counts to their immediate parent directory.
+
+[source, subs="quotes"]
+----
+> histlog paths fish -a
+  Exec   Args Path
+-------------------------
+    23      2 /Users/werner/.config/fish/
+     0      2 /Users/werner/.config/fish/fish_variables
+     1      0 /tmp/
+     0      1 /tmp/fish/
+     0      1 /tmp/fish/test.txt
+----
+* The counts from `/Users/werner/.config/fish/fish_variables` `(0, 2)` are added to its parent, `/Users/werner/.config/fish/`.
+* The counts from `/tmp/fish/test.txt` `(0, 1)` are used to create its parent, `/tmp/fish/`.
+
+=== Using `-A` (--roll-up-dirs)
+
+This rolls up counts from the *original directories* into the ancestor tree.
+
+[source, subs="quotes"]
+----
+> histlog paths fish -A
+  Exec   Args Path
+-------------------------
+    24      0 /
+    23      0 /Users/
+    23      0 /Users/werner/
+    23      0 /Users/werner/.config/
+    23      0 /Users/werner/.config/fish/
+     0      2 /Users/werner/.config/fish/fish_variables
+     1      0 /tmp/
+     0      1 /tmp/fish/test.txt
+----
+* The counts from `/Users/werner/.config/fish/` `(23, 0)` are propagated to `/Users/werner/.config/`, `/Users/werner/`, `/Users/`, and `/`.
+* The counts from `/tmp/` `(1, 0)` are propagated to `/`.
+* The root `/` receives counts from both, summing to `(24, 0)`.
+* File paths are ignored by this flag.
+
+=== Using `-aA` (Combined)
+
+This first lifts file counts with `-a`, then rolls up all directory counts with `-A`.
+
+[source, subs="quotes"]
+----
+> histlog paths fish -aA
+  Exec   Args Path
+-------------------------
+    24      3 /
+    23      2 /Users/
+    23      2 /Users/werner/
+    23      2 /Users/werner/.config/
+    23      2 /Users/werner/.config/fish/
+     0      2 /Users/werner/.config/fish/fish_variables
+     1      1 /tmp/
+     0      1 /tmp/fish/
+     0      1 /tmp/fish/test.txt
+----
+* First, Phase 1 (`-a`) runs on the original data. It lifts file counts to their parents, which updates `/Users/werner/.config/fish/` to `(23, 2)` and creates `/tmp/fish/` as `(0, 1)`.
+* Then, Phase 2 (`-A`) runs on the resulting dataset. It rolls up the counts from all directories (`/Users/werner/.config/fish/` at `(23, 2)`, `/tmp/` at `(1, 0)`, and `/tmp/fish/` at `(0, 1)`), propagating them to their respective ancestors. This results in the final counts, such as the root `/` receiving a total of `(24, 3)`.
+
+
+== CLI design
+
+* Flag: `--lift-files` (short form `-a`). Lifts file counts to their immediate parent directory.
+* Flag: `--roll-up-dirs` (short form `-A`). Rolls up directory counts into all ancestor directories.
+* Help text:
++
+[source,text]
+----
+-a, --lift-files      Lift file counts to their immediate parent directory.
+-A, --roll-up-dirs    Roll up directory counts into all ancestor directories.
+----
+
+=== Naming Rationale
+
+The flag names were chosen to be both descriptive and memorable, combining professional terminology with intuitive short forms.
+
+`--lift-files`::
+The term "lift" is used as a metaphor for elevating or moving a file's statistics up one level to its immediate parent directory. It's a concise verb that captures the single-level transformation.
+
+`--roll-up-dirs`::
+"Roll-up" is a standard term from data warehousing and Online Analytical Processing (OLAP). It formally describes the action of summarizing hierarchical data (in this case, filesystem paths) into higher levels. Using this term signals that the tool employs a well-understood data aggregation principle, as described in foundational texts like "Data Mining: Concepts and Techniques" by Han, et al.
+
+`-a` and `-A` (short flags)::
+The short flags provide a simple mnemonic. `-a` can be thought of as the basic "aggregate" operation. The capital `-A` implies a more powerful, "All-encompassing" aggregation that includes all ancestors. This convention is common in many command-line tools where a lowercase flag provides a basic feature and an uppercase version provides a more extensive or recursive version of that feature.
+
+== Implementation steps (detailed guidance for implementer or an AI)
+
+1. Locate the `paths` command in the `histlog` command-line tool. Identify where options are parsed (OptionParser or equivalent) and where the path counts are collected into an internal map/hash.
+
+2. Add option parsing entries for:
+   * `--lift-files` / `-a`
+   * `--roll-up-dirs` / `-A`
+   Update the `--help` output to describe both orthogonal options as shown in the CLI design section.
+
+3. Canonicalize path keys early in the data collection pipeline:
+   * For each encountered path, call a normalize function (e.g. `File.expand_path(path)`), collapse redundant separators and path components, and ensure directories are represented with a trailing slash in the canonical form.
+   * Use consistent normalization for both original rows and for parent/ancestor keys created by the aggregator.
+
+4. Implement the aggregation logic. This should be a two-phase process if both flags are present.
+   a. **Phase 1 (`-a`)**: If `-a` is set, iterate a snapshot of the original counts. For each **file path**, add its counts to its immediate parent directory in the main counts map.
+   b. **Phase 2 (`-A`)**: If `-A` is set, take a snapshot of the current counts map (which may have been modified by Phase 1). For each **directory path** in this snapshot, iterate up its ancestors (`File.dirname`) and add its counts to each ancestor in the main counts map.
+
+5. Be careful to use snapshots to avoid runaway aggregation. The input to Phase 2 must be the complete set of directories after Phase 1 is finished.
+
+6. Sorting and output formatting:
+   * Preserve the existing sort order and column alignment (typically sort by `Exec` descending, `Args` descending, then path). All rows, both original and newly generated, will be sorted together based on these criteria.
+   * For directory keys ensure the path column shows the trailing slash (human-friendly).
+
+7. Tests:
+   * Add unit tests that exercise each of the three examples provided above (`-a`, `-A`, `-aA`) and assert that the output matches exactly.
+   * Test edge cases like paths at the root (`/file.txt`).
+   * Prefer the project's current test framework (Minitest or RSpec) and style.
+
+8. Lint and run tests. Fix any style/lint issues. Update the tool help output and README if present.
+
+
+== Edge cases and decisions
+
+* Relative vs absolute paths: Not a concern as all paths in the database are absolute and canonical.
+* Symlinks: by default do not resolve symlinks to real paths (do not call `realpath`), unless repository semantics require it. If resolving symlinks is desired, make it an explicit option.
+* Root handling: ensure the root directory becomes `/` (not `//`) and that aggregation stops there.
+* File/Directory Detection: The `paths` table in the database contains a `type` column which explicitly marks each path as a file (`f`) or a directory (`d`). This column should be used as the definitive source for distinguishing between files and directories.
+
+
+== Acceptance criteria
+
+- When `histlog paths` is run with `-a`, file counts are correctly aggregated into parent directories.
+- When `histlog paths` is run with `-A`, original directory counts are correctly propagated to ancestors.
+- When `histlog paths` is run with `-aA`, both operations occur correctly in sequence.
+- Existing rows are not removed; they are augmented.
+- Output formatting remains consistent and human-readable.
+- Unit tests cover all three examples and edge cases.
+
+
+== Backwards compatibility and notes
+
+- This feature is opt-in; default behavior without flags is unchanged.
+- The new flags should be clearly documented in `--help` and in any user documentation.
+
+
+== Suggested follow-ups
+
+- Consider adding `--depth N` to limit ancestor aggregation depth.
+- Consider a policy flag to control symlink resolution.
+- Performance: on very large datasets consider streaming approaches or limiting aggregation to displayed top-N rows.
