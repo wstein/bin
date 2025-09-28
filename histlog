@@ -5310,11 +5310,11 @@ class HistlogApp
   def handle_on_session
     session_data = {
       shell: ENV['SHELL'],
-      tty: get_tty,
+      tty: Histlog::Utils.get_tty,
       cwd: Dir.pwd,
       pid: Process.pid,
       parent_pid: Process.ppid,
-      timezone: get_timezone
+      timezone: Histlog::Utils.get_timezone
     }
 
     # Store session in SQLite database and get the generated session_id
