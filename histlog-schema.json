@@ -1,0 +1,182 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"$id": "https://github.com/wstein/histlog/blob/main/histlog-schema.json",
+	"title": "Histlog Command History Schema (object format)",
+	"description": "Top-level object with sessions and commands arrays exported/imported by histlog",
+	"type": "object",
+	"properties": {
+		"schema_version": {
+			"type": "integer",
+			"description": "Schema version number",
+			"minimum": 1
+		},
+		"sessions": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "integer"
+					},
+					"start_time": {
+						"type": [
+							"number",
+							"string"
+						]
+					},
+					"shell": {
+						"type": "string"
+					},
+					"tty": {
+						"type": "string"
+					},
+					"pid": {
+						"type": "integer"
+					},
+					"parent_pid": {
+						"type": "integer"
+					},
+					"timezone": {
+						"type": "string"
+					},
+					"cwd": {
+						"type": "string"
+					}
+				},
+				"additionalProperties": false
+			}
+		},
+		"commands": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "integer"
+					},
+					"cmd_text": {
+						"type": "string"
+					},
+					"command": {
+						"type": "string"
+					},
+					"session_id": {
+						"type": "integer"
+					},
+					"session": {
+						"type": "object"
+					},
+					"start_time": {
+						"type": [
+							"number",
+							"string"
+						]
+					},
+					"duration": {
+						"type": "number"
+					},
+					"cwd_old": {
+						"type": "string"
+					},
+					"cwd_new": {
+						"type": "string"
+					},
+					"exit_code": {
+						"type": [
+							"integer",
+							"null"
+						]
+					},
+					"is_private": {
+						"type": "boolean"
+					},
+					"is_assisted": {
+						"type": "boolean"
+					},
+					"pid": {
+						"type": "integer"
+					},
+					"shell": {
+						"type": "string"
+					},
+					"tty": {
+						"type": "string"
+					},
+					"path_args": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"position": {
+									"type": "integer"
+								},
+								"path": {
+									"type": "string"
+								},
+								"type": {
+									"type": "string",
+									"enum": [
+										"file",
+										"dir"
+									]
+								}
+							},
+							"required": [
+								"position",
+								"path",
+								"type"
+							],
+							"additionalProperties": false
+						}
+					}
+				},
+				"required": [
+					"cmd_text"
+				],
+				"additionalProperties": false
+			}
+		}
+	},
+	"required": [
+		"sessions",
+		"commands"
+	],
+	"examples": [
+		{
+			"schema_version": 1,
+			"sessions": [
+				{
+					"id": 84,
+					"start_time": "2025-01-29 20:11:44",
+					"shell": "/opt/homebrew/bin/fish",
+					"tty": "/dev/ttys011",
+					"pid": 76441,
+					"parent_pid": 1,
+					"timezone": "UTC",
+					"cwd": "/Users/werner/bin"
+				}
+			],
+			"commands": [
+				{
+					"id": 45468,
+					"cmd_text": "fd histlog ~/.local/",
+					"session_id": 84,
+					"start_time": "2025-01-29 20:11:44",
+					"duration": 0.021,
+					"cwd_old": "/Users/werner/bin",
+					"cwd_new": "/Users/werner/bin",
+					"exit_code": 0,
+					"is_private": false,
+					"is_assisted": true,
+					"path_args": [
+						{
+							"position": 1,
+							"path": "/Users/werner/bin/histlog",
+							"type": "file"
+						}
+					]
+				}
+			]
+		}
+	]
+}

@@ -4,6 +4,43 @@ module Histlog
   module Config
     module_function
 
+    # Local helper: format bytes human-readably for DB reports
+    def format_bytes(bytes)
+      units = ['B', 'KB', 'MB', 'GB', 'TB']
+      size = bytes.to_f
+      unit_index = 0
+
+      while size >= 1024 && unit_index < units.length - 1
+        size /= 1024
+        unit_index += 1
+      end
+
+      "#{size.round(2)} #{units[unit_index]}"
+    end
+
+    def build_cleanup_option_parser(options)
+      OptionParser.new do |opts|
+        opts.banner = "Usage: histlog db cleanup [options]"
+        opts.on("-v", "--verbose", "Show detailed cleanup progress") { options[:verbose] = true }
+        opts.on("-n", "--dry-run", "Show what would be cleaned without making changes") { options[:dry_run] = true }
+        opts.on("-h", "--help", "Show this help") do
+          puts opts
+          exit 0
+        end
+      end
+    end
+
+    def build_info_option_parser(options)
+      OptionParser.new do |opts|
+        opts.banner = "Usage: histlog db info [options]"
+        opts.on("-v", "--verbose", "Show detailed system information") { options[:verbose] = true }
+        opts.on("-h", "--help", "Show this help") do
+          puts opts
+          exit 0
+        end
+      end
+    end
+
     DEFAULT_DB_PATH = File.expand_path('~/.local/share/histlog/histlog.db')
 
     COMMAND_OPTION_DEFAULTS = {
@@ -95,7 +132,130 @@ module Histlog
 
   # CLI command handling module
   module CLI
+    # Common utilities shared across CLI modules
+    module Common
+      module_function
+
+      # Formatting utilities
+      def format_bytes(bytes)
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        size = bytes.to_f
+        unit_index = 0
+
+        while size >= 1024 && unit_index < units.length - 1
+          size /= 1024
+          unit_index += 1
+        end
+
+        "#{size.round(2)} #{units[unit_index]}"
+      end
+
+      def format_time(timestamp)
+        return 'unknown' unless timestamp
+
+        # Convert from Julian Day to Unix timestamp
+        unix_time = (timestamp - 2440587.5) * 86400
+        Time.at(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+      end
+
+      def format_duration(duration)
+        return 'N/A' unless duration
+
+        if duration < 1
+          "#{(duration * 1000).round(1)}ms"
+        elsif duration < 60
+          "#{duration.round(2)}s"
+        elsif duration < 3600
+          minutes = (duration / 60).to_i
+          seconds = (duration % 60).round(1)
+          "#{minutes}m #{seconds}s"
+        else
+          hours = (duration / 3600).to_i
+          minutes = ((duration % 3600) / 60).to_i
+          "#{hours}h #{minutes}m"
+        end
+      end
+
+      # Database utilities
+      def ensure_database_exists(db_path)
+        unless File.exist?(db_path)
+          raise "Database not found: #{db_path}"
+        end
+
+        true
+      end
+
+      def format_database_error(error)
+        "Database error: #{error.message}"
+      end
+
+      # Option parsing
+      def build_cleanup_option_parser(options)
+        OptionParser.new do |opts|
+          opts.banner = "Usage: histlog db cleanup [options]"
+          opts.on("-v", "--verbose", "Show detailed cleanup progress") { options[:verbose] = true }
+          opts.on("-n", "--dry-run", "Show what would be cleaned without making changes") { options[:dry_run] = true }
+          opts.on("-h", "--help", "Show this help") do
+            puts opts
+            exit 0
+          end
+        end
+      end
+
+      def build_info_option_parser(options)
+        OptionParser.new do |opts|
+          opts.banner = "Usage: histlog db info [options]"
+          opts.on("-v", "--verbose", "Show detailed system information") { options[:verbose] = true }
+          opts.on("-h", "--help", "Show this help") do
+            puts opts
+            exit 0
+          end
+        end
+      end
+
+      # Color palette access (delegate to Config)
+      def colors(context = nil)
+        Histlog::Config.colors(context)
+      end
+    end
+
     module_function
+
+    # Print top-level help. If all is true, include porcelain/internal commands as well.
+    def show_help(all = false)
+      puts "Usage: histlog <command> [options]"
+      puts ""
+
+      puts "Available commands:"
+      puts "  query       - Flexible interactive query of your command history"
+      puts "  history     - Show recent commands (supports many filters)"
+      puts "  sessions    - List and inspect recorded shell sessions"
+      puts "  import      - Import shell history from files (json, yaml, fish, zsh, nu, bash)"
+      puts "  paths       - Show tracked file/directory paths and usage counts"
+      puts "  db          - Database operations (cleanup, info, stats, maintain)"
+      puts "  init        - Print shell integration snippets for supported shells"
+      puts "  mcp         - Run the MCP server (developer feature)"
+      puts "  help        - Show this help"
+
+      puts ""
+      puts "Global flags:"
+      puts "  -h, --help        Show top-level help (this page)"
+      puts "  --help-all        Show full help including porcelain/internal commands"
+      puts ""
+      puts "Environment variables (affect behavior):"
+      puts "  HISTLOG_DB        Path to the histlog SQLite database (overrides default)"
+
+      if all
+        puts ""
+        puts "Porcelain / internal commands (normally hidden):"
+        puts "  _on_session - Initialize a new shell session (internal)"
+        puts "  _on_preexec - Record command start (internal)"
+        puts "  _on_postcmd - Record command completion (internal)"
+      end
+
+      puts ""
+      puts "For command-specific help run: histlog <command> --help"
+    end
 
     def build_paths_option_parser(options)
       OptionParser.new do |opts|
@@ -270,6 +430,596 @@ module Histlog
       end
     end
 
+    # Database subcommand helpers (group DB-related CLI operations)
+    module DB
+      module_function
+
+      # OptionParser for `histlog db info` - delegates to Common
+      def build_info_option_parser(options)
+        Histlog::CLI::Common.build_info_option_parser(options)
+      end
+
+      def db_cleanup(args)
+        options = Histlog::Config.command_options(:cleanup)
+        Histlog::CLI::Common.build_cleanup_option_parser(options).parse!(args)
+
+        db_path = Histlog::Utils.get_db_path
+        unless File.exist?(db_path)
+          puts "No histlog.db found in current directory"
+          return
+        end
+
+        db = SQLite3::Database.new(db_path)
+        db.results_as_hash = true
+
+        if options[:dry_run]
+          puts "=== Dry Run: Orphaned Entries Found ==="
+
+          # Count orphaned paths
+          orphan_paths = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM paths p
+            LEFT JOIN commands c1 ON p.id = c1.path_old_id
+            LEFT JOIN commands c2 ON p.id = c2.path_new_id
+            LEFT JOIN path_args pa ON p.id = pa.path_id
+            WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
+          SQL
+          puts "Would remove #{orphan_paths} orphaned paths"
+
+          # Count orphaned cmd_texts
+          orphan_cmd_texts = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM cmd_texts ct
+            LEFT JOIN commands c ON ct.id = c.cmd_text_id
+            WHERE c.id IS NULL
+          SQL
+          puts "Would remove #{orphan_cmd_texts} orphaned cmd_texts"
+
+          # Count orphaned path_args
+          orphan_path_args = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM path_args pa
+            LEFT JOIN paths p ON pa.path_id = p.id
+            LEFT JOIN commands c ON pa.command_id = c.id
+            WHERE p.id IS NULL OR c.id IS NULL
+          SQL
+          puts "Would remove #{orphan_path_args} orphaned path_args"
+
+          # Count orphaned ttys, shells, sessions (with error handling)
+          begin
+            orphan_ttys = db.get_first_value(<<-SQL)
+              SELECT COUNT(*) FROM ttys t
+              LEFT JOIN sessions s ON t.id = s.tty_id
+              WHERE s.id IS NULL
+            SQL
+            puts "Would remove #{orphan_ttys} orphaned ttys"
+          rescue SQLite3::SQLException => e
+            puts "Cannot check ttys: #{e.message}"
+          end
+
+          begin
+            orphan_shells = db.get_first_value(<<-SQL)
+              SELECT COUNT(*) FROM shells s
+              LEFT JOIN sessions sess ON s.id = sess.shell_id
+              WHERE sess.id IS NULL
+            SQL
+            puts "Would remove #{orphan_shells} orphaned shells"
+          rescue SQLite3::SQLException => e
+            puts "Cannot check shells: #{e.message}"
+          end
+
+          begin
+            orphan_sessions = db.get_first_value(<<-SQL)
+              SELECT COUNT(*) FROM sessions s
+              LEFT JOIN commands c ON s.id = c.session_id
+              WHERE c.id IS NULL
+            SQL
+            puts "Would remove #{orphan_sessions} orphaned sessions"
+          rescue SQLite3::SQLException => e
+            puts "Cannot check sessions: #{e.message}"
+          end
+
+          puts "\nRun 'histlog cleanup' without --dry-run to perform cleanup."
+        else
+          Histlog::DB.cleanup_orphaned_entries(db, options[:verbose])
+        end
+
+        db.close
+      end
+
+      def db_info(args)
+        options = Histlog::Config.command_options(:info)
+        build_info_option_parser(options).parse!(args)
+
+        db_path = Histlog::Utils.get_db_path
+
+        puts "=== Histlog Database Information ==="
+        puts "Database path: #{db_path}"
+
+        if File.exist?(db_path)
+          puts "Database exists: Yes"
+          puts "Database size: #{Histlog::CLI::Common.format_bytes(File.size(db_path))}"
+          puts "Last modified: #{File.mtime(db_path).strftime('%Y-%m-%d %H:%M:%S')}"
+
+          # Connect to get database info
+          db = SQLite3::Database.new(db_path)
+          db.results_as_hash = true
+
+          # Print schema_version (if present) near the top-level info
+          begin
+            sv = db.get_first_value("SELECT value FROM metadata WHERE key = 'schema_version'")
+            puts "DB schema version: #{sv}" if sv
+          rescue SQLite3::SQLException
+            # ignore if metadata table is missing
+          end
+
+          # Get table counts
+          puts "\n=== Table Statistics ==="
+          tables = %w[commands cmd_texts paths path_args sessions shells ttys]
+          tables.each do |table|
+            begin
+              count = db.get_first_value("SELECT COUNT(*) FROM #{table}")
+              puts "#{table.ljust(12)}: #{count} records"
+            rescue SQLite3::SQLException => e
+              puts "#{table.ljust(12)}: (error: #{e.message})"
+            end
+          end
+
+          # Database settings
+          puts "\n=== Database Configuration ==="
+          begin
+            journal_mode = db.get_first_value("PRAGMA journal_mode")
+            synchronous = db.get_first_value("PRAGMA synchronous")
+            cache_size = db.get_first_value("PRAGMA cache_size")
+            page_size = db.get_first_value("PRAGMA page_size")
+
+            puts "Journal mode: #{journal_mode}"
+            puts "Synchronous: #{synchronous}"
+            puts "Cache size: #{cache_size} pages"
+            puts "Page size: #{page_size} bytes"
+          rescue SQLite3::SQLException => e
+            puts "Could not retrieve database settings: #{e.message}"
+          end
+
+          # Integrity check
+          puts "\n=== Database Health ==="
+          begin
+            integrity = db.get_first_value("PRAGMA integrity_check")
+            puts "Integrity check: #{integrity}"
+          rescue SQLite3::SQLException => e
+            puts "Integrity check failed: #{e.message}"
+          end
+
+          if options[:verbose]
+            # Show recent activity
+            puts "\n=== Recent Activity ==="
+            begin
+              recent = db.execute(<<-SQL, [Time.now.to_f - 86400])
+                SELECT COUNT(*) as count, DATE(start_time, 'unixepoch') as date
+                FROM commands
+                WHERE start_time > ?
+                GROUP BY DATE(start_time, 'unixepoch')
+                ORDER BY date DESC
+                LIMIT 7
+              SQL
+
+              if recent.any?
+                puts "Commands executed in last 7 days:"
+                recent.each do |row|
+                  puts "  #{row['date']}: #{row['count']} commands"
+                end
+              else
+                puts "No recent command activity found"
+              end
+            rescue SQLite3::SQLException => e
+              puts "Could not retrieve recent activity: #{e.message}"
+            end
+
+            # Show schema_version and migration metadata if present
+            puts "\n=== Schema / Migration Metadata ==="
+            begin
+              # metadata table may not exist on very old DBs
+              meta_exists = db.get_first_value("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
+              if meta_exists
+                rows = db.execute("SELECT key, value FROM metadata ORDER BY key")
+                if rows && rows.any?
+                  rows.each do |r|
+                    puts "#{r['key'].ljust(20)}: #{r['value']}"
+                  end
+                else
+                  puts "No metadata entries found."
+                end
+              else
+                puts "No metadata table found in DB."
+              end
+            rescue SQLite3::SQLException => e
+              puts "Could not read metadata: #{e.message}"
+            end
+            # Show table sizes
+            puts "\n=== Detailed Table Information ==="
+            tables.each do |table|
+              begin
+                result = db.execute("SELECT COUNT(*) as count, MIN(created_at) as first, MAX(created_at) as last FROM #{table}").first
+                if result && result['count'] > 0
+                  first_date = result['first'] ? Time.at((result['first'] - 2440587.5) * 86400).strftime('%Y-%m-%d') : 'unknown'
+                  last_date = result['last'] ? Time.at((result['last'] - 2440587.5) * 86400).strftime('%Y-%m-%d') : 'unknown'
+                  puts "#{table}:"
+                  puts "  Records: #{result['count']}"
+                  puts "  First entry: #{first_date}"
+                  puts "  Last entry: #{last_date}"
+                end
+              rescue SQLite3::SQLException => e
+                puts "#{table}: (error: #{e.message})"
+              end
+            end
+          end
+
+          db.close
+        else
+          puts "Database exists: No"
+          puts "Run 'histlog help' to get started"
+        end
+
+        # System information
+        puts "\n=== System Information ==="
+        puts "Histlog script: #{File.expand_path(__FILE__)}"
+        puts "Ruby version: #{RUBY_VERSION}"
+        puts "SQLite3 gem: #{SQLite3::VERSION}" rescue puts "SQLite3 gem: (not available)"
+        puts "Operating system: #{RUBY_PLATFORM}"
+
+        # Environment variables
+        puts "\n=== Environment ==="
+        puts "HISTLOG_DB: #{ENV['HISTLOG_DB'] || '(not set)'}"
+        puts "Session ID: #{ENV['__histlog_session_id'] || '(not set)'}"
+        puts "Current shell: #{ENV['SHELL'] || '(unknown)'}"
+        puts "Current TTY: #{Histlog::Utils.get_tty rescue '(unknown)'}"
+
+        if options[:verbose]
+          puts "\n=== Shell Integration Status ==="
+          shells = {
+            'fish' => '~/.config/fish/config.fish',
+            'zsh' => '~/.zshrc',
+            'bash' => '~/.bashrc'
+          }
+
+          shells.each do |shell, config_file|
+            expanded_path = File.expand_path(config_file)
+            if File.exist?(expanded_path)
+              content = File.read(expanded_path)
+              if content.include?('histlog')
+                puts "#{shell.capitalize}: ✓ Integrated (found in #{config_file})"
+              else
+                puts "#{shell.capitalize}: ✗ Not integrated (#{config_file} exists but no histlog found)"
+              end
+            else
+              puts "#{shell.capitalize}: ? Config file not found (#{config_file})"
+            end
+          end
+        end
+      end
+
+      def db_stats(args)
+        OptionParser.new do |opts|
+          opts.banner = "Usage: histlog stats [options]"
+          opts.on("-h", "--help", "Show this help message") do
+            puts opts
+            puts
+            puts "Shows a summary of command history, most frequent commands, most accessed paths, and common failures."
+            puts "Example output:"
+            puts "\n=== Command History Summary ==="
+            puts "Total commands executed: 56"
+            puts "Unique commands: 42"
+            puts "Failed commands: 7 (12.5%)"
+            puts "Arguments tracked as paths: 12"
+            puts "\n=== Most Frequent Commands ==="
+            puts "Count  Avg Time Command"
+            exit 0
+          end
+        end.parse!(args)
+
+        # Connect to database
+        db_path = Histlog::Utils.get_db_path
+        unless File.exist?(db_path)
+          puts "No histlog.db found in current directory"
+          return
+        end
+
+        db = SQLite3::Database.new(db_path)
+        db.results_as_hash = true
+
+        puts "=== Command History Summary ==="
+        puts
+
+        # Basic stats
+        total_commands = db.execute("SELECT COUNT(*) as count FROM commands")[0]['count']
+        unique_commands = db.execute("SELECT COUNT(*) as count FROM cmd_texts")[0]['count']
+        failed_commands = db.execute("SELECT COUNT(*) as count FROM commands WHERE exit_code != 0")[0]['count']
+        tracked_paths = db.execute("SELECT COUNT(*) as count FROM path_args")[0]['count']
+
+        puts "Total commands executed: #{total_commands}"
+        puts "Unique commands: #{unique_commands}"
+        puts "Failed commands: #{failed_commands} (#{(failed_commands.to_f / total_commands * 100).round(2)}%)" if total_commands > 0
+        puts "Arguments tracked as paths: #{tracked_paths}"
+
+        if total_commands > 0
+          # Most used commands
+          puts "\n=== Most Frequent Commands ==="
+          frequent_commands = db.execute(<<-SQL)
+            SELECT
+              cmd_texts.command AS cmd_text,
+              COUNT(*) as count,
+              AVG(c.duration) as avg_duration,
+              MAX(c.created_at) as last_seen
+            FROM commands c
+            JOIN cmd_texts ON c.cmd_text_id = cmd_texts.id
+            WHERE c.duration IS NOT NULL
+            GROUP BY cmd_texts.id
+            ORDER BY count DESC
+            LIMIT 10
+          SQL
+
+          if frequent_commands.any?
+            puts "% -6s %-8s %-50s %-s" % ["Count", "Avg Time", "Command", "Last Used"]
+            puts "-" * 85
+            frequent_commands.each do |cmd|
+              avg_time = Histlog::Utils.format_duration(cmd['avg_duration'])
+              last_used = Histlog::Utils.format_time(cmd['last_seen'])
+              command_text = Histlog::Utils.truncate_command(cmd['cmd_text'], 45)
+              puts "% -6s %-8s %-50s %-s" % [cmd['count'], avg_time, command_text, last_used]
+            end
+          end
+
+          # Most accessed paths
+          puts "\n=== Most Accessed Paths ==="
+          frequent_paths = db.execute(<<-SQL)
+            SELECT
+              p.path,
+              p.type,
+              COUNT(*) as usage_count
+            FROM path_args ca
+            JOIN paths p ON ca.path_id = p.id
+            GROUP BY p.path
+            ORDER BY usage_count DESC
+            LIMIT 10
+          SQL
+
+          if frequent_paths.any?
+            puts "% -6s %-4s %-s" % ["Count", "Type", "Path"]
+            puts "-" * 60
+            frequent_paths.each do |path_data|
+              type_name = path_data['type'] == 'd' ? 'dir' : 'file'
+              puts "% -6s %-4s %-s" % [path_data['usage_count'], type_name, path_data['path']]
+            end
+          else
+            puts "No path arguments tracked yet"
+          end
+
+          # Most common failures
+          if failed_commands > 0
+            puts "\n=== Most Common Failures ==="
+            common_failures = db.execute(<<-SQL)
+              SELECT
+                cmd_texts.command AS cmd_text,
+                c.exit_code,
+                COUNT(*) as count,
+                MAX(c.created_at) as last_failure
+              FROM commands c
+              JOIN cmd_texts ON c.cmd_text_id = cmd_texts.id
+              WHERE c.exit_code != 0
+              GROUP BY cmd_texts.id, c.exit_code
+              ORDER BY count DESC
+              LIMIT 10
+            SQL
+
+            puts "% -6s %-4s %-50s %-s" % ["Count", "Exit", "Command", "Last Failure"]
+            puts "-" * 85
+            common_failures.each do |failure|
+              command_text = Histlog::Utils.truncate_command(failure['cmd_text'], 45)
+              last_fail = Histlog::Utils.format_time(failure['last_failure'])
+              puts "% -6s %-4s %-50s %-s" % [failure['count'], failure['exit_code'], command_text, last_fail]
+            end
+          end
+        end
+        db.close
+      end
+
+      def db_maintain(args)
+        require 'optparse'
+        options = {
+          cleanup: false,
+          optimize: false,
+          vacuum: false,
+          integrity: false,
+          all: false
+        }
+
+        OptionParser.new do |opts|
+          opts.banner = "Usage: histlog maintain [options]"
+          opts.on("--migrate", "Update database schema to latest version") { options[:migrate] = true }
+          opts.on("--cleanup", "Remove orphaned entries from database") { options[:cleanup] = true }
+          opts.on("--optimize", "Optimize database (ANALYZE, REINDEX, VACUUM)") { options[:optimize] = true }
+          opts.on("--vacuum", "Run VACUUM to defragment database") { options[:vacuum] = true }
+          opts.on("--integrity", "Run PRAGMA integrity_check") { options[:integrity] = true }
+          opts.on("--all", "Run all maintenance actions") { options[:all] = true }
+          opts.on("-h", "--help", "Show this help") do
+            puts opts
+            exit 0
+          end
+        end.parse!(args)
+
+        db_path = Histlog::DB.path
+
+        # If migrate option provided, run migrations and return (initialize_db will create DB and run migrations)
+        if options[:migrate]
+          migrate_database
+          return
+        end
+
+        unless File.exist?(db_path)
+          puts "No histlog.db found in current directory"
+          return
+        end
+
+        db = SQLite3::Database.new(db_path)
+        db.results_as_hash = true
+
+        actions = []
+        actions << :cleanup if options[:cleanup] || options[:all]
+        actions << :optimize if options[:optimize] || options[:all]
+        actions << :vacuum if options[:vacuum] || options[:all]
+        actions << :integrity if options[:integrity] || options[:all]
+
+        if actions.empty?
+          # No options: show short report and ask for confirmation
+          puts "=== Histlog Maintenance Preview ==="
+          # Preview orphaned entries
+          orphan_paths = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM paths p
+            LEFT JOIN commands c1 ON p.id = c1.path_old_id
+            LEFT JOIN commands c2 ON p.id = c2.path_new_id
+            LEFT JOIN path_args pa ON p.id = pa.path_id
+            WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
+          SQL
+          orphan_cmd_texts = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM cmd_texts ct
+            LEFT JOIN commands c ON ct.id = c.cmd_text_id
+            WHERE c.id IS NULL
+          SQL
+          orphan_path_args = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM path_args pa
+            LEFT JOIN paths p ON pa.path_id = p.id
+            LEFT JOIN commands c ON pa.command_id = c.id
+            WHERE p.id IS NULL OR c.id IS NULL
+          SQL
+          orphan_sessions = db.get_first_value(<<-SQL)
+            SELECT COUNT(*) FROM sessions s
+            LEFT JOIN commands c ON s.id = c.session_id
+            WHERE c.id IS NULL
+          SQL
+          puts "Orphaned paths:      #{orphan_paths}"
+          puts "Orphaned cmd_texts:  #{orphan_cmd_texts}"
+          puts "Orphaned path_args:  #{orphan_path_args}"
+          puts "Orphaned sessions:   #{orphan_sessions}"
+          # Integrity check
+          integrity = db.get_first_value("PRAGMA integrity_check")
+          puts "Integrity check:     #{integrity}"
+          # Database size
+          original_size = File.size(db_path)
+          puts "Database size:      #{Histlog::CLI::Common.format_bytes(original_size)}"
+          puts "\nThis will run: cleanup, optimize, vacuum, integrity check."
+          print "Proceed with all maintenance steps? [y/N]: "
+          answer = $stdin.gets.strip.downcase
+          if answer == 'y' || answer == 'yes'
+            actions = [:cleanup, :optimize, :vacuum, :integrity]
+          else
+            puts "Aborted. No changes made."
+            db.close if db
+            return
+          end
+        end
+
+        actions.each do |action|
+          case action
+          when :cleanup
+            puts "\n--- Running cleanup ---"
+            Histlog::DB.cleanup_orphaned_entries(db, true)
+          when :optimize
+            puts "\n--- Running optimize ---"
+            begin
+              puts "Running ANALYZE..."
+              db.execute "ANALYZE"
+              puts "Rebuilding indexes..."
+              db.execute "REINDEX"
+              puts "Running VACUUM..."
+              db.execute "VACUUM"
+              puts "Optimize complete."
+            rescue => e
+              STDERR.puts "Error optimizing database: #{e.message}"
+            end
+          when :vacuum
+            puts "\n--- Running VACUUM ---"
+            begin
+              db.execute "VACUUM"
+              puts "VACUUM complete."
+            rescue => e
+              STDERR.puts "Error running VACUUM: #{e.message}"
+            end
+          when :integrity
+            puts "\n--- Running integrity check ---"
+            begin
+              integrity = db.get_first_value("PRAGMA integrity_check")
+              puts "Integrity check: #{integrity}"
+            rescue => e
+              STDERR.puts "Integrity check failed: #{e.message}"
+            end
+          end
+        end
+
+        # Print summary after execution
+        db.close if db
+        puts "\n=== Maintenance Summary ==="
+        old_size = defined?(original_size) ? original_size : File.size(db_path)
+        new_size = File.size(db_path)
+        puts "Database size before: #{Histlog::CLI::Common.format_bytes(old_size)}"
+        puts "Database size after:  #{Histlog::CLI::Common.format_bytes(new_size)}"
+        savings = old_size - new_size
+        percentage = savings > 0 ? (savings.to_f / old_size * 100).round(2) : 0
+        if savings > 0
+          puts "Space saved:         #{Histlog::CLI::Common.format_bytes(savings)} (#{percentage}%)"
+        else
+          puts "Space saved:         0 (already optimized)"
+        end
+        # Reopen DB for integrity check
+        db2 = SQLite3::Database.new(db_path)
+        db2.results_as_hash = true
+        integrity = db2.get_first_value("PRAGMA integrity_check")
+        puts "Integrity check:     #{integrity}"
+        db2.close if db2
+        puts "Maintenance complete."
+      end
+
+      def db_migrate(args)
+        migrate_database
+      end
+
+      def migrate_database
+        begin
+          # initialize_db will create DB and run migrations (idempotent)
+          Histlog::DB.initialize_db
+          puts "Database schema updated successfully!"
+          puts "You can now use histlog normally."
+        rescue => e
+          STDERR.puts "Migration failed: #{e.message}"
+          STDERR.puts "Try running: histlog db migrate"
+          exit 1
+        end
+      end
+
+      def db_optimize(args)
+        db_maintain(['--optimize'])
+      end
+
+      def db_integrity(args)
+        db_maintain(['--integrity'])
+      end
+
+      def db_all(args)
+        db_maintain(['--all'])
+      end
+
+      def show_db_help
+        puts "Usage: histlog db <subcommand> [options]"
+        puts ""
+        puts "Database operations:"
+        puts "  cleanup     Remove orphaned database entries"
+        puts "  info        Show database information"
+        puts "  stats       Show command statistics"
+        puts "  integrity   Check database integrity"
+        puts "  migrate     Update database schema"
+        puts "  optimize    Optimize database performance"
+        puts "  all         Run all maintenance operations"
+        puts ""
+        puts "Run 'histlog db <subcommand> --help' for command-specific help where available."
+      end
+    end
+
     def sort_path_rows(rows, options)
       sorted = rows.map do |row|
         {
@@ -427,18 +1177,6 @@ module Histlog
       aggregated
     end
 
-    def build_cleanup_option_parser(options)
-      OptionParser.new do |opts|
-        opts.banner = "Usage: histlog cleanup [options]"
-        opts.on("-v", "--verbose", "Show detailed cleanup progress") { options[:verbose] = true }
-        opts.on("-n", "--dry-run", "Show what would be cleaned without making changes") { options[:dry_run] = true }
-        opts.on("-h", "--help", "Show this help") do
-          puts opts
-          exit 0
-        end
-      end
-    end
-
     # Handle init command - print shell integration snippets
     def handle_init(args = [])
       shell = args.first&.downcase
@@ -473,370 +1211,7 @@ module Histlog
       end
     end
 
-    # Handle cleanup command
-    def handle_cleanup(args)
-      options = Histlog::Config.command_options(:cleanup)
-      build_cleanup_option_parser(options).parse!(args)
-
-      db_path = Histlog::Utils.get_db_path
-      unless File.exist?(db_path)
-        puts "No histlog.db found in current directory"
-        return
-      end
-
-      db = SQLite3::Database.new(db_path)
-      db.results_as_hash = true
-
-      if options[:dry_run]
-        puts "=== Dry Run: Orphaned Entries Found ==="
-
-        # Count orphaned paths
-        orphan_paths = db.get_first_value(<<-SQL)
-          SELECT COUNT(*) FROM paths p
-          LEFT JOIN commands c1 ON p.id = c1.path_old_id
-          LEFT JOIN commands c2 ON p.id = c2.path_new_id
-          LEFT JOIN path_args pa ON p.id = pa.path_id
-          WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
-        SQL
-        puts "Would remove #{orphan_paths} orphaned paths"
-
-        # Count orphaned cmd_texts
-        orphan_cmd_texts = db.get_first_value(<<-SQL)
-          SELECT COUNT(*) FROM cmd_texts ct
-          LEFT JOIN commands c ON ct.id = c.cmd_text_id
-          WHERE c.id IS NULL
-        SQL
-        puts "Would remove #{orphan_cmd_texts} orphaned cmd_texts"
-
-        # Count orphaned path_args
-        orphan_path_args = db.get_first_value(<<-SQL)
-          SELECT COUNT(*) FROM path_args pa
-          LEFT JOIN paths p ON pa.path_id = p.id
-          LEFT JOIN commands c ON pa.command_id = c.id
-          WHERE p.id IS NULL OR c.id IS NULL
-        SQL
-        puts "Would remove #{orphan_path_args} orphaned path_args"
-
-        # Count orphaned ttys, shells, sessions (with error handling)
-        begin
-          orphan_ttys = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM ttys t
-            LEFT JOIN sessions s ON t.id = s.tty_id
-            WHERE s.id IS NULL
-          SQL
-          puts "Would remove #{orphan_ttys} orphaned ttys"
-        rescue SQLite3::SQLException => e
-          puts "Cannot check ttys: #{e.message}"
-        end
-
-        begin
-          orphan_shells = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM shells s
-            LEFT JOIN sessions sess ON s.id = sess.shell_id
-            WHERE sess.id IS NULL
-          SQL
-          puts "Would remove #{orphan_shells} orphaned shells"
-        rescue SQLite3::SQLException => e
-          puts "Cannot check shells: #{e.message}"
-        end
-
-        begin
-          orphan_sessions = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM sessions s
-            LEFT JOIN commands c ON s.id = c.session_id
-            WHERE c.id IS NULL
-          SQL
-          puts "Would remove #{orphan_sessions} orphaned sessions"
-        rescue SQLite3::SQLException => e
-          puts "Cannot check sessions: #{e.message}"
-        end
-
-        puts "\nRun 'histlog cleanup' without --dry-run to perform cleanup."
-      else
-        Histlog::DB.cleanup_orphaned_entries(db, options[:verbose])
-      end
-
-      db.close
-    end
-
-    def build_info_option_parser(options)
-      OptionParser.new do |opts|
-        opts.banner = "Usage: histlog info [options]"
-        opts.on("-v", "--verbose", "Show detailed system information") { options[:verbose] = true }
-        opts.on("-h", "--help", "Show this help") do
-          puts opts
-          exit 0
-        end
-      end
-    end
-
-    # Handle info command - show database and system information
-    def handle_info(args)
-      options = Histlog::Config.command_options(:info)
-      build_info_option_parser(options).parse!(args)
-
-      db_path = Histlog::Utils.get_db_path
-
-      puts "=== Histlog Database Information ==="
-      puts "Database path: #{db_path}"
-
-      if File.exist?(db_path)
-        puts "Database exists: Yes"
-        puts "Database size: #{Histlog::Utils.format_bytes(File.size(db_path))}"
-        puts "Last modified: #{File.mtime(db_path).strftime('%Y-%m-%d %H:%M:%S')}"
-
-        # Connect to get database info
-        db = SQLite3::Database.new(db_path)
-        db.results_as_hash = true
-
-        # Get table counts
-        puts "\n=== Table Statistics ==="
-        tables = %w[commands cmd_texts paths path_args sessions shells ttys]
-        tables.each do |table|
-          begin
-            count = db.get_first_value("SELECT COUNT(*) FROM #{table}")
-            puts "#{table.ljust(12)}: #{count} records"
-          rescue SQLite3::SQLException => e
-            puts "#{table.ljust(12)}: (error: #{e.message})"
-          end
-        end
-
-        # Database settings
-        puts "\n=== Database Configuration ==="
-        begin
-          journal_mode = db.get_first_value("PRAGMA journal_mode")
-          synchronous = db.get_first_value("PRAGMA synchronous")
-          cache_size = db.get_first_value("PRAGMA cache_size")
-          page_size = db.get_first_value("PRAGMA page_size")
-
-          puts "Journal mode: #{journal_mode}"
-          puts "Synchronous: #{synchronous}"
-          puts "Cache size: #{cache_size} pages"
-          puts "Page size: #{page_size} bytes"
-        rescue SQLite3::SQLException => e
-          puts "Could not retrieve database settings: #{e.message}"
-        end
-
-        # Integrity check
-        puts "\n=== Database Health ==="
-        begin
-          integrity = db.get_first_value("PRAGMA integrity_check")
-          puts "Integrity check: #{integrity}"
-        rescue SQLite3::SQLException => e
-          puts "Integrity check failed: #{e.message}"
-        end
-
-        if options[:verbose]
-          # Show recent activity
-          puts "\n=== Recent Activity ==="
-          begin
-            recent = db.execute(<<-SQL, [Time.now.to_f - 86400])
-              SELECT COUNT(*) as count, DATE(start_time, 'unixepoch') as date
-              FROM commands
-              WHERE start_time > ?
-              GROUP BY DATE(start_time, 'unixepoch')
-              ORDER BY date DESC
-              LIMIT 7
-            SQL
-
-            if recent.any?
-              puts "Commands executed in last 7 days:"
-              recent.each do |row|
-                puts "  #{row['date']}: #{row['count']} commands"
-              end
-            else
-              puts "No recent command activity found"
-            end
-          rescue SQLite3::SQLException => e
-            puts "Could not retrieve recent activity: #{e.message}"
-          end
-
-          # Show table sizes
-          puts "\n=== Detailed Table Information ==="
-          tables.each do |table|
-            begin
-              result = db.execute("SELECT COUNT(*) as count, MIN(created_at) as first, MAX(created_at) as last FROM #{table}").first
-              if result && result['count'] > 0
-                first_date = result['first'] ? Time.at((result['first'] - 2440587.5) * 86400).strftime('%Y-%m-%d') : 'unknown'
-                last_date = result['last'] ? Time.at((result['last'] - 2440587.5) * 86400).strftime('%Y-%m-%d') : 'unknown'
-                puts "#{table}:"
-                puts "  Records: #{result['count']}"
-                puts "  First entry: #{first_date}"
-                puts "  Last entry: #{last_date}"
-              end
-            rescue SQLite3::SQLException => e
-              puts "#{table}: (error: #{e.message})"
-            end
-          end
-        end
-
-        db.close
-      else
-        puts "Database exists: No"
-        puts "Run 'histlog help' to get started"
-      end
-
-      # System information
-      puts "\n=== System Information ==="
-      puts "Histlog script: #{File.expand_path(__FILE__)}"
-      puts "Ruby version: #{RUBY_VERSION}"
-      puts "SQLite3 gem: #{SQLite3::VERSION}" rescue puts "SQLite3 gem: (not available)"
-      puts "Operating system: #{RUBY_PLATFORM}"
-
-      # Environment variables
-      puts "\n=== Environment ==="
-      puts "HISTLOG_DB: #{ENV['HISTLOG_DB'] || '(not set)'}"
-      puts "Session ID: #{ENV['__histlog_session_id'] || '(not set)'}"
-      puts "Current shell: #{ENV['SHELL'] || '(unknown)'}"
-      puts "Current TTY: #{Histlog::Utils.get_tty rescue '(unknown)'}"
-
-      if options[:verbose]
-        puts "\n=== Shell Integration Status ==="
-        shells = {
-          'fish' => '~/.config/fish/config.fish',
-          'zsh' => '~/.zshrc',
-          'bash' => '~/.bashrc'
-        }
-
-        shells.each do |shell, config_file|
-          expanded_path = File.expand_path(config_file)
-          if File.exist?(expanded_path)
-            content = File.read(expanded_path)
-            if content.include?('histlog')
-              puts "#{shell.capitalize}: ✓ Integrated (found in #{config_file})"
-            else
-              puts "#{shell.capitalize}: ✗ Not integrated (#{config_file} exists but no histlog found)"
-            end
-          else
-            puts "#{shell.capitalize}: ? Config file not found (#{config_file})"
-          end
-        end
-      end
-    end
-
-    def show_advanced_stats(args)
-      OptionParser.new do |opts|
-        opts.banner = "Usage: histlog stats [options]"
-        opts.on("-h", "--help", "Show this help message") do
-          puts opts
-          puts
-          puts "Shows a summary of command history, most frequent commands, most accessed paths, and common failures."
-          puts "Example output:"
-          puts "\n=== Command History Summary ==="
-          puts "Total commands executed: 56"
-          puts "Unique commands: 42"
-          puts "Failed commands: 7 (12.5%)"
-          puts "Arguments tracked as paths: 12"
-          puts "\n=== Most Frequent Commands ==="
-          puts "Count  Avg Time Command"
-          exit 0
-        end
-      end.parse!(args)
-      # Connect to database
-      db_path = Histlog::Utils.get_db_path
-      unless File.exist?(db_path)
-        puts "No histlog.db found in current directory"
-        return
-      end
-
-      db = SQLite3::Database.new(db_path)
-      db.results_as_hash = true
-
-      puts "=== Command History Summary ==="
-      puts
-
-      # Basic stats
-      total_commands = db.execute("SELECT COUNT(*) as count FROM commands")[0]['count']
-      unique_commands = db.execute("SELECT COUNT(*) as count FROM cmd_texts")[0]['count']
-      failed_commands = db.execute("SELECT COUNT(*) as count FROM commands WHERE exit_code != 0")[0]['count']
-      tracked_paths = db.execute("SELECT COUNT(*) as count FROM path_args")[0]['count']
-
-      puts "Total commands executed: #{total_commands}"
-      puts "Unique commands: #{unique_commands}"
-      puts "Failed commands: #{failed_commands} (#{(failed_commands.to_f / total_commands * 100).round(2)}%)" if total_commands > 0
-      puts "Arguments tracked as paths: #{tracked_paths}"
-
-      if total_commands > 0
-        # Most used commands
-        puts "\n=== Most Frequent Commands ==="
-        frequent_commands = db.execute(<<-SQL)
-          SELECT
-            cmd_texts.command AS cmd_text,
-            COUNT(*) as count,
-            AVG(c.duration) as avg_duration,
-            MAX(c.created_at) as last_seen
-          FROM commands c
-          JOIN cmd_texts ON c.cmd_text_id = cmd_texts.id
-          WHERE c.duration IS NOT NULL
-          GROUP BY cmd_texts.id
-          ORDER BY count DESC
-          LIMIT 10
-        SQL
-
-        if frequent_commands.any?
-          puts "%-6s %-8s %-50s %-s" % ["Count", "Avg Time", "Command", "Last Used"]
-          puts "-" * 85
-          frequent_commands.each do |cmd|
-            avg_time = Histlog::Utils.format_duration(cmd['avg_duration'])
-            last_used = Histlog::Utils.format_time(cmd['last_seen'])
-            command_text = Histlog::Utils.truncate_command(cmd['cmd_text'], 45)
-            puts "% -6s %-8s %-50s %-s" % [cmd['count'], avg_time, command_text, last_used]
-          end
-        end
-
-        # Most accessed paths
-        puts "\n=== Most Accessed Paths ==="
-        frequent_paths = db.execute(<<-SQL)
-          SELECT
-            p.path,
-            p.type,
-            COUNT(*) as usage_count
-          FROM path_args ca
-          JOIN paths p ON ca.path_id = p.id
-          GROUP BY p.path
-          ORDER BY usage_count DESC
-          LIMIT 10
-        SQL
-
-        if frequent_paths.any?
-          puts "%-6s %-4s %-s" % ["Count", "Type", "Path"]
-          puts "-" * 60
-          frequent_paths.each do |path_data|
-            type_name = path_data['type'] == 'd' ? 'dir' : 'file'
-            puts "%-6s %-4s %-s" % [path_data['usage_count'], type_name, path_data['path']]
-          end
-        else
-          puts "No path arguments tracked yet"
-        end
-
-        # Most common failures
-        if failed_commands > 0
-          puts "\n=== Most Common Failures ==="
-          common_failures = db.execute(<<-SQL)
-            SELECT
-              cmd_texts.command AS cmd_text,
-              c.exit_code,
-              COUNT(*) as count,
-              MAX(c.created_at) as last_failure
-            FROM commands c
-            JOIN cmd_texts ON c.cmd_text_id = cmd_texts.id
-            WHERE c.exit_code != 0
-            GROUP BY cmd_texts.id, c.exit_code
-            ORDER BY count DESC
-            LIMIT 10
-          SQL
-
-          puts "%-6s %-4s %-50s %-s" % ["Count", "Exit", "Command", "Last Failure"]
-          puts "-" * 85
-          common_failures.each do |failure|
-            command_text = Histlog::Utils.truncate_command(failure['cmd_text'], 45)
-            last_fail = Histlog::Utils.format_time(failure['last_failure'])
-            puts "%-6s %-4s %-50s %-s" % [failure['count'], failure['exit_code'], command_text, last_fail]
-          end
-        end
-      end
-      db.close
-    end
+    # ...existing code...
 
     def show_history_list(args)
       options = {
@@ -1259,8 +1634,12 @@ module Histlog
           p_new.path as cwd_new,
           s.id as session_id,
           s.pid,
+          s.parent_pid as session_parent_pid,
+          s.timezone as session_timezone,
+          s.start_time as session_start_time,
           sh.path as shell_path,
-          t.device as tty_device
+          t.device as tty_device,
+          p_s.path as session_cwd
       FROM commands c
       LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
           LEFT JOIN sessions s ON c.session_id = s.id
@@ -1268,6 +1647,7 @@ module Histlog
           LEFT JOIN ttys t ON s.tty_id = t.id
           LEFT JOIN paths p_old ON c.path_old_id = p_old.id
           LEFT JOIN paths p_new ON c.path_new_id = p_new.id
+          LEFT JOIN paths p_s ON s.path_id = p_s.id
         SQL
 
         # Add WHERE conditions based on options
@@ -1666,15 +2046,11 @@ module Histlog
         opts.on("--time-tolerance SECONDS", Float, "Deduplication time window in seconds (default: 2.0)") do |t|
           options[:time_tolerance] = t
         end
-        # --session-id can be given with a numeric argument, or without an argument to indicate
-        # "use the environment variable $__histlog_session_id". If the flag is not provided at
-        # all, the import will abort and prompt the user to provide a session id explicitly.
-        opts.on("--session-id [N]", Integer, "Specify session ID for import. If omitted, use $__histlog_session_id from the environment") do |n|
-          if n.nil?
-            options[:session_use_env] = true
-          else
-            options[:session_id] = n
-          end
+        # --session can be given with a numeric argument to specify session ID for import.
+        # If the flag is not provided, session_id will be null (imported commands).
+        # Note: __histlog_session_id environment variable is never used for imports.
+        opts.on("--session [N]", Integer, "Specify session ID for import (optional)") do |n|
+          options[:session_id] = n
         end
         opts.on_tail("-h", "--help", "Show this message") do
           puts opts
@@ -1683,36 +2059,8 @@ module Histlog
       end
       parser.parse!(args)
 
-      # For live (non-imported) imports, require session_id from CLI. The user can provide
-      # a numeric value with --session-id N, or request to use the environment variable by
-      # passing --session-id with no argument (i.e. `--session-id`). If the flag is not
-      # provided at all, abort and prompt the user to supply one.
-      if options[:format].nil? || !%w[json yaml].include?(options[:format])
-        env_session = ENV['__histlog_session_id'] && ENV['__histlog_session_id'].to_i
-        if options.key?(:session_id) && options[:session_id]
-          session_id = options[:session_id]
-        elsif options[:session_use_env]
-          session_id = env_session
-          if session_id.nil? || session_id == 0
-            STDERR.puts "\nERROR: --session-id was given without a numeric argument, but $__histlog_session_id is not defined in the environment."
-            STDERR.puts "You must specify a session ID for live imports."
-            STDERR.puts "Set the environment variable __histlog_session_id, or use:"
-            STDERR.puts "  histlog import ... --session-id N"
-            STDERR.puts "Aborting import."
-            return
-          end
-        else
-          STDERR.puts "\nERROR: No --session-id provided. For live imports you must supply a session id or use the environment variable."
-          STDERR.puts "Set the environment variable __histlog_session_id, or use:"
-          STDERR.puts "  histlog import ... --session-id N"
-          STDERR.puts "Or request the environment value explicitly:"
-          STDERR.puts "  histlog import ... --session-id"
-          STDERR.puts "Aborting import."
-          return
-        end
-
-        options[:session_id] = session_id
-      end
+      # Session ID is optional for all import formats
+      # It can be provided via --session flag or from session_id attribute in JSON/YAML files
       file_path = options[:file_path] || args.first
 
       if file_path.nil?
@@ -1802,32 +2150,122 @@ module Histlog
       begin
         json_data = JSON.parse(File.read(file_path))
 
-        # Create a lookup dictionary for original IDs (for future use if needed)
-        id_lookup = {}
+        unless json_data.is_a?(Hash) && json_data.key?('commands') && json_data.key?('sessions')
+          STDERR.puts "Error: JSON history must be an object with top-level 'sessions' and 'commands' arrays"
+          return []
+        end
 
-        commands = json_data.map.with_index do |entry, index|
-          # Explicitly ignore any existing IDs from input data to avoid conflicts
-          original_command_id = entry['command_id']
-          original_session_id = entry['session_id']
+        sessions_by_orig = {}
+        if json_data['sessions'].is_a?(Array)
+          json_data['sessions'].each do |s|
+            orig_id = s['session_id'] || s['id']
+            sessions_by_orig[orig_id] = s if orig_id
+          end
+        end
 
-          # Store original ID mapping for potential future use
-          if original_command_id
-            id_lookup[original_command_id] = index
+        commands = json_data['commands'].map.with_index do |entry, index|
+          # Map incoming ids to internal original id fields
+          original_command_id = entry['id'] || entry['command_id']
+          original_session_id = entry['session_id'] || entry['session']
+
+          # Normalize start_time: accept numeric epoch or ISO timestamp strings
+          raw_start = entry['start_time']
+          start_epoch = nil
+          if raw_start
+            if raw_start.is_a?(Numeric)
+              start_epoch = raw_start.to_f
+            elsif raw_start.is_a?(String)
+              begin
+                # If timestamp matches 'YYYY-MM-DD HH:MM:SS' with no timezone, parse as UTC
+                if raw_start =~ /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
+                  start_epoch = Time.strptime(raw_start, '%Y-%m-%d %H:%M:%S').utc.to_f
+                else
+                  # Try to parse ISO-like timestamp (Time.parse may use system tz)
+                  start_epoch = Time.parse(raw_start).to_f
+                end
+              rescue
+                # Fallback: try to_f (may return 0 for non-numeric strings)
+                start_epoch = raw_start.to_f
+              end
+            end
           end
 
-          # Only extract command data, ignore all ID fields
+          # Build session metadata: prefer top-level sessions mapping
+          session_meta = nil
+          if original_session_id && sessions_by_orig[original_session_id]
+            s = sessions_by_orig[original_session_id]
+            raw_start = s['start_time']
+            start_epoch = nil
+            if raw_start
+              if raw_start.is_a?(Numeric)
+                start_epoch = raw_start.to_f
+              elsif raw_start.is_a?(String) && raw_start =~ /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
+                start_epoch = Time.strptime(raw_start, '%Y-%m-%d %H:%M:%S').utc.to_f
+              else
+                start_epoch = (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+              end
+            end
+            session_meta = {
+              shell: s['shell'],
+              tty: s['tty'],
+              pid: s['pid'],
+              parent_pid: s['parent_pid'],
+              cwd: s['cwd'],
+              timezone: s['timezone'],
+              start_time: start_epoch
+            }.reject { |_, v| v.nil? }
+          elsif entry['session'] && entry['session'].is_a?(Hash)
+            # Fallback per-entry session object if present
+            s = entry['session']
+            raw_start = s['start_time']
+            start_epoch = nil
+            if raw_start
+              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+            end
+            session_meta = {
+              shell: s['shell'],
+              tty: s['tty'],
+              pid: s['pid'],
+              parent_pid: s['parent_pid'],
+              cwd: s['cwd'],
+              timezone: s['timezone'],
+              start_time: start_epoch
+            }.reject { |_, v| v.nil? }
+          end
+
+          # Extract path_args if present (keep type as 'f'/'d' to match DB conventions)
+          path_args = nil
+          if entry['path_args'].is_a?(Array)
+            path_args = entry['path_args'].map do |pa|
+              {
+                position: pa['position'],
+                path: pa['path'],
+                type: (pa['type'] == 'file' ? 'f' : (pa['type'] == 'dir' ? 'd' : pa['type']))
+              }
+            end
+          end
+
           {
             command: entry['cmd_text'] || entry['command'],
-            start_time: entry['start_time'],
+            start_time: start_epoch,
             exit_code: entry['exit_code'],
+            duration: entry['duration'],
             is_private: entry['is_private'],
-            # Store original IDs for reference but don't use them in DB operations
+            session: session_meta, # richer session metadata for creating DB sessions
+            pid: entry['pid'],
+            shell: entry['shell'],
+            tty: entry['tty'],
+            cwd_old: entry['cwd_old'],
+            cwd_new: entry['cwd_new'],
+            path_args: path_args,
+            is_assisted: entry['is_assisted'],
+            # Keep original IDs for importer mapping
             _original_command_id: original_command_id,
             _original_session_id: original_session_id
           }
         end
 
-        puts "Parsed #{commands.length} JSON entries (ignoring existing IDs)" if verbose
+        puts "Parsed #{commands.length} JSON entries (new sessions/commands format)" if verbose
         commands
       rescue JSON::ParserError => e
         STDERR.puts "Error parsing JSON file: #{e.message}"
@@ -1846,32 +2284,108 @@ module Histlog
         require 'yaml'
         yaml_data = YAML.load_file(file_path)
 
-        # Create a lookup dictionary for original IDs (for future use if needed)
-        id_lookup = {}
+        unless yaml_data.is_a?(Hash) && yaml_data.key?('commands') && yaml_data.key?('sessions')
+          STDERR.puts "Error: YAML history must be an object with top-level 'sessions' and 'commands' arrays"
+          return []
+        end
 
-        commands = yaml_data.map.with_index do |entry, index|
-          # Explicitly ignore any existing IDs from input data to avoid conflicts
-          original_command_id = entry['command_id']
-          original_session_id = entry['session_id']
+        sessions_by_orig = {}
+        if yaml_data['sessions'].is_a?(Array)
+          yaml_data['sessions'].each do |s|
+            orig_id = s['session_id'] || s['id']
+            sessions_by_orig[orig_id] = s if orig_id
+          end
+        end
 
-          # Store original ID mapping for potential future use
-          if original_command_id
-            id_lookup[original_command_id] = index
+        commands = yaml_data['commands'].map.with_index do |entry, index|
+          # Map incoming ids to internal original id fields
+          original_command_id = entry['id'] || entry['command_id']
+          original_session_id = entry['session_id'] || entry['session']
+
+          # Normalize start_time
+          raw_start = entry['start_time']
+          start_epoch = nil
+          if raw_start
+            if raw_start.is_a?(Numeric)
+              start_epoch = raw_start.to_f
+            elsif raw_start.is_a?(String)
+              begin
+                start_epoch = Time.parse(raw_start).to_f
+              rescue
+                start_epoch = raw_start.to_f
+              end
+            end
           end
 
-          # Only extract command data, ignore all ID fields
+          # Build session metadata from top-level sessions mapping if present
+          session_meta = nil
+          if original_session_id && sessions_by_orig[original_session_id]
+            s = sessions_by_orig[original_session_id]
+            raw_start = s['start_time']
+            start_epoch = nil
+            if raw_start
+              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+            end
+            session_meta = {
+              shell: s['shell'],
+              tty: s['tty'],
+              pid: s['pid'],
+              parent_pid: s['parent_pid'],
+              cwd: s['cwd'],
+              timezone: s['timezone'],
+              start_time: start_epoch
+            }.reject { |_, v| v.nil? }
+          elsif entry['session'] && entry['session'].is_a?(Hash)
+            s = entry['session']
+            raw_start = s['start_time']
+            start_epoch = nil
+            if raw_start
+              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+            end
+            session_meta = {
+              shell: s['shell'],
+              tty: s['tty'],
+              pid: s['pid'],
+              parent_pid: s['parent_pid'],
+              cwd: s['cwd'],
+              timezone: s['timezone'],
+              start_time: start_epoch
+            }.reject { |_, v| v.nil? }
+          end
+
+          path_args = nil
+          if entry['path_args'].is_a?(Array)
+            path_args = entry['path_args'].map do |pa|
+              {
+                position: pa['position'],
+                path: pa['path'],
+                type: (pa['type'] == 'file' ? 'f' : (pa['type'] == 'dir' ? 'd' : pa['type']))
+              }
+            end
+          end
+
+          # Only extract command data, include richer metadata
           {
             command: entry['cmd_text'] || entry['command'],
-            start_time: entry['start_time'],
+            start_time: start_epoch,
             exit_code: entry['exit_code'],
+            duration: entry['duration'],
             is_private: entry['is_private'],
-            # Store original IDs for reference but don't use them in DB operations
+            session: session_meta,
+            pid: entry['pid'],
+            shell: entry['shell'],
+            tty: entry['tty'],
+            cwd_old: entry['cwd_old'],
+            cwd_new: entry['cwd_new'],
+            path_args: path_args,
+            is_assisted: entry['is_assisted'],
+            # Keep original IDs for importer mapping
             _original_command_id: original_command_id,
             _original_session_id: original_session_id
           }
         end
 
-        puts "Parsed #{commands.length} YAML entries (ignoring existing IDs)" if verbose
+        puts "Parsed #{commands.length} YAML entries (new sessions/commands format)" if verbose
         commands
       rescue Psych::SyntaxError => e
         STDERR.puts "Error parsing YAML file: #{e.message}"
@@ -2131,8 +2645,8 @@ module Histlog
       imported_count = 0
       skipped_count = 0
       updated_count = 0
-      command_id_lookup = {}
-      session_id_lookup = {}
+      # No input command ID support; only track session original ids if provided
+      # session_id_lookup removed: we don't keep original session id mappings
       tolerance = options[:time_tolerance] || 2.0
 
       # Preload all existing commands from DB for deduplication
@@ -2191,24 +2705,38 @@ module Histlog
             next
           end
 
-          original_command_id = cmd_data[:_original_command_id]
-          original_session_id = cmd_data[:_original_session_id]
+          # Determine final session id: CLI flag overrides, else create a session if full metadata provided,
+          # else nil (we don't rely on original session_id from input)
+          final_session_id = options[:session_id]
+          if final_session_id.nil?
+            if cmd_data[:session] && cmd_data[:session].is_a?(Hash) && !cmd_data[:session].empty?
+              # Create a session row using DB helper and reuse the generated session id
+              begin
+                final_session_id = Histlog::DB.store_session(cmd_data[:session])
+              rescue => e
+                final_session_id = nil
+              end
+            else
+              final_session_id = nil
+            end
+          end
+
+          is_assisted = cmd_data[:is_assisted] ? 1 : 0
+          exit_code_val = cmd_data.key?(:exit_code) ? cmd_data[:exit_code] : nil
+
           if cmd_data[:start_time]
             julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
             db.execute(
               "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, julian_day, cmd_data[:start_time].to_f]
+              [final_session_id, cmd_text_id, nil, nil, nil, exit_code_val, is_private, is_assisted, julian_day, cmd_data[:start_time].to_f]
             )
           else
             db.execute(
               "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, nil]
+              [final_session_id, cmd_text_id, nil, nil, nil, exit_code_val, is_private, is_assisted, nil]
             )
           end
           new_command_id = db.last_insert_row_id
-          if original_command_id
-            command_id_lookup[original_command_id] = new_command_id
-          end
           # Add to db_lookup for future deduplication within this import batch
           db_lookup[cmd_text_id] << { id: new_command_id, start_time: cmd_data[:start_time] }
           imported_count += 1
@@ -2217,9 +2745,7 @@ module Histlog
           STDERR.puts "Warning: Could not import command '#{cmd_data[:command]}': #{e.message}" if options[:verbose]
         end
       end
-      if options[:verbose] && command_id_lookup.any?
-        puts "Created ID mappings for #{command_id_lookup.size} commands with original IDs"
-      end
+      # no original session id mappings to report
       db.close if db
       [imported_count, skipped_count, updated_count]
     end
@@ -2267,15 +2793,50 @@ module Histlog
       db = build_reporting_db
 
       begin
-        json_results = results.map do |row|
+        sessions = {}
+        commands = []
+
+        results.each do |row|
+          # collect session metadata if present
+          sid = row['session_id']
+          if sid && !sessions.key?(sid)
+            # Format session start_time as human-readable string
+            s_start = row['session_start_time']
+            formatted_start = nil
+            if s_start
+              begin
+                formatted_start = Time.at(s_start.to_f).strftime('%Y-%m-%d %H:%M:%S')
+              rescue
+                formatted_start = s_start.to_s
+              end
+            end
+
+            sessions[sid] = {
+              id: sid,
+              start_time: formatted_start,
+              shell: row['shell_path'],
+              tty: row['tty_device'],
+              pid: row['pid'],
+              parent_pid: row['session_parent_pid'],
+              timezone: row['session_timezone'],
+              cwd: row['session_cwd']
+            }.reject { |_, v| v.nil? }
+          end
+
           path_args = fetch_path_args(db, row['command_id'])
-          structured_result(row, path_args)
+          cmd = structured_result(row, path_args)
+          commands << cmd
         end
 
+        out = {
+          schema_version: 1,
+          sessions: sessions.values,
+          commands: commands
+        }
+
         begin
-          puts JSON.pretty_generate(json_results)
+          puts JSON.pretty_generate(out)
         rescue Errno::EPIPE
-          # Broken pipe - output was closed (e.g., piped to head/less and user quit)
           exit 0
         end
       ensure
@@ -2290,15 +2851,47 @@ module Histlog
       db = build_reporting_db
 
       begin
-        yaml_results = results.map do |row|
+        sessions = {}
+        commands = []
+
+        results.each do |row|
+          sid = row['session_id']
+          if sid && !sessions.key?(sid)
+            s_start = row['session_start_time']
+            formatted_start = nil
+            if s_start
+              begin
+                formatted_start = Time.at(s_start.to_f).utc.strftime('%Y-%m-%d %H:%M:%S')
+              rescue
+                formatted_start = s_start.to_s
+              end
+            end
+
+            sessions[sid] = {
+              'id' => sid,
+              'start_time' => formatted_start,
+              'shell' => row['shell_path'],
+              'tty' => row['tty_device'],
+              'pid' => row['pid'],
+              'parent_pid' => row['session_parent_pid'],
+              'timezone' => row['session_timezone'],
+              'cwd' => row['session_cwd']
+            }.reject { |_, v| v.nil? }
+          end
+
           path_args = fetch_path_args(db, row['command_id'])
-          structured_result_for_yaml(row, path_args)
+          commands << structured_result_for_yaml(row, path_args)
         end
 
+        out = {
+          'schema_version' => 1,
+          'sessions' => sessions.values,
+          'commands' => commands
+        }
+
         begin
-          puts yaml_results.to_yaml
+          puts out.to_yaml
         rescue Errno::EPIPE
-          # Broken pipe - output was closed (e.g., piped to head/less and user quit)
           exit 0
         end
       ensure
@@ -2546,10 +3139,21 @@ module Histlog
     end
 
     def structured_result(row, path_args)
+      # Format start_time as human-readable string
+      cmd_start = row['start_time']
+      formatted_cmd_start = nil
+      if cmd_start
+        begin
+          formatted_cmd_start = Time.at(cmd_start.to_f).utc.strftime('%Y-%m-%d %H:%M:%S')
+        rescue
+          formatted_cmd_start = cmd_start.to_s
+        end
+      end
+
       result = {
-        command_id: row['command_id'],
+        id: row['command_id'],
         cmd_text: row['cmd_text'],
-        start_time: format_start_time_with_ms(row['start_time']),
+        start_time: formatted_cmd_start,
         duration: row['duration'],
         exit_code: row['exit_code'],
         is_private: row['is_private'] == 1,
@@ -2758,19 +3362,7 @@ module Histlog
       end
     end
 
-    # Format bytes in human readable format
-    def format_bytes(bytes)
-      units = ['B', 'KB', 'MB', 'GB', 'TB']
-      size = bytes.to_f
-      unit_index = 0
-
-      while size >= 1024 && unit_index < units.length - 1
-        size /= 1024
-        unit_index += 1
-      end
-
-      "#{size.round(2)} #{units[unit_index]}"
-    end
+    # ...existing code...
 
     # Helper to get tty
     def get_tty
@@ -2859,6 +3451,7 @@ module Histlog
     	path_id INTEGER,
     	pid INTEGER,
     	parent_pid INTEGER,
+    	start_time REAL,
     	timezone TEXT,
     	created_at REAL DEFAULT (julianday('now')),
     	FOREIGN KEY (shell_id) REFERENCES shells (id),
@@ -2866,6 +3459,13 @@ module Histlog
     	FOREIGN KEY (path_id) REFERENCES paths (id)
         )
       SQL
+
+      # Run migrations immediately after creating sessions so missing columns (like sessions.start_time) are added
+      begin
+        run_migrations(db)
+      rescue => e
+        STDERR.puts "Warning: migration failure: #{e.message}"
+      end
 
       db.execute <<-SQL
         CREATE TABLE IF NOT EXISTS cmd_texts (
@@ -2915,6 +3515,7 @@ module Histlog
       db.execute "CREATE INDEX IF NOT EXISTS idx_paths_type ON paths (type)"
       db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_shell_id ON sessions (shell_id)"
       db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions (created_at)"
+      db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions (start_time)"
       db.execute "CREATE INDEX IF NOT EXISTS idx_sessions_path_id ON sessions (path_id)"
       db.execute "CREATE UNIQUE INDEX IF NOT EXISTS idx_cmd_texts_command ON cmd_texts (command)"
       db.execute "CREATE INDEX IF NOT EXISTS idx_cmd_texts_created_at ON cmd_texts (created_at)"
@@ -3087,21 +3688,121 @@ module Histlog
       nil
     end
 
+    # Simple migration runner - idempotent and safe for older DBs
+    def run_migrations(db)
+      # Ensure sessions.start_time column exists
+      cols = db.execute("PRAGMA table_info(sessions)")
+      col_names = cols.map { |r| r[1] }
+      unless col_names.include?('start_time')
+        db.execute("ALTER TABLE sessions ADD COLUMN start_time REAL")
+        # backfill start_time from created_at where possible
+        begin
+          db.execute("UPDATE sessions SET start_time = created_at WHERE start_time IS NULL AND created_at IS NOT NULL")
+        rescue SQLite3::Exception
+        end
+      end
+      # Ensure metadata table exists for tracking migrations/schema version
+      begin
+        db.execute <<-SQL
+          CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT
+          )
+        SQL
+      rescue SQLite3::Exception
+      end
+
+      # Set schema_version if not present
+      begin
+        sv = db.get_first_value("SELECT value FROM metadata WHERE key = 'schema_version'")
+        unless sv
+          db.execute("INSERT INTO metadata (key, value) VALUES ('schema_version', '1')")
+        end
+      rescue SQLite3::Exception
+      end
+      # Ensure commands.start_time index exists (already created above)
+      true
+    end
+
+    # Find an existing session by metadata (shell, tty, pid) and proximity to a provided start_time
+    # Returns session id or nil
+    def find_session_by_meta(db, meta)
+      return nil unless meta && (meta[:shell] || meta[:tty] || meta[:pid] || meta[:start_time])
+
+      # Build query with available fields
+      conditions = []
+      params = []
+      if meta[:shell]
+        conditions << 'sh.path = ?'
+        params << meta[:shell]
+      end
+      if meta[:tty]
+        conditions << 't.device = ?'
+        params << meta[:tty]
+      end
+      if meta[:pid]
+        conditions << 's.pid = ?'
+        params << meta[:pid]
+      end
+
+      # Time proximity: allow a few seconds tolerance (default 5 minutes)
+      time_tol = meta[:time_tolerance] || 300
+      if meta[:start_time]
+        conditions << '(s.start_time BETWEEN ? AND ? OR s.start_time IS NULL)'
+        params << (meta[:start_time].to_f - time_tol)
+        params << (meta[:start_time].to_f + time_tol)
+      end
+
+      query = <<-SQL
+        SELECT s.id FROM sessions s
+        LEFT JOIN shells sh ON s.shell_id = sh.id
+        LEFT JOIN ttys t ON s.tty_id = t.id
+        WHERE #{conditions.join(' AND ')}
+        ORDER BY ABS(COALESCE(s.start_time, s.created_at) - ?) ASC
+        LIMIT 1
+      SQL
+
+      # If start_time present, add it as last param for ORDER BY; else use 0
+      order_ref = meta[:start_time] ? meta[:start_time].to_f : 0
+      begin
+        res = db.execute(query, params + [order_ref])
+        return res[0][0] if res && res[0]
+      rescue SQLite3::Exception
+        return nil
+      end
+      nil
+    end
+
     def store_session(session_data)
       db = initialize_db
       begin
         shell_id = get_or_create_shell_id(db, session_data[:shell])
         tty_id = get_or_create_tty_id(db, session_data[:tty])
         path_id = get_or_create_path_id(db, session_data[:cwd])
+        # If a start_time is provided, try to find an existing session by metadata/time proximity
+        final_session_id = nil
+        if session_data[:start_time]
+          found = find_session_by_meta(db, shell: session_data[:shell], tty: session_data[:tty], pid: session_data[:pid], start_time: session_data[:start_time])
+          if found
+            # update session fields if necessary
+            begin
+              db.execute("UPDATE sessions SET shell_id = ?, tty_id = ?, path_id = ?, pid = ?, parent_pid = ?, timezone = ?, start_time = COALESCE(start_time, ?) WHERE id = ?", [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time].to_f, found])
+            rescue SQLite3::Exception
+            end
+            return found
+          end
+        end
+
+        # Insert new session
         begin
-          res = db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-                           [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone]])
+          res = db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone, start_time) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                           [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time] ? session_data[:start_time].to_f : nil])
           return res[0][0] if res && res[0]
         rescue SQLite3::Exception => e
           if e.message.include?("syntax error") || e.message.include?("RETURNING")
             STDERR.puts "Warning: RETURNING clause not supported, using fallback method"
-            db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone) VALUES (?, ?, ?, ?, ?)",
-                       [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone]])
+            db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone, start_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time] ? session_data[:start_time].to_f : nil])
             return db.last_insert_row_id
           else
             STDERR.puts "Error storing session: #{e.message}"
@@ -3310,14 +4011,16 @@ module Histlog
       imported_count = 0
       skipped_count = 0
       updated_count = 0
-      command_id_lookup = {}
-      session_id_lookup = {}
+      # no session_id lookup (we don't keep original session id mappings)
       begin
         commands.each_with_index do |cmd_data, index|
           begin
             next if cmd_data[:command].nil? || cmd_data[:command].strip.empty?
 
-            original_command = cmd_data[:command]
+            # Normalize command text: support :cmd_text or :command
+            original_command = cmd_data[:cmd_text] || cmd_data[:command]
+            next if original_command.nil?
+
             is_private = original_command.start_with?(' ') ? 1 : 0
             clean_command = original_command.lstrip
             cmd_text_id = get_or_create_cmd_text_id(db, clean_command)
@@ -3351,26 +4054,82 @@ module Histlog
               puts "Skipping duplicate command (already in DB) #{clean_command}" if options[:verbose]
               next
             end
-            original_command_id = cmd_data[:_original_command_id]
-            original_session_id = cmd_data[:_original_session_id]
+            # Determine final session id: CLI flag overrides. Never reuse session_id from import directly.
+            final_session_id = options[:session_id]
+            if final_session_id.nil?
+              if cmd_data[:session] && cmd_data[:session].is_a?(Hash) && !cmd_data[:session].empty?
+                # Build session meta
+                session_meta = {}
+                session_meta[:shell] = cmd_data[:session][:shell] || cmd_data[:session]['shell']
+                session_meta[:tty] = cmd_data[:session][:tty] || cmd_data[:session]['tty']
+                session_meta[:pid] = cmd_data[:session][:pid] || cmd_data[:session]['pid']
+                # support start_time in seconds or as string
+                if cmd_data[:session][:start_time]
+                  session_meta[:start_time] = cmd_data[:session][:start_time].to_f
+                elsif cmd_data[:session]['start_time']
+                  session_meta[:start_time] = cmd_data[:session]['start_time'].to_f
+                end
+                session_meta[:timezone] = cmd_data[:session][:timezone] || cmd_data[:session]['timezone']
+                session_meta[:cwd] = cmd_data[:session][:cwd] || cmd_data[:session]['cwd']
+
+                # Try to find existing session by metadata/time proximity
+                begin
+                  existing = find_session_by_meta(db, session_meta)
+                  if existing
+                    final_session_id = existing
+                  else
+                    # create session with start_time if available
+                    store_meta = {
+                      shell: session_meta[:shell],
+                      tty: session_meta[:tty],
+                      pid: session_meta[:pid],
+                      parent_pid: cmd_data[:session][:parent_pid] || cmd_data[:session]['parent_pid'],
+                      timezone: session_meta[:timezone],
+                      cwd: session_meta[:cwd],
+                      start_time: session_meta[:start_time]
+                    }
+                    final_session_id = store_session(store_meta)
+                  end
+                rescue => e
+                  final_session_id = nil
+                end
+              else
+                # No session metadata: treat as imported command (no session)
+                final_session_id = nil
+              end
+            end
+
+            is_assisted = cmd_data[:is_assisted] ? 1 : 0
+            exit_code_val = cmd_data.key?(:exit_code) ? cmd_data[:exit_code] : nil
+
+            # Insert command: preserve start_time if provided
             if cmd_data[:start_time]
-              julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
-              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, julian_day, cmd_data[:start_time].to_f])
+              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [final_session_id, cmd_text_id, nil, nil, cmd_data[:duration], exit_code_val, is_private, is_assisted, (cmd_data[:start_time].to_f / 86400) + 2440587.5, cmd_data[:start_time].to_f])
             else
-              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [nil, cmd_text_id, nil, nil, nil, nil, is_private, 0, nil])
+              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [final_session_id, cmd_text_id, nil, nil, cmd_data[:duration], exit_code_val, is_private, is_assisted, nil])
             end
             new_command_id = db.last_insert_row_id
-            if original_command_id
-              command_id_lookup[original_command_id] = new_command_id
+            # Import path_args if present
+            if cmd_data[:path_args].is_a?(Array) && cmd_data[:path_args].any?
+              cmd_data[:path_args].each do |pa|
+                begin
+                  path = pa[:path]
+                  next unless path
+
+                  type = pa[:type]
+                  path_id = get_or_create_path_id(db, path, type)
+                  db.execute("INSERT OR IGNORE INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)", [new_command_id, path_id, pa[:position]])
+                rescue => e
+                  # ignore path arg import failures
+                end
+              end
             end
             imported_count += 1
           rescue SQLite3::Exception => e
             STDERR.puts "Warning: Could not import command '#{cmd_data[:command]}': #{e.message}" if options[:verbose]
           end
         end
-        if options[:verbose] && command_id_lookup.any?
-          puts "Created ID mappings for #{command_id_lookup.size} commands with original IDs"
-        end
+        # no original session id mappings to report
       rescue SQLite3::Exception => e
         STDERR.puts "Database error during import: #{e.message}"
       ensure
@@ -3800,14 +4559,21 @@ def mcp_query_commands(args)
       c.is_assisted,
       c.duration,
       c.session_id,
-      s.shell_id,
+      s.pid as pid,
+      s.parent_pid as session_parent_pid,
+      s.timezone as session_timezone,
+      s.start_time as session_start_time,
       sh.path as shell_path,
+      t.device as tty_device,
       po.path as old_path,
-      pn.path as new_path
+      pn.path as new_path,
+      p_s.path as session_cwd
     FROM commands c
     LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
     LEFT JOIN sessions s ON c.session_id = s.id
     LEFT JOIN shells sh ON s.shell_id = sh.id
+    LEFT JOIN ttys t ON s.tty_id = t.id
+    LEFT JOIN paths p_s ON s.path_id = p_s.id
     LEFT JOIN paths po ON c.path_old_id = po.id
     LEFT JOIN paths pn ON c.path_new_id = pn.id
     WHERE 1=1
@@ -3902,6 +4668,19 @@ def mcp_query_commands(args)
     return output
   ensure
     db.close if db
+  end
+
+  def migrate_database
+    begin
+      # initialize_db will create DB and run migrations (idempotent)
+      Histlog::DB.initialize_db
+      puts "Database schema updated successfully!"
+      puts "You can now use histlog normally."
+    rescue => e
+      STDERR.puts "Migration failed: #{e.message}"
+      STDERR.puts "Try running: histlog maintain --migrate"
+      exit 1
+    end
   end
 end
 
@@ -4106,19 +4885,22 @@ class HistlogApp
   end
 
   def run
+    # CHECK SCHEMA FIRST - before any command processing
+    check_database_schema_compatibility(@argv)
+
     # Handle help flags first
     if @command == '--help-all'
-      show_help(true)
+      Histlog::CLI.show_help(true)
 
       return
     elsif @command == '-h' || @command == '--help' || @command.nil?
-      show_help(false)
+      Histlog::CLI.show_help(false)
       return
     end
 
     # Define known commands
-    known_commands = ['query', 'stats', 'history', 'sessions', 'import', 'help', 'init', 'paths', 'cleanup', 'info',
-                      'mcp', 'maintain', '_on_session', '_on_preexec', '_on_postcmd']
+    known_commands = ['query', 'history', 'sessions', 'import', 'help', 'init', 'paths',
+                      'mcp', 'db', '_on_session', '_on_preexec', '_on_postcmd']
 
     if !known_commands.include?(@command) && !@command.start_with?('-')
       STDERR.puts "Error: Unknown command '#{@command}'"
@@ -4136,7 +4918,10 @@ class HistlogApp
     when 'query'
       Histlog::CLI.query_interactive(@argv)
     when 'stats'
-      Histlog::CLI.show_advanced_stats(@argv)
+      # stats moved under `histlog db stats` — show brief guidance
+      STDERR.puts "The 'stats' command has moved to 'histlog db stats'."
+      STDERR.puts "Run: histlog db stats --help"
+      exit 1
     when 'history'
       Histlog::CLI.show_history_list(@argv)
     when 'sessions'
@@ -4146,13 +4931,21 @@ class HistlogApp
     when 'paths'
       Histlog::CLI.show_paths_command(@argv)
     when 'cleanup'
-      Histlog::CLI.handle_cleanup(@argv)
+      STDERR.puts "The 'cleanup' command has moved to 'histlog db cleanup'."
+      STDERR.puts "Run: histlog db cleanup --help"
+      exit 1
     when 'info'
-      Histlog::CLI.handle_info(@argv)
+      STDERR.puts "The 'info' command has moved to 'histlog db info'."
+      STDERR.puts "Run: histlog db info --help"
+      exit 1
     when 'mcp'
       Histlog::MCP.handle_mcp_server(@argv)
     when 'maintain'
-      Histlog::CLI.handle_maintain(@argv)
+      STDERR.puts "The 'maintain' command has moved to 'histlog db maintain'."
+      STDERR.puts "Run: histlog db maintain --help"
+      exit 1
+    when 'db'
+      handle_db_command(@argv)
     when '_on_session'
       handle_on_session
     when '_on_preexec'
@@ -4169,154 +4962,89 @@ class HistlogApp
 
   private
 
-  # Unified maintenance command
-  def handle_maintain(args)
-    require 'optparse'
-    options = {
-      cleanup: false,
-      optimize: false,
-      vacuum: false,
-      integrity: false,
-      all: false
-    }
-
-    OptionParser.new do |opts|
-      opts.banner = "Usage: histlog maintain [options]"
-      opts.on("--cleanup", "Remove orphaned entries from database") { options[:cleanup] = true }
-      opts.on("--optimize", "Optimize database (ANALYZE, REINDEX, VACUUM)") { options[:optimize] = true }
-      opts.on("--vacuum", "Run VACUUM to defragment database") { options[:vacuum] = true }
-      opts.on("--integrity", "Run PRAGMA integrity_check") { options[:integrity] = true }
-      opts.on("--all", "Run all maintenance actions") { options[:all] = true }
-      opts.on("-h", "--help", "Show this help") do
-        puts opts
-        exit 0
-      end
-    end.parse!(args)
-
+  # Startup schema compatibility check
+  def check_database_schema_compatibility(argv)
     db_path = Histlog::DB.path
-    unless File.exist?(db_path)
-      puts "No histlog.db found in current directory"
-      return
-    end
+    return unless db_path && File.exist?(db_path)
 
-    db = SQLite3::Database.new(db_path)
-    db.results_as_hash = true
+    begin
+      db = SQLite3::Database.new(db_path)
+      db.results_as_hash = true
 
-    actions = []
-    actions << :cleanup if options[:cleanup] || options[:all]
-    actions << :optimize if options[:optimize] || options[:all]
-    actions << :vacuum if options[:vacuum] || options[:all]
-    actions << :integrity if options[:integrity] || options[:all]
+      unless schema_is_current?(db)
+        db.close
 
-    if actions.empty?
-      # No options: show short report and ask for confirmation
-      puts "=== Histlog Maintenance Preview ==="
-      # Preview orphaned entries
-      orphan_paths = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM paths p
-        LEFT JOIN commands c1 ON p.id = c1.path_old_id
-        LEFT JOIN commands c2 ON p.id = c2.path_new_id
-        LEFT JOIN path_args pa ON p.id = pa.path_id
-        WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
-      SQL
-      orphan_cmd_texts = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM cmd_texts ct
-        LEFT JOIN commands c ON ct.id = c.cmd_text_id
-        WHERE c.id IS NULL
-      SQL
-      orphan_path_args = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM path_args pa
-        LEFT JOIN paths p ON pa.path_id = p.id
-        LEFT JOIN commands c ON pa.command_id = c.id
-        WHERE p.id IS NULL OR c.id IS NULL
-      SQL
-      orphan_sessions = db.get_first_value(<<-SQL)
-        SELECT COUNT(*) FROM sessions s
-        LEFT JOIN commands c ON s.id = c.session_id
-        WHERE c.id IS NULL
-      SQL
-      puts "Orphaned paths:      #{orphan_paths}"
-      puts "Orphaned cmd_texts:  #{orphan_cmd_texts}"
-      puts "Orphaned path_args:  #{orphan_path_args}"
-      puts "Orphaned sessions:   #{orphan_sessions}"
-      # Integrity check
-      integrity = db.get_first_value("PRAGMA integrity_check")
-      puts "Integrity check:     #{integrity}"
-      # Database size
-      original_size = File.size(db_path)
-      puts "Database size:      #{format_bytes(original_size)}"
-      puts "\nThis will run: cleanup, optimize, vacuum, integrity check."
-      print "Proceed with all maintenance steps? [y/N]: "
-      answer = $stdin.gets.strip.downcase
-      if answer == 'y' || answer == 'yes'
-        actions = [:cleanup, :optimize, :vacuum, :integrity]
-      else
-        puts "Aborted. No changes made."
-        db.close if db
-        return
+        # Check if this is a migration command - allow it to proceed
+        if is_migration_command?(argv)
+          return
+        end
+
+        show_migration_message
+        exit 1
       end
+    rescue SQLite3::Exception => e
+      STDERR.puts "Database error: #{e.message}"
+      STDERR.puts "Try running: histlog db migrate"
+      exit 1
+    ensure
+      db&.close
     end
+  end
 
-    actions.each do |action|
-      case action
-      when :cleanup
-        puts "\n--- Running cleanup ---"
-        Histlog::DB.cleanup_orphaned_entries(db, true)
-      when :optimize
-        puts "\n--- Running optimize ---"
-        begin
-          puts "Running ANALYZE..."
-          db.execute "ANALYZE"
-          puts "Rebuilding indexes..."
-          db.execute "REINDEX"
-          puts "Running VACUUM..."
-          db.execute "VACUUM"
-          puts "Optimize complete."
-        rescue => e
-          STDERR.puts "Error optimizing database: #{e.message}"
-        end
-      when :vacuum
-        puts "\n--- Running VACUUM ---"
-        begin
-          db.execute "VACUUM"
-          puts "VACUUM complete."
-        rescue => e
-          STDERR.puts "Error running VACUUM: #{e.message}"
-        end
-      when :integrity
-        puts "\n--- Running integrity check ---"
-        begin
-          integrity = db.get_first_value("PRAGMA integrity_check")
-          puts "Integrity check: #{integrity}"
-        rescue => e
-          STDERR.puts "Integrity check failed: #{e.message}"
-        end
-      end
-    end
+  def schema_is_current?(db)
+    cols = db.execute("PRAGMA table_info(sessions)")
+    col_names = cols.map { |r| r[1] }
+    col_names.include?('start_time')
+  end
 
-    # Print summary after execution
-    db.close if db
-    puts "\n=== Maintenance Summary ==="
-    old_size = defined?(original_size) ? original_size : File.size(db_path)
-    new_size = File.size(db_path)
-    puts "Database size before: #{format_bytes(old_size)}"
-    puts "Database size after:  #{format_bytes(new_size)}"
-    savings = old_size - new_size
-    percentage = savings > 0 ? (savings.to_f / old_size * 100).round(2) : 0
-    if savings > 0
-      puts "Space saved:         #{format_bytes(savings)} (#{percentage}%)"
+  def is_migration_command?(argv)
+    # Check if this is a migration command that should be allowed to proceed
+    # even with an outdated schema
+    return true if @command == 'db' && argv.first == 'migrate'
+    return true if @command == 'maintain' && argv.include?('--migrate')
+
+    false
+  end
+
+  def show_migration_message
+    STDERR.puts "=== Database Schema Update Required ==="
+    STDERR.puts ""
+    STDERR.puts "Your histlog database schema is outdated and needs to be updated."
+    STDERR.puts ""
+    STDERR.puts "To update your database schema, run:"
+    STDERR.puts "  histlog maintain --migrate"
+    STDERR.puts ""
+    STDERR.puts "This will add any missing columns and update the schema to the latest version."
+    STDERR.puts "Your existing data will be preserved."
+  end
+
+  # (maintain is provided under `histlog db maintain`)
+
+  # Handle `histlog db <subcommand>` routing
+  def handle_db_command(args)
+    sub = args.shift
+    case sub
+    when 'cleanup'
+      Histlog::CLI::DB.db_cleanup(args)
+    when 'info'
+      Histlog::CLI::DB.db_info(args)
+    when 'stats'
+      Histlog::CLI::DB.db_stats(args)
+    when 'integrity'
+      Histlog::CLI::DB.db_integrity(args)
+    when 'migrate'
+      Histlog::CLI::DB.db_migrate(args)
+    when 'optimize'
+      Histlog::CLI::DB.db_optimize(args)
+    when 'all'
+      Histlog::CLI::DB.db_all(args)
+    when nil, '--help', '-h', 'help'
+      Histlog::CLI::DB.show_db_help
     else
-      puts "Space saved:         0 (already optimized)"
+      STDERR.puts "Unknown db subcommand: \\\#{sub}"
+      Histlog::CLI::DB.show_db_help
+      exit 1
     end
-    # Reopen DB for integrity check
-    db2 = SQLite3::Database.new(db_path)
-    db2.results_as_hash = true
-    integrity = db2.get_first_value("PRAGMA integrity_check")
-    puts "Integrity check:     #{integrity}"
-    db2.close if db2
-    puts "Maintenance complete."
-
-    db.close if db
   end
 
   def handle_on_session
