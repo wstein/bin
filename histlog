@@ -1,6 +1,187 @@
 #!/usr/bin/env ruby
 
 module Histlog
+  # Parse --duration flag value into {op: :lt|:gt, value: float, unit: :s|:m|:h|:d|:w}
+  module Utils
+    module_function
+
+    # Parse --duration flag value into a hash describing the filter.
+    # Supports:
+    #   10s         => ±10% range (9s..11s)
+    #   <10s, >10s  => less/greater than
+    #   10s..12s    => explicit range
+    #   ..10.3s     => <=10.3s
+    #   2.3d..      => >=2.3d
+    def parse_duration_flag(str)
+      s = str.strip
+      # Helper to parse compound duration (e.g. 1d3m, 12m34s)
+      parse_compound = ->(s) do
+        total = 0.0
+        s.scan(/([\d.]+)([smhdw])/i) do |num, unit|
+          mult = case unit.downcase
+                 when 's' then 1
+                 when 'm' then 60
+                 when 'h' then 3600
+                 when 'd' then 86400
+                 when 'w' then 604800
+                 else 1
+                 end
+          total += num.to_f * mult
+        end
+        total > 0 ? total : nil
+      end
+
+      # Range: a..b (support compound)
+      if s =~ /^([\dsmhdw.]+)\.\.([\dsmhdw.]+)$/i
+        a, b = $1, $2
+        amin = parse_compound.call(a)
+        bmax = parse_compound.call(b)
+        return { type: :range, min: { value: amin, unit: :s }, max: { value: bmax, unit: :s } }
+      end
+      # Open-ended: ..b (support compound)
+      if s =~ /^\.\.([\dsmhdw.]+)$/i
+        b = $1
+        bmax = parse_compound.call(b)
+        return { type: :lte, value: bmax, unit: :s }
+      end
+      # Open-ended: a.. (support compound)
+      if s =~ /^([\dsmhdw.]+)\.\.$/i
+        a = $1
+        amin = parse_compound.call(a)
+        return { type: :gte, value: amin, unit: :s }
+      end
+      # Less/greater than: <10s, >10s (support compound)
+      if s =~ /^([<>])\s*([\dsmhdw.]+)$/i
+        op, val = $1, $2
+        v = parse_compound.call(val)
+        return { type: (op == '<' ? :lt : :gt), value: v, unit: :s }
+      end
+      # Default: ±10% range (support compound)
+      if (v = parse_compound.call(s))
+        return { type: :approx, value: v, unit: :s, tol: 0.1 }
+      end
+
+      raise ArgumentError, "Invalid duration format: #{str}"
+    end
+
+    # Convert duration hash to seconds
+    def duration_to_seconds(dur)
+      mult = case dur[:unit]
+             when :s then 1
+             when :m then 60
+             when :h then 3600
+             when :d then 86400
+             when :w then 604800
+             else 1
+             end
+      dur[:value] * mult
+    end
+
+    # Parse --time flag value into [start_unix, end_unix] (nil for open-ended)
+    # Supports:
+    #   2022-12-20 08:00..09:10:40 (on a specific date)
+    #   2022-12-20..2022-12-21
+    #   ..2022-12-20
+    #   2022-12-20..
+    #   3w (last 3 weeks)
+    #   09:00..10:00 (today)
+    #   2022-12-20+2w-2w (centered window)
+    def parse_time_flag(str)
+      s = str.strip
+      now = Time.now
+      # Helper: parse date/time string to Time object
+      parse_dt = ->(t, ref_date = nil) do
+        # If only time-of-day, use ref_date or today
+        if t =~ /^\d{1,2}:\d{2}(:\d{2})?$/
+          base = ref_date || now
+          h, m, sec = t.split(':').map(&:to_i)
+          Time.new(base.year, base.month, base.day, h, m, sec || 0)
+        elsif t =~ /^\d{4}-\d{2}-\d{2}( \d{1,2}:\d{2}(:\d{2})?)?$/
+          Time.parse(t)
+        elsif t =~ /^\d{4}-\d{2}-\d{2}$/
+          Time.parse(t)
+        else
+          # Try relative (e.g., 3w, 2d, 4h)
+          seconds = Histlog::Utils.parse_time_span_to_seconds(t)
+          seconds ? now - seconds : nil
+        end
+      end
+
+      # Range: a..b
+      if s =~ /^(.+)\.\.(.+)$/
+        a, b = $1.strip, $2.strip
+        t1 = parse_dt.call(a)
+        t2 = parse_dt.call(b, t1)
+        return [t1&.to_f, t2&.to_f]
+      end
+      # Open-ended: ..b
+      if s =~ /^\.\.(.+)$/
+        b = $1.strip
+        t2 = parse_dt.call(b)
+        return [nil, t2&.to_f]
+      end
+      # Open-ended: a..
+      if s =~ /^(.+)\.\.$/
+        a = $1.strip
+        t1 = parse_dt.call(a)
+        return [t1&.to_f, nil]
+      end
+      # Centered window: 2022-12-20+2w-2w
+      if s =~ /^(.+)\+([\ddhmws.]+)-([\ddhmws.]+)$/
+        base, plus, minus = $1.strip, $2, $3
+        t0 = parse_dt.call(base)
+        psec = Histlog::Utils.parse_time_span_to_seconds(plus)
+        msec = Histlog::Utils.parse_time_span_to_seconds(minus)
+        return [t0.to_f - msec, t0.to_f + psec]
+      end
+      # Relative: 3w (last 3 weeks)
+      if s =~ /^([\ddhmws.]+)$/
+        sec = Histlog::Utils.parse_time_span_to_seconds(s)
+        return [now.to_f - sec, now.to_f]
+      end
+      # Time-of-day only: 09:00..10:00 (today)
+      if s =~ /^(\d{1,2}:\d{2}(:\d{2})?)\.\.(\d{1,2}:\d{2}(:\d{2})?)$/
+        t1 = parse_dt.call($1)
+        t2 = parse_dt.call($3)
+        return [t1.to_f, t2.to_f]
+      end
+      # Date only: 2022-12-20
+      if s =~ /^\d{4}-\d{2}-\d{2}$/
+        t1 = Time.parse(s)
+        t2 = t1 + 86400 - 1
+        return [t1.to_f, t2.to_f]
+      end
+      # Specific timestamp with minute precision: 2025-09-29 10:40
+      if s =~ /^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}$/
+        t1 = Time.parse(s)
+        t2 = t1 + 60 - 1 # Add 59 seconds to cover the entire minute
+        return [t1.to_f, t2.to_f]
+      end
+      # Specific timestamp with second precision: 2025-09-29 10:40:30
+      if s =~ /^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$/
+        t1 = Time.parse(s)
+        t2 = t1 + 1 - 0.001 # Add ~1 second to match that exact second
+        return [t1.to_f, t2.to_f]
+      end
+      # Time-of-day only with minute precision: 10:40
+      if s =~ /^\d{1,2}:\d{2}$/
+        t1 = parse_dt.call(s)
+        t2 = t1 + 60 - 1 # Cover the entire minute
+        return [t1.to_f, t2.to_f]
+      end
+      # Time-of-day only with second precision: 10:40:30
+      if s =~ /^\d{1,2}:\d{2}:\d{2}$/
+        t1 = parse_dt.call(s)
+        t2 = t1 + 1 - 0.001 # Cover that exact second
+        return [t1.to_f, t2.to_f]
+      end
+      # Absolute time (fallback for other formats)
+      t = parse_dt.call(s)
+      t ? [t.to_f, nil] : [nil, nil]
+    end
+    # ...existing code...
+  end
+
   module Config
     module_function
 
@@ -20,6 +201,14 @@ module Histlog
 
     def build_cleanup_option_parser(options)
       OptionParser.new do |opts|
+        opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
+        opts.on("--command [PATTERN]", "Filter by command text (with optional fuzzy matching)") do |pattern|
+          options[:command_pattern] = pattern
+        end
+        opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
+        opts.on("--command [PATTERN]", "Filter by command text (with optional fuzzy matching)") do |pattern|
+          options[:command_pattern] = pattern
+        end
         opts.banner = "Usage: histlog db cleanup [options]"
         opts.on("-v", "--verbose", "Show detailed cleanup progress") { options[:verbose] = true }
         opts.on("-n", "--dry-run", "Show what would be cleaned without making changes") { options[:dry_run] = true }
@@ -267,8 +456,12 @@ module Histlog
         opts.on("--asc", "Order results ascending") { options[:asc] = true }
         opts.on("--desc", "Order results descending") { options[:desc] = true }
         opts.on("--sort-by FIELD", "Sort by exec, args, path, or type") { |field| options[:sort_by] = field }
-        opts.on("-a", "--lift-files", "Lift file usage counts to their parent directories") { options[:lift_files] = true }
-        opts.on("-A", "--roll-up-dirs", "Roll up directory usage counts to their ancestor directories") { options[:roll_up_dirs] = true }
+        opts.on("-a", "--lift-files", "Lift file usage counts to their parent directories") {
+          options[:lift_files] = true
+        }
+        opts.on("-A", "--roll-up-dirs", "Roll up directory usage counts to their ancestor directories") {
+          options[:roll_up_dirs] = true
+        }
         opts.on("--plain", "Output only paths, one per line") { options[:format] = 'plain' }
       end
     end
@@ -831,17 +1024,13 @@ module Histlog
         }
 
         OptionParser.new do |opts|
-          opts.banner = "Usage: histlog maintain [options]"
-          opts.on("--migrate", "Update database schema to latest version") { options[:migrate] = true }
-          opts.on("--cleanup", "Remove orphaned entries from database") { options[:cleanup] = true }
-          opts.on("--optimize", "Optimize database (ANALYZE, REINDEX, VACUUM)") { options[:optimize] = true }
-          opts.on("--vacuum", "Run VACUUM to defragment database") { options[:vacuum] = true }
-          opts.on("--integrity", "Run PRAGMA integrity_check") { options[:integrity] = true }
-          opts.on("--all", "Run all maintenance actions") { options[:all] = true }
-          opts.on("-h", "--help", "Show this help") do
-            puts opts
-            exit 0
-          end
+          opts.banner = "Usage: histlog db maintain [options]"
+          opts.on("--cleanup", "Clean up orphaned entries") { options[:cleanup] = true }
+          opts.on("--optimize", "Optimize database performance") { options[:optimize] = true }
+          opts.on("--vacuum", "Vacuum database") { options[:vacuum] = true }
+          opts.on("--integrity", "Check database integrity") { options[:integrity] = true }
+          opts.on("--all", "Run all maintenance operations") { options[:all] = true }
+          opts.on("--migrate", "Run database migrations") { options[:migrate] = true }
         end.parse!(args)
 
         db_path = Histlog::DB.path
@@ -857,6 +1046,9 @@ module Histlog
           return
         end
 
+        # Always set original_size before any actions
+        original_size = File.size(db_path) rescue 0
+
         db = SQLite3::Database.new(db_path)
         db.results_as_hash = true
 
@@ -871,27 +1063,27 @@ module Histlog
           puts "=== Histlog Maintenance Preview ==="
           # Preview orphaned entries
           orphan_paths = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM paths p
-            LEFT JOIN commands c1 ON p.id = c1.path_old_id
-            LEFT JOIN commands c2 ON p.id = c2.path_new_id
-            LEFT JOIN path_args pa ON p.id = pa.path_id
-            WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
+              SELECT COUNT(*) FROM paths p
+              LEFT JOIN commands c1 ON p.id = c1.path_old_id
+              LEFT JOIN commands c2 ON p.id = c2.path_new_id
+              LEFT JOIN path_args pa ON p.id = pa.path_id
+              WHERE c1.id IS NULL AND c2.id IS NULL AND pa.command_id IS NULL
           SQL
           orphan_cmd_texts = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM cmd_texts ct
-            LEFT JOIN commands c ON ct.id = c.cmd_text_id
-            WHERE c.id IS NULL
+              SELECT COUNT(*) FROM cmd_texts ct
+              LEFT JOIN commands c ON ct.id = c.cmd_text_id
+              WHERE c.id IS NULL
           SQL
           orphan_path_args = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM path_args pa
-            LEFT JOIN paths p ON pa.path_id = p.id
-            LEFT JOIN commands c ON pa.command_id = c.id
-            WHERE p.id IS NULL OR c.id IS NULL
+              SELECT COUNT(*) FROM path_args pa
+              LEFT JOIN paths p ON pa.path_id = p.id
+              LEFT JOIN commands c ON pa.command_id = c.id
+              WHERE p.id IS NULL OR c.id IS NULL
           SQL
           orphan_sessions = db.get_first_value(<<-SQL)
-            SELECT COUNT(*) FROM sessions s
-            LEFT JOIN commands c ON s.id = c.session_id
-            WHERE c.id IS NULL
+              SELECT COUNT(*) FROM sessions s
+              LEFT JOIN commands c ON s.id = c.session_id
+              WHERE c.id IS NULL
           SQL
           puts "Orphaned paths:      #{orphan_paths}"
           puts "Orphaned cmd_texts:  #{orphan_cmd_texts}"
@@ -901,15 +1093,14 @@ module Histlog
           integrity = db.get_first_value("PRAGMA integrity_check")
           puts "Integrity check:     #{integrity}"
           # Database size
-          original_size = File.size(db_path)
           puts "Database size:      #{Histlog::CLI::Common.format_bytes(original_size)}"
           puts "\nThis will run: cleanup, optimize, vacuum, integrity check."
           print "Proceed with all maintenance steps? [y/N]: "
-          answer = $stdin.gets.strip.downcase
+          answer = STDIN.gets.chomp.downcase
           if answer == 'y' || answer == 'yes'
             actions = [:cleanup, :optimize, :vacuum, :integrity]
           else
-            puts "Aborted. No changes made."
+            puts "Maintenance cancelled."
             db.close if db
             return
           end
@@ -1000,7 +1191,7 @@ module Histlog
         db_maintain(['--integrity'])
       end
 
-      def db_all(args)
+      def db_full_maintenance(args)
         db_maintain(['--all'])
       end
 
@@ -1008,13 +1199,13 @@ module Histlog
         puts "Usage: histlog db <subcommand> [options]"
         puts ""
         puts "Database operations:"
-        puts "  cleanup     Remove orphaned database entries"
-        puts "  info        Show database information"
-        puts "  stats       Show command statistics"
-        puts "  integrity   Check database integrity"
-        puts "  migrate     Update database schema"
-        puts "  optimize    Optimize database performance"
-        puts "  all         Run all maintenance operations"
+        puts "  cleanup           Remove orphaned database entries"
+        puts "  info              Show database information"
+        puts "  stats             Show command statistics"
+        puts "  integrity         Check database integrity"
+        puts "  migrate           Update database schema"
+        puts "  optimize          Optimize database performance"
+        puts "  full-maintenance  Run all maintenance operations (cleanup, optimize, vacuum, integrity check)"
         puts ""
         puts "Run 'histlog db <subcommand> --help' for command-specific help where available."
       end
@@ -1331,15 +1522,16 @@ module Histlog
                          "#{fail_col}#{exit_padded}#{reset_col}"
                        end
 
-        ts_display = timestamp || "---------- --:--:--"
-        dur_display = duration || ' -.--- '
+        ts_display = timestamp || "????-??-?? ??:??:??"
+        dur_display = duration || ' ?.??? '
         ts_color = timestamp ? ts_col : null_col
         dur_color = duration ? dur_col : null_col
 
         # duration field gets one extra left padding when null
         dur_field = duration ? sprintf('%8s', dur_display) : sprintf('%9s', dur_display)
 
-        printf("%s%-19s%s  %s%s%s %s    %s\n", ts_color, ts_display, reset_col, dur_color, dur_field, reset_col, colored_exit, command_text)
+        printf("%s%-19s%s  %s%s%s %s    %s\n", ts_color, ts_display, reset_col, dur_color, dur_field, reset_col,
+               colored_exit, command_text)
 
         if options[:show_paths]
           path_args = db.execute(<<-SQL, [cmd['command_id']])
@@ -1382,7 +1574,8 @@ module Histlog
       if session_count > 0
         # Latest sessions
         puts "\n=== Recent Sessions ==="
-        puts "%-10s %-15s %-15s %-10s %-30s %-s" % ["Session", "Shell", "TTY", "Timezone", "Created", "Working Directory"]
+        puts "%-10s %-15s %-15s %-10s %-30s %-s" % ["Session", "Shell", "TTY", "Timezone", "Created",
+                                                    "Working Directory"]
         puts "-" * 160
 
         latest_sessions = db.execute(<<-SQL)
@@ -1527,13 +1720,23 @@ module Histlog
         opts.on("--exit CODE", Integer, "Commands with specific exit code") { |code| options[:exit_code] = code }
 
         # Time filters
-        opts.on("--today", "Commands from today") { options[:today] = true }
-        opts.on("--yesterday", "Commands from yesterday") { options[:yesterday] = true }
-        opts.on("--week", "Commands from this week") { options[:week] = true }
-        opts.on("--since TIME",
-                "Commands since X time ago. Shorthand: 120s, 40m, 4h, 7d, 2w. Combined: 1h30m, 2h 15m. Decimal: 1.5h. Also accepts absolute timestamps: '2025-09-27 19:52' or '19:52'.") { |time|
-          options[:since] = time
-        }
+        opts.on("--time TIME",
+                "Filter by time range. Examples: 2022-12-20 08:00..09:10:40, 2022-12-20..2022-12-21, ..2022-12-20, 2022-12-20.., 3w (last 3 weeks), 09:00..10:00 (today)") do |time|
+          options[:time] = time
+        end
+        opts.on("--since TIME", "Commands since specified time") do |time|
+          options[:time] = "#{time}.."
+        end
+        opts.on("--before TIME", "Commands before specified time") do |time|
+          options[:time] = "..#{time}"
+        end
+        opts.on("--today", "Commands from today") { options[:time] = Time.now.strftime('%Y-%m-%d') }
+        opts.on("--yesterday", "Commands from yesterday") { options[:time] = (Time.now - 86400).strftime('%Y-%m-%d') }
+        opts.on("--week", "Commands from this week") do
+          now = Time.now
+          monday = now - ((now.wday + 6) % 7) * 86400
+          options[:time] = "#{monday.strftime('%Y-%m-%d')}..#{now.strftime('%Y-%m-%d')}"
+        end
         # --after deprecated: use --since with absolute timestamps or relative spans
 
         # Path filters
@@ -1542,11 +1745,52 @@ module Histlog
 
         # Performance filters
         opts.on("--long", "Commands longer than 50 characters") { options[:long] = true }
-        opts.on("--quick", "Commands that ran quickly (< 1s)") { options[:quick] = true }
-        opts.on("--slow", "Commands that ran slowly (> 10s)") { options[:slow] = true }
-        opts.on("--fast", "Commands that ran very quickly (< 100ms)") { options[:fast] = true }
-        opts.on("--instant", "Commands that ran instantly (< 10ms)") { options[:instant] = true }
-        opts.on("--background", "Long-running commands (> 60s)") { options[:background] = true }
+        opts.on("--duration DURATION",
+                "Filter by command duration, e.g. 2m, >10s, <0.5, 3 (default s). Supports <, > prefix. Units: s, m, h, d, w.") do |duration_str|
+          options[:duration] = Histlog::Utils.parse_duration_flag(duration_str)
+        end
+        # Duration shortcuts
+        opts.on("--quick", "Commands that ran quickly (< 1s)") {
+          options[:duration] = { type: :lt, value: 1.0, unit: :s }
+        }
+        opts.on("--fast", "Commands that ran very quickly (< 100ms)") {
+          options[:duration] = { type: :lt, value: 0.1, unit: :s }
+        }
+        opts.on("--instant", "Commands that ran instantly (< 10ms)") {
+          options[:duration] = { type: :lt, value: 0.01, unit: :s }
+        }
+        opts.on("--slow", "Commands that ran slowly (> 10s)") {
+          options[:duration] = { type: :gt, value: 10.0, unit: :s }
+        }
+        opts.on("--background", "Long-running commands (> 60s)") {
+          options[:duration] = { type: :gt, value: 60.0, unit: :s }
+        }
+        # Parse --duration flag value into {op: :lt|:gt, value: float, unit: :s|:m|:h|:d|:w}
+        def self.parse_duration_flag(str)
+          m = str.strip.match(/^(?<op>[<>\-+])?\s*(?<num>\d*\.?\d+)(?<unit>[smhdw])?$/i)
+          raise ArgumentError, "Invalid duration format: #{str}" unless m
+
+          op = m[:op]
+          op = '<' if op.nil? || op == '-'
+          op = '>' if op == '+'
+          op_sym = op == '<' ? :lt : :gt
+          value = m[:num].to_f
+          unit = (m[:unit] || 's').downcase.to_sym
+          { op: op_sym, value: value, unit: unit }
+        end
+
+        # Convert duration hash to seconds
+        def self.duration_to_seconds(dur)
+          mult = case dur[:unit]
+                 when :s then 1
+                 when :m then 60
+                 when :h then 3600
+                 when :d then 86400
+                 when :w then 604800
+                 else 1
+                 end
+          dur[:value] * mult
+        end
 
         # Frequency filters
         opts.on("--rare", "Commands used < 3 times") { options[:rare] = true }
@@ -1739,76 +1983,45 @@ module Histlog
           where_conditions << "c.session_id IS NOT NULL"
         end
 
-        # Time filters
-        if options[:today]
-          # Start of today in unix epoch seconds
-          today_start_unix = Time.new(Time.now.year, Time.now.month, Time.now.day).to_f
-          # Only include entries that have an actual start_time and whose start_time is >= start of today
-          where_conditions << "c.start_time IS NOT NULL"
-          where_conditions << "c.start_time >= ?"
-          params << today_start_unix
-        elsif options[:yesterday]
-          # Start of yesterday (00:00) and start of today (exclusive upper bound)
-          today_start_unix = Time.new(Time.now.year, Time.now.month, Time.now.day).to_f
-          yesterday_start_unix = (Time.new(Time.now.year, Time.now.month, Time.now.day) - 86400).to_f
-          where_conditions << "c.start_time IS NOT NULL"
-          where_conditions << "c.start_time >= ?"
-          params << yesterday_start_unix
-          where_conditions << "c.start_time < ?"
-          params << today_start_unix
-        elsif options[:week]
-          # Get start of week (Monday)
-          now = Time.now
-          days_since_monday = (now.wday + 6) % 7 # Convert Sunday=0 to Monday=0
-          week_start_unix = (Time.new(now.year, now.month, now.day) - (days_since_monday * 86400)).to_f
-          week_start_julian = (week_start_unix / 86400.0) + 2440587.5
-          where_conditions << "c.created_at >= ?"
-          params << week_start_julian
-        elsif options[:since]
-          # Parse relative time from flexible formats like '120s', '40m', '4h', '7d', '2w' or verbose '1 hour'
-          seconds = Histlog::Utils.parse_time_span_to_seconds(options[:since])
-          if seconds.nil?
-            STDERR.puts "Invalid time span for --since: '#{options[:since]}'. Use formats like 120s, 40m, 4h, 7d, 2w or '1 hour', or absolute timestamps like '2025-09-27 19:52'."
-            db.close if db
-            exit 2
+        # Unified time filter
+        if options[:time]
+          # Parse --time argument into start/end unix timestamps (support all formats)
+          tstart, tend = Histlog::Utils.parse_time_flag(options[:time])
+          if tstart && tend
+            where_conditions << "c.start_time >= ? AND c.start_time <= ?"
+            params << tstart << tend
+          elsif tstart
+            where_conditions << "c.start_time >= ?"
+            params << tstart
+          elsif tend
+            where_conditions << "c.start_time <= ?"
+            params << tend
           end
-          if seconds < 0
-            STDERR.puts "The absolute timestamp provided for --since is in the future: '#{options[:since]}'"
-            db.close if db
-            exit 2
-          end
-          since_unix = Time.now.to_f - seconds
-          # Only include entries that have an actual start_time when filtering by since
-          where_conditions << "c.start_time IS NOT NULL"
-          where_conditions << "c.start_time >= ?"
-          params << since_unix
         end
 
         # Performance filters (duration-based)
-        if options[:quick]
-          where_conditions << "c.duration < 1.0"
-        elsif options[:slow]
-          where_conditions << "c.duration > 10.0"
-        elsif options[:fast]
-          where_conditions << "c.duration < 0.1"
-        elsif options[:since]
-          # Parse relative time from flexible formats like '120s', '40m', '4h', '7d', '2w' or verbose '1 hour'
-          seconds = Histlog::Utils.parse_time_span_to_seconds(options[:since])
-          if seconds.nil?
-            STDERR.puts "Invalid time span for --since: '#{options[:since]}'. Use formats like 120s, 40m, 4h, 7d, 2w or '1 hour', or absolute timestamps like '2025-09-27 19:52'."
-            db.close if db
-            exit 2
+        if options[:duration]
+          dur = options[:duration]
+          case dur[:type]
+          when :lt
+            where_conditions << "c.duration < #{Histlog::Utils.duration_to_seconds(dur)}"
+          when :gt
+            where_conditions << "c.duration > #{Histlog::Utils.duration_to_seconds(dur)}"
+          when :lte
+            where_conditions << "c.duration <= #{Histlog::Utils.duration_to_seconds(dur)}"
+          when :gte
+            where_conditions << "c.duration >= #{Histlog::Utils.duration_to_seconds(dur)}"
+          when :range
+            min = Histlog::Utils.duration_to_seconds(dur[:min])
+            max = Histlog::Utils.duration_to_seconds(dur[:max])
+            where_conditions << "c.duration >= #{min} AND c.duration <= #{max}"
+          when :approx
+            val = Histlog::Utils.duration_to_seconds(dur)
+            tol = dur[:tol] || 0.1
+            min = val * (1 - tol)
+            max = val * (1 + tol)
+            where_conditions << "c.duration >= #{min} AND c.duration <= #{max}"
           end
-          if seconds < 0
-            STDERR.puts "The absolute timestamp provided for --since is in the future: '#{options[:since]}'"
-            db.close if db
-            exit 2
-          end
-          since_unix = Time.now.to_f - seconds
-          # Only include entries that have an actual start_time when filtering by since
-          where_conditions << "c.start_time IS NOT NULL"
-          where_conditions << "c.start_time >= ?"
-          params << since_unix
         end
 
         # Path-related filters
@@ -2028,7 +2241,8 @@ module Histlog
         opts.on("-f", "--file FILE", "History file path (defaults to shell's default)") do |f|
           options[:file_path] = f
         end
-        opts.on("--format FORMAT", "Specify shell history format (json, yaml, fish, zsh, nu, bash, powershell, plain)") do |t|
+        opts.on("--format FORMAT",
+                "Specify shell history format (json, yaml, fish, zsh, nu, bash, powershell, plain)") do |t|
           options[:format] = t.downcase
         end
         opts.on("--json", "Import from JSON file") do
@@ -2220,7 +2434,9 @@ module Histlog
             raw_start = s['start_time']
             start_epoch = nil
             if raw_start
-              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin;
+                Time.parse(raw_start).to_f rescue raw_start.to_f
+              end)
             end
             session_meta = {
               shell: s['shell'],
@@ -2324,7 +2540,9 @@ module Histlog
             raw_start = s['start_time']
             start_epoch = nil
             if raw_start
-              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin;
+                Time.parse(raw_start).to_f rescue raw_start.to_f
+              end)
             end
             session_meta = {
               shell: s['shell'],
@@ -2340,7 +2558,9 @@ module Histlog
             raw_start = s['start_time']
             start_epoch = nil
             if raw_start
-              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin; Time.parse(raw_start).to_f rescue raw_start.to_f end)
+              start_epoch = raw_start.is_a?(Numeric) ? raw_start.to_f : (begin;
+                Time.parse(raw_start).to_f rescue raw_start.to_f
+              end)
             end
             session_meta = {
               shell: s['shell'],
@@ -2728,7 +2948,8 @@ module Histlog
             julian_day = (cmd_data[:start_time].to_f / 86400) + 2440587.5
             db.execute(
               "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              [final_session_id, cmd_text_id, nil, nil, nil, exit_code_val, is_private, is_assisted, julian_day, cmd_data[:start_time].to_f]
+              [final_session_id, cmd_text_id, nil, nil, nil, exit_code_val, is_private, is_assisted, julian_day,
+               cmd_data[:start_time].to_f]
             )
           else
             db.execute(
@@ -2977,9 +3198,9 @@ module Histlog
         puts sep
 
         results.each do |row|
-          # Format session_id as 4-digit, left-padded, or '----' if nil
+          # Format session_id as 4-digit, left-padded, or '????' if nil
           session_id = row['session_id']
-          session_str = session_id ? session_id.to_s.rjust(4, '0') : '----'
+          session_str = session_id ? session_id.to_s.rjust(4, '0') : '????'
           # Color session_id: use null_col if nil, else session_col
           session_color = session_id ? session_col : null_col
 
@@ -2991,7 +3212,7 @@ module Histlog
           exit_text = if exit_raw == 0
                         "✓"
                       elsif exit_raw.nil?
-                        "/"
+                        "?"
                       else
                         "✗#{exit_raw}"
                       end
@@ -3011,8 +3232,8 @@ module Histlog
           command = row['cmd_text'].gsub("\n", "\n                                   ")
           # Print timestamp and duration aligned, then colored status, then command
           # Use visible placeholder for missing timestamps
-          ts_display = timestamp || "---------- --:--:--"
-          dur_display = duration || " -.--- "
+          ts_display = timestamp || "????-??-?? ??:??:??"
+          dur_display = duration || " ?.????"
 
           # choose appropriate color for timestamp/duration (normal or null)
           ts_color = timestamp ? ts_col : null_col
@@ -3782,11 +4003,16 @@ module Histlog
         # If a start_time is provided, try to find an existing session by metadata/time proximity
         final_session_id = nil
         if session_data[:start_time]
-          found = find_session_by_meta(db, shell: session_data[:shell], tty: session_data[:tty], pid: session_data[:pid], start_time: session_data[:start_time])
+          found = find_session_by_meta(db, shell: session_data[:shell], tty: session_data[:tty],
+                                           pid: session_data[:pid], start_time: session_data[:start_time])
           if found
             # update session fields if necessary
             begin
-              db.execute("UPDATE sessions SET shell_id = ?, tty_id = ?, path_id = ?, pid = ?, parent_pid = ?, timezone = ?, start_time = COALESCE(start_time, ?) WHERE id = ?", [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time].to_f, found])
+              db.execute(
+                "UPDATE sessions SET shell_id = ?, tty_id = ?, path_id = ?, pid = ?, parent_pid = ?, timezone = ?, start_time = COALESCE(start_time, ?) WHERE id = ?", [
+                  shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time].to_f, found
+                ]
+              )
             rescue SQLite3::Exception
             end
             return found
@@ -3796,13 +4022,15 @@ module Histlog
         # Insert new session
         begin
           res = db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone, start_time) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
-                           [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time] ? session_data[:start_time].to_f : nil])
+                           [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid],
+                            session_data[:timezone], session_data[:start_time] ? session_data[:start_time].to_f : nil])
           return res[0][0] if res && res[0]
         rescue SQLite3::Exception => e
           if e.message.include?("syntax error") || e.message.include?("RETURNING")
             STDERR.puts "Warning: RETURNING clause not supported, using fallback method"
             db.execute("INSERT INTO sessions (shell_id, tty_id, path_id, pid, parent_pid, timezone, start_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid], session_data[:timezone], session_data[:start_time] ? session_data[:start_time].to_f : nil])
+                       [shell_id, tty_id, path_id, session_data[:pid], session_data[:parent_pid],
+                        session_data[:timezone], session_data[:start_time] ? session_data[:start_time].to_f : nil])
             return db.last_insert_row_id
           else
             STDERR.puts "Error storing session: #{e.message}"
@@ -3825,7 +4053,8 @@ module Histlog
         path_old_id = get_or_create_path_id(db, command_data[:cwd])
         begin
           res = db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-                           [command_data[:session_id], cmd_text_id, path_old_id, is_private, is_assisted, Time.now.to_f])
+                           [command_data[:session_id], cmd_text_id, path_old_id, is_private, is_assisted,
+                            Time.now.to_f])
           command_id = res[0][0] if res && res[0]
           if command_id
             parse_command_arguments(db, command_id, clean_command)
@@ -3862,9 +4091,13 @@ module Histlog
             abs_path = File.expand_path(arg)
             path_type = File.directory?(abs_path) ? 'd' : 'f'
             path_id = get_or_create_path_id(db, abs_path, path_type)
-            existing = db.execute("SELECT 1 FROM path_args WHERE command_id = ? AND path_id = ? AND arg_position = ? LIMIT 1", [command_id, path_id, position])
+            existing = db.execute(
+              "SELECT 1 FROM path_args WHERE command_id = ? AND path_id = ? AND arg_position = ? LIMIT 1", [command_id, path_id,
+                                                                                                            position]
+            )
             unless existing.any?
-              db.execute("INSERT INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)", [command_id, path_id, position])
+              db.execute("INSERT INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)",
+                         [command_id, path_id, position])
             end
           end
         rescue
@@ -3876,8 +4109,11 @@ module Histlog
       db = initialize_db
       begin
         cwd_new_id = get_or_create_path_id(db, Dir.pwd)
-        db.execute("UPDATE commands SET duration = ?, exit_code = ?, path_new_id = ? WHERE id = ?", [duration, exit_code, cwd_new_id, command_id])
-        result = db.execute("SELECT c.command FROM commands cmd JOIN cmd_texts c ON cmd.cmd_text_id = c.id WHERE cmd.id = ?", [command_id])
+        db.execute("UPDATE commands SET duration = ?, exit_code = ?, path_new_id = ? WHERE id = ?",
+                   [duration, exit_code, cwd_new_id, command_id])
+        result = db.execute(
+          "SELECT c.command FROM commands cmd JOIN cmd_texts c ON cmd.cmd_text_id = c.id WHERE cmd.id = ?", [command_id]
+        )
         if result && result[0]
           command_text = result[0][0]
           parse_command_arguments(db, command_id, command_text)
@@ -4028,9 +4264,11 @@ module Histlog
             # Duplicate detection: same cmd_text_id and same start_time (or both NULL)
             begin
               if cmd_data[:start_time]
-                existing = db.get_first_value("SELECT id FROM commands WHERE cmd_text_id = ? AND start_time = ?", [cmd_text_id, cmd_data[:start_time].to_f])
+                existing = db.get_first_value("SELECT id FROM commands WHERE cmd_text_id = ? AND start_time = ?",
+                                              [cmd_text_id, cmd_data[:start_time].to_f])
               else
-                existing = db.get_first_value("SELECT id FROM commands WHERE cmd_text_id = ? AND start_time IS NULL", [cmd_text_id])
+                existing = db.get_first_value("SELECT id FROM commands WHERE cmd_text_id = ? AND start_time IS NULL",
+                                              [cmd_text_id])
               end
             rescue SQLite3::Exception
               existing = nil
@@ -4104,9 +4342,17 @@ module Histlog
 
             # Insert command: preserve start_time if provided
             if cmd_data[:start_time]
-              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [final_session_id, cmd_text_id, nil, nil, cmd_data[:duration], exit_code_val, is_private, is_assisted, (cmd_data[:start_time].to_f / 86400) + 2440587.5, cmd_data[:start_time].to_f])
+              db.execute(
+                "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, created_at, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                  final_session_id, cmd_text_id, nil, nil, cmd_data[:duration], exit_code_val, is_private, is_assisted, (cmd_data[:start_time].to_f / 86400) + 2440587.5, cmd_data[:start_time].to_f
+                ]
+              )
             else
-              db.execute("INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [final_session_id, cmd_text_id, nil, nil, cmd_data[:duration], exit_code_val, is_private, is_assisted, nil])
+              db.execute(
+                "INSERT INTO commands (session_id, cmd_text_id, path_old_id, path_new_id, duration, exit_code, is_private, is_assisted, start_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                  final_session_id, cmd_text_id, nil, nil, cmd_data[:duration], exit_code_val, is_private, is_assisted, nil
+                ]
+              )
             end
             new_command_id = db.last_insert_row_id
             # Import path_args if present
@@ -4118,7 +4364,8 @@ module Histlog
 
                   type = pa[:type]
                   path_id = get_or_create_path_id(db, path, type)
-                  db.execute("INSERT OR IGNORE INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)", [new_command_id, path_id, pa[:position]])
+                  db.execute("INSERT OR IGNORE INTO path_args (command_id, path_id, arg_position) VALUES (?, ?, ?)",
+                             [new_command_id, path_id, pa[:position]])
                 rescue => e
                   # ignore path arg import failures
                 end
@@ -4879,11 +5126,6 @@ def mcp_analyze_patterns(args)
 end
 
 class HistlogApp
-  def initialize(argv)
-    @argv = argv
-    @command = @argv.shift
-  end
-
   def run
     # CHECK SCHEMA FIRST - before any command processing
     check_database_schema_compatibility(@argv)
@@ -4891,7 +5133,6 @@ class HistlogApp
     # Handle help flags first
     if @command == '--help-all'
       Histlog::CLI.show_help(true)
-
       return
     elsif @command == '-h' || @command == '--help' || @command.nil?
       Histlog::CLI.show_help(false)
@@ -4958,6 +5199,11 @@ class HistlogApp
       @argv.unshift(@command)
       query_interactive(@argv)
     end
+  end
+
+  def initialize(argv)
+    @argv = argv
+    @command = @argv.shift
   end
 
   private
@@ -5036,12 +5282,12 @@ class HistlogApp
       Histlog::CLI::DB.db_migrate(args)
     when 'optimize'
       Histlog::CLI::DB.db_optimize(args)
-    when 'all'
-      Histlog::CLI::DB.db_all(args)
+    when 'full-maintenance'
+      Histlog::CLI::DB.db_full_maintenance(args)
     when nil, '--help', '-h', 'help'
       Histlog::CLI::DB.show_db_help
     else
-      STDERR.puts "Unknown db subcommand: \\\#{sub}"
+      STDERR.puts "Unknown db subcommand: #{sub}"
       Histlog::CLI::DB.show_db_help
       exit 1
     end
@@ -5105,3 +5351,63 @@ if __FILE__ == $0
   app = HistlogApp.new(ARGV)
   app.run
 end
+
+__END__
+
+Here are 10 alternative names for a “do everything” maintenance command, each rated for clarity and discoverability (★★★★★ = best):
+
+histlog db full-maintenance
+Very clear, explicit about scope.
+★★★★★
+
+
+go with full-maintenance delete `db all` command
+
+---
+
+
+update query duration formatting and Exit column width:
+
+```
+ bsh ❯ histlog query
+Timestamp            Duration Exit Command
+-------------------------------------------
+2025-09-29 16:31:47    23.0ms ✓    ll
+2025-09-29 16:19:35   130.0ms ✓    code ~/bin
+2025-09-29 15:56:04     2.0ms ✗127 --:--
+2025-09-29 15:28:48   800.0ms ✓    gencomp histlog --subcommands
+2025-09-29 15:21:25   11m 12s ✓    bwz
+2025-09-29 14:43:46   171.0ms ✓    code
+2025-09-29 14:26:36  17m 9.0s ✗127 ssh km1
+2025-09-29 10:51:05       N/A /    reload-shell
+2025-09-29 10:50:52   811.0ms ✓    gencomp histlog --subcommands
+2025-09-29 10:50:23      1.8s ✓    brew upgrade
+2025-09-29 10:40:33  1m 22.2s ✗1   brew upgrade
+2025-09-29 10:40:19     8.43s ✓    brew install zen-browser
+2025-09-29 10:40:05     1.12s ✓    brew update
+2025-09-29 10:39:52     4.56s ✓    brew update
+2025-09-29 10:39:41     4.09s ✓    brew uninstall arc
+2025-09-29 10:10:16   145.0ms ✓    code ~/.config/fish/config.fish
+2025-09-29 09:31:26    1h 30m ✓    bash
+2025-09-27 08:41:53    16.0ms ✓    bat --plain PropertiesLoader.kt
+2025-09-27 08:41:44     1.12s ✗130 bat --plain
+2025-09-27 08:41:40    17.0ms ✓    ll
+```
+
+keep duration formatting consistent and perfect aligned for humans, keep in mind the different postfixes! make 10 duration format suggestions and rate them.
+Exit should always be 4 characters wide for alignment.
+
+---
+
+remove `histlog history` command and implementation - use `histlog query` instead
+
+---
+
+Add a --fuzzy option to query that enables fzf-like fuzzy matching for command text.
+For histlog query --command:
+It should filter by command text, e.g., --command "git" shows all commands containing "git".
+If --command is given without an argument, show a list of unique commands (with usage counts), sorted by frequency, to help users pick or discover commands they’ve run before.
+If an argument is given, filter as usual (with fuzzy if --fuzzy is also set).
+please add --command, --fuzzy, to query
+also add --fuzzy to paths
+---
