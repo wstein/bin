@@ -5,6 +5,35 @@ module Histlog
   module Utils
     module_function
 
+    # Helpers for interactive selection (fzf)
+    def fzf_available?
+      begin
+        which = `which fzf 2>/dev/null`.strip
+        !which.empty?
+      rescue
+        false
+      end
+    end
+
+    def fzf_select(lines, height = 10)
+      return nil if lines.nil? || lines.empty?
+      return nil unless fzf_available?
+
+      selection = nil
+      begin
+        # Use fzf with a configurable height and layout=reverse so results appear below the prompt
+        cmd = "fzf --ansi --no-sort --height=#{height} --layout=reverse"
+        IO.popen(cmd, 'r+') do |io|
+          io.puts(lines.join("\n"))
+          io.close_write
+          selection = io.read
+        end
+      rescue Errno::ENOENT
+        return nil
+      end
+      selection && !selection.strip.empty? ? selection.strip : nil
+    end
+
     # Parse --duration flag value into a hash describing the filter.
     # Supports:
     #   10s         => ±10% range (9s..11s)
@@ -187,7 +216,70 @@ module Histlog
       t = parse_dt.call(s)
       t ? [t.to_f, nil] : [nil, nil]
     end
-    # ...existing code...
+
+    # Helpers for installing init snippets into rc files
+    def default_rc_for_shell(shell)
+      home = Dir.home
+      case shell
+      when 'fish'
+        File.join(home, '.config', 'fish', 'config.fish')
+      when 'zsh'
+        File.join(home, '.zshrc')
+      when 'nu', 'nushell'
+        File.join(home, '.config', 'nushell', 'config.nu')
+      else
+        nil
+      end
+    end
+
+    def install_snippet_to_rc(rc_file, snippet, force = false)
+      require 'fileutils'
+
+      rc_file = File.expand_path(rc_file)
+      dir = File.dirname(rc_file)
+      FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
+
+      # Ensure snippet ends with a newline
+      snippet = snippet.end_with?("\n") ? snippet : snippet + "\n"
+
+      start_marker = "# >>> histlog init start\n"
+      end_marker = "# <<< histlog init end\n"
+
+      if File.exist?(rc_file)
+        content = File.read(rc_file)
+        # Backup existing file
+        timestamp = Time.now.strftime('%Y%m%d%H%M%S')
+        backup = "#{rc_file}.histlog.bak.#{timestamp}"
+        FileUtils.cp(rc_file, backup)
+
+        if content.include?(start_marker) && content.include?(end_marker)
+          if !force
+            raise "histlog snippet already present in #{rc_file}; use --force to replace"
+          end
+
+          # Replace existing snippet block
+          new_block = start_marker + snippet + end_marker
+          new_content = content.sub(/# >>> histlog init start.*?# <<< histlog init end/m, new_block)
+          File.write(rc_file, new_content)
+        else
+          # Append snippet at the end
+          File.open(rc_file, 'a') do |f|
+            f.write("\n") unless content.end_with?("\n")
+            f.write(start_marker)
+            f.write(snippet)
+            f.write(end_marker)
+          end
+        end
+      else
+        # Create new rc file with the snippet
+        File.open(rc_file, 'w', 0600) do |f|
+          f.write("# Created by histlog on #{Time.now}\n")
+          f.write(start_marker)
+          f.write(snippet)
+          f.write(end_marker)
+        end
+      end
+    end
   end
 
   module Config
@@ -209,7 +301,9 @@ module Histlog
 
     def build_cleanup_option_parser(options)
       OptionParser.new do |opts|
-        opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
+  opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
+  opts.on("-i", "--interactive", "Use fzf for interactive selection") { options[:interactive] = true }
+  opts.on("--height N", Integer, "Set fzf height for interactive selection") { |n| options[:height] = n }
         opts.on("--command [PATTERN]", "Filter by command text (with optional fuzzy matching)") do |pattern|
           options[:command_pattern] = pattern
         end
@@ -454,9 +548,6 @@ module Histlog
         opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
         opts.on("--files", "Show all unique file paths") { options[:files] = true }
         opts.on("--dirs", "Show all unique directory paths") { options[:dirs] = true }
-        opts.on("-c", "--cd", "Auto-cd to top result (prints path to stdout). Implies --dirs") { |v|
-          options[:cd] = true
-        }
         opts.on("-i", "--interactive", "Use fzf for interactive selection") { options[:interactive] = true }
         opts.on("--regex", "Interpret searchterm as a Ruby regex") { options[:regex] = true }
         opts.on("--count", "Show usage frequency for each path") { options[:count] = true }
@@ -470,22 +561,23 @@ module Histlog
           options[:roll_up_dirs] = true
         }
         opts.on("--plain", "Output only paths, one per line") { options[:format] = 'plain' }
+        opts.on("--limit N", Integer, "Limit number of results") { |n| options[:limit] = n }
         opts.on("--fuzzy", "Enable fuzzy matching for path searchterm") { options[:fuzzy] = true }
+        opts.on("--height N", Integer, "Set fzf height for interactive selection") { |n| options[:height] = n }
       end
     end
 
     def show_paths_command(args)
       options = Histlog::Config.command_options(:paths)
+
       build_paths_option_parser(options).parse!(args)
-      # Accept positional searchterm
+
+      # Accept positional searchterm (first non-option remaining)
       if args.length > 0 && !args[0].start_with?('-')
         options[:searchterm] = args.shift
       end
 
-      # --cd implies --dirs
-      if options[:cd]
-        options[:dirs] = true
-      end
+      # Note: --cd was removed. Shell helpers (hlz/hlZ) call histlog directly and perform the cd.
 
       db_path = Histlog::Utils.get_db_path
       unless File.exist?(db_path)
@@ -545,9 +637,15 @@ module Histlog
           end
         end
 
-        if options[:format] == 'plain'
+        if options[:format] == 'plain' && !options[:interactive]
           begin
-            rows.each do |row|
+            to_print = if options[:limit] && options[:limit] > 0
+                         rows.first(options[:limit])
+                       else
+                         rows
+                       end
+
+            to_print.each do |row|
               path_value = row['path']
               if row['type'] == 'd'
                 puts path_value.end_with?('/') ? path_value : (path_value + '/')
@@ -595,73 +693,13 @@ module Histlog
 
         data_rows = sort_path_rows(data_rows, options)
 
-        palette = Histlog::Config.colors(:paths)
-        exec_col = palette[:exec]
-        args_col = palette[:args]
-        dir_path_col = palette[:dir_path]
-        reset_col = palette[:reset]
-
-        begin
-          printf("%s%6s%s %s%6s%s %s\n", exec_col, "Exec", reset_col, args_col, "Args", reset_col, "Path")
-          puts "-------------------------"
-        rescue Errno::EPIPE
-          return
-        end
-
-        data_rows.each do |row|
-          exec_count = row['exec'].to_i
-          args_count = row['args'].to_i
-          exec_str = exec_count.to_s.rjust(6)
-          args_str = args_count.to_s.rjust(6)
-
-          display_path = if row['type'] == 'd'
-                           if row['path'] == '/'
-                             "#{dir_path_col}/#{reset_col}"
-                           else
-                             base = row['path'].end_with?('/') ? row['path'].chomp('/') : row['path']
-                             "#{dir_path_col}#{base}#{reset_col}/"
-                           end
-                         else
-                           row['path']
-                         end
-
-          begin
-            puts "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} #{display_path}"
-          rescue Errno::EPIPE
-            return
-          end
-        end
-
-        # Interactive selection helper using fzf and CD behavior
-        def fzf_available?
-          begin
-            which = `which fzf 2>/dev/null`.strip
-            !which.empty?
-          rescue
-            false
-          end
-        end
-
-        def fzf_select(lines)
-          return nil if lines.nil? || lines.empty?
-          return nil unless fzf_available?
-
-          selection = nil
-          begin
-            IO.popen('fzf --ansi --no-sort', 'r+') do |io|
-              io.puts(lines.join("\n"))
-              io.close_write
-              selection = io.read
-            end
-          rescue Errno::ENOENT
-            return nil
-          end
-          selection && !selection.strip.empty? ? selection.strip : nil
-        end
+        # Interactive selection helper using fzf (module-level helpers fzf_available? and fzf_select are used)
 
         # If --interactive was requested, run fzf on the plain path list
         if options[:interactive]
-          plain_lines = data_rows.map do |r|
+          limited_rows = options[:limit] && options[:limit] > 0 ? data_rows.first(options[:limit]) : data_rows
+
+          plain_lines = limited_rows.map do |r|
             if r['type'] == 'd'
               r['path'].end_with?('/') ? r['path'] : (r['path'] + '/')
             else
@@ -669,11 +707,12 @@ module Histlog
             end
           end
 
-          if !fzf_available?
+          if !Histlog::Utils.fzf_available?
             STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
             # fall through to normal output
           else
-            sel = fzf_select(plain_lines)
+            height = options[:height] || 10
+            sel = Histlog::Utils.fzf_select(plain_lines, height)
             if sel.nil? || sel.empty?
               # User cancelled or no selection
               return
@@ -684,18 +723,23 @@ module Histlog
           end
         end
 
-        # If --cd was requested without --interactive, print the top result and exit
-        if options[:cd]
-          first = data_rows.first
-          if first
-            sel_path = first['path']
-            puts sel_path
-            return
-          else
-            puts "No results found."
+        if options[:limit] && options[:limit] > 0
+          limited = data_rows.first(options[:limit])
+          begin
+            limited.each do |r|
+              if r['type'] == 'd'
+                puts r['path'].end_with?('/') ? r['path'] : (r['path'] + '/')
+              else
+                puts r['path']
+              end
+            end
+          rescue Errno::EPIPE
             return
           end
+          return
         end
+
+        # Note: --cd behavior removed. Shell helpers should call histlog and perform cd in the shell.
 
         palette = Histlog::Config.colors(:paths)
         exec_col = palette[:exec]
@@ -1336,12 +1380,19 @@ module Histlog
         }
       end
 
+      # By default, when sorting by numeric usage fields (exec or args), show the
+      # highest values first (descending). For path sorting, default to
+      # ascending. Explicit --asc or --desc flags override these defaults.
+      default_reverse_for_sort_by = false
+
       if options[:sort_by]
         case options[:sort_by]
         when 'exec'
           sorted.sort_by! { |row| [row['exec'], row['path']] }
+          default_reverse_for_sort_by = true
         when 'args'
           sorted.sort_by! { |row| [row['args'], row['path']] }
+          default_reverse_for_sort_by = true
         when 'type'
           sorted.sort_by! { |row| [row['type'], row['path']] }
         else
@@ -1349,11 +1400,21 @@ module Histlog
         end
       elsif options[:count]
         sorted.sort_by! { |row| [row['exec'] + row['args'], row['path']] }
+        default_reverse_for_sort_by = true
       else
         sorted.sort_by! { |row| row['path'] }
       end
 
-      sorted.reverse! if options[:desc]
+      # Determine final ordering: explicit flags (--asc/--desc) win; otherwise
+      # fall back to sensible defaults above.
+      if options[:asc]
+        # keep as-is (ascending)
+      elsif options[:desc]
+        sorted.reverse!
+      elsif default_reverse_for_sort_by
+        sorted.reverse!
+      end
+
       sorted
     end
 
@@ -1485,34 +1546,85 @@ module Histlog
 
     # Handle init command - print shell integration snippets
     def handle_init(args = [])
-      shell = args.first&.downcase
+      require 'optparse'
+
+      options = {
+        install: false,
+        force: false,
+        rc_file: nil
+      }
+
+      parser = OptionParser.new do |opts|
+        opts.banner = "Usage: histlog init [--install] [--force] [--rc-file PATH] <shell>"
+        opts.on("--install", "Install the init snippet into the shell rc file (appends)") { options[:install] = true }
+        opts.on("--force", "Overwrite existing histlog snippet in rc file if present") { options[:force] = true }
+        opts.on("--rc-file PATH", String, "Install to a specific rc file instead of the default for the shell") do |path|
+          options[:rc_file] = File.expand_path(path)
+        end
+        opts.on("-h", "--help", "Show this help") do
+          puts opts
+          exit 0
+        end
+      end
+
+      # Parse flags and remaining args
+      parser.order!(args)
+      shell = args.shift&.downcase
 
       unless shell
         STDERR.puts "Usage: histlog init <shell>"
-        STDERR.puts "Supported shells: fish, zsh, nu"
+        STDERR.puts "Supported shells: fish, zsh, nu, bash"
         exit 1
       end
 
-      case shell
-      when 'fish'
-        puts "# Add to ~/.config/fish/config.fish:"
-        puts "# histlog init fish | source"
-        puts ""
-        puts fish_config
-      when 'zsh'
-        puts "# Add to ~/.zshrc:"
-        puts "# eval \"$(histlog init zsh)\""
-        puts ""
-        puts zsh_config
-      when 'nu', 'nushell'
-        puts "# Add to ~/.config/nushell/config.nu:"
-        puts "# histlog init nu | save /tmp/histlog-nu-config.nu; source /tmp/histlog-nu-config.nu"
-        puts ""
-        puts nu_config
-      else
-        STDERR.puts "Error: Unsupported shell '#{shell}'"
-        STDERR.puts "Supported shells: fish, zsh, nu"
-        STDERR.puts "Usage: histlog init <shell>"
+      snippet = case shell
+                when 'fish'
+                  fish_config
+                when 'zsh'
+                  zsh_config
+                when 'nu', 'nushell'
+                  nu_config
+                else
+                  STDERR.puts "Error: Unsupported shell '#{shell}'"
+                  STDERR.puts "Supported shells: fish, zsh, nu, bash"
+                  STDERR.puts "Usage: histlog init <shell>"
+                  exit 1
+                end
+
+      # If not installing, just print the snippet to stdout (existing behavior)
+      unless options[:install]
+        case shell
+        when 'fish'
+          puts "# Add to ~/.config/fish/config.fish:"
+          puts "# histlog init fish | source"
+          puts ""
+          puts snippet
+        when 'zsh'
+          puts "# Add to ~/.zshrc:"
+          puts "# eval \"$(histlog init zsh)\""
+          puts ""
+          puts snippet
+        when 'nu', 'nushell'
+          puts "# Add to ~/.config/nushell/config.nu:"
+          puts "# histlog init nu | save /tmp/histlog-nu-config.nu; source /tmp/histlog-nu-config.nu"
+          puts ""
+          puts snippet
+        end
+        return
+      end
+
+      # Install requested: determine rc file and append snippet safely
+      rc_file = options[:rc_file] || default_rc_for_shell(shell)
+      unless rc_file
+        STDERR.puts "Could not determine rc file for shell '#{shell}'. Use --rc-file PATH to specify the target file."
+        exit 1
+      end
+
+      begin
+        install_snippet_to_rc(rc_file, snippet, options[:force])
+        puts "Installed histlog snippet to #{rc_file}"
+      rescue => e
+        STDERR.puts "Failed to install snippet: #{e.message}"
         exit 1
       end
     end
@@ -1857,21 +1969,37 @@ module Histlog
             LIMIT 1000
           SQL
 
-          begin
-            rows = db.execute(q, cmd_params)
-            if rows.empty?
-              puts "No commands found."
-            else
-              rows.each do |r|
-                puts "%6d  %s" % [r['usage_count'] || 0, r['command_text'] || '']
+            begin
+              rows = db.execute(q, cmd_params)
+              if rows.empty?
+                puts "No commands found."
+              else
+                if options[:interactive]
+                  # Interactive selection over unique commands
+                  plain_lines = rows.map { |r| r['command_text'] || '' }
+                  if !Histlog::Utils.fzf_available?
+                    STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
+                  else
+                    height = options[:height] || 10
+                    sel = Histlog::Utils.fzf_select(plain_lines, height)
+                    if sel && !sel.empty?
+                      puts sel
+                    end
+                    db.close if db
+                    return
+                  end
+                else
+                  rows.each do |r|
+                    puts "%6d  %s" % [r['usage_count'] || 0, r['command_text'] || '']
+                  end
+                end
               end
+            rescue SQLite3::Exception => e
+              STDERR.puts "Database error: #{e.message}"
+            ensure
+              db.close if db
             end
-          rescue SQLite3::Exception => e
-            STDERR.puts "Database error: #{e.message}"
-          ensure
-            db.close if db
-          end
-          return
+            return
         end
 
         # Build the base query
@@ -2194,6 +2322,34 @@ module Histlog
             end
           else
             raise e
+          end
+        end
+
+        # If interactive mode is requested, run fzf over the resulting commands and print the
+        # selected command (one line). This makes `histlog query --interactive` usable by
+        # shell helpers like `hlc` which expect a single command on stdout.
+        if options[:interactive]
+          plain_lines = results.map { |r| r['cmd_text'] || '' }
+          if plain_lines.empty?
+            puts "No commands found."
+            db.close if db
+            return
+          end
+
+          if !Histlog::Utils.fzf_available?
+            STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
+            # fall through to normal output
+          else
+            height = options[:height] || 10
+            sel = Histlog::Utils.fzf_select(plain_lines, height)
+            if sel.nil? || sel.empty?
+              db.close if db
+              return
+            end
+
+            puts sel
+            db.close if db
+            return
           end
         end
 
@@ -4441,35 +4597,106 @@ def fish_config
       $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
       set --erase __histlog_command_id
     end
+
+    # Quick helpers:
+    # hlz  - interactive selection (uses fzf) and cd into selected directory
+    # hlZ  - non-interactive: cd to top result
+    function hlz
+      # Pass all arguments through to histlog paths --interactive and take the
+      # first resulting path (if any) for cd.
+      set -l target (histlog paths --dirs --plain --sort-by exec --interactive $argv)
+      if test -n "$target"
+        cd "$target"
+      end
+    end
+
+    function hlZ
+      set -l target (histlog paths --dirs --plain --sort-by exec --limit 1 $argv)
+      if test -n "$target"
+        cd "$target"
+      end
+    end
+
+    function hlc
+      # Interactive command selection and place into the commandline buffer
+      set -l cmd (histlog query --interactive $argv | head -n1)
+      if test -n "$cmd"
+        commandline -r "$cmd"
+      end
+    end
+
+    function hlC
+      # Non-interactive: select top command and place into the commandline buffer
+      set -l cmd (histlog query --limit 1 $argv | head -n1)
+      if test -n "$cmd"
+        commandline -r "$cmd"
+      end
+    end
   FISH
 end
 
 def zsh_config
   histlog_path = File.expand_path(__FILE__)
   <<~ZSH
-    #!/usr/bin/env zsh
-    # histlog configuration for zsh shell
-    # Add this to ~/.zshrc or source this file
+      #!/usr/bin/env zsh
+      # histlog configuration for zsh shell
+      # Add this to ~/.zshrc or source this file
 
-    [[ $- != *i* ]] && return
+      [[ $- != *i* ]] && return
 
-    if [[ -z $__histlog_session_id ]]; then
-      export __histlog_path="#{histlog_path}"
-      export __histlog_session_id="$($__histlog_path _on_session)"
-    fi
+      if [[ -z $__histlog_session_id ]]; then
+        export __histlog_path="#{histlog_path}"
+        export __histlog_session_id="$($__histlog_path _on_session)"
+      fi
 
-    function __histlog_preexec() {
-      export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
-    }
+      function __histlog_preexec() {
+        export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
+      }
 
-    function __histlog_postexec() {
-      $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
-      unset __histlog_command_id
-    }
+      function __histlog_postexec() {
+        $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
+        unset __histlog_command_id
+      }
 
-    autoload -Uz add-zsh-hook
-    add-zsh-hook preexec __histlog_preexec
-    add-zsh-hook precmd __histlog_postexec
+      autoload -Uz add-zsh-hook
+      add-zsh-hook preexec __histlog_preexec
+      add-zsh-hook precmd __histlog_postexec
+
+      # Quick helpers:
+      # hlz  - interactive selection (uses fzf) and cd into selected directory
+      # hlZ  - non-interactive: cd to top result
+      hlz() {
+        local target
+        target="$($__histlog_path paths --dirs --plain --sort-by exec --interactive "$@")"
+        if [ -n "$target" ]; then
+          cd -- "$target"
+        fi
+      }
+
+      hlZ() {
+        local target
+    target="$($__histlog_path paths --dirs --plain --sort-by exec --limit 1 "$@")"
+        if [ -n "$target" ]; then
+          cd -- "$target"
+        fi
+      }
+
+      hlc() {
+        local cmd
+        cmd="$($__histlog_path query --command --interactive "$@" | head -n1)"
+        if [ -n "$cmd" ]; then
+          # Push cmd into zsh edit buffer
+          print -z -- "$cmd"
+        fi
+      }
+
+      hlC() {
+        local cmd
+        cmd="$($__histlog_path query --command --limit 1 "$@" | head -n1)"
+        if [ -n "$cmd" ]; then
+          print -z -- "$cmd"
+        fi
+      }
   ZSH
 end
 
@@ -4496,6 +4723,27 @@ def nu_config
         { $env.__histlog_command_id = null }
       ]
     }
+    # Quick helpers for nushell
+    # hlz - interactive (uses fzf) then cd
+    # hlZ - non-interactive: cd to top result
+    def hlz [] {
+      let target = ($env.__histlog_path paths --dirs --plain --sort-by exec --interactive $env.ARGS | first)
+      if $target != $null { cd $target }
+    }
+
+    def hlZ [] {
+      let target = ($env.__histlog_path paths --dirs --plain --sort-by exec --limit 1 $env.ARGS)
+      if $target != $null { cd $target }
+    }
+      def hlc [] {
+        let cmd = ($env.__histlog_path query --command --interactive $env.ARGS | first)
+        if $cmd != $null { echo $cmd }
+      }
+
+      def hlC [] {
+        let cmd = ($env.__histlog_path query --command --limit 1 $env.ARGS | first)
+        if $cmd != $null { echo $cmd }
+      }
   NUSHELL
 end
 
