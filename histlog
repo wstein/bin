@@ -421,7 +421,6 @@ module Histlog
 
       puts "Available commands:"
       puts "  query       - Flexible interactive query of your command history"
-      puts "  history     - Show recent commands (supports many filters)"
       puts "  sessions    - List and inspect recorded shell sessions"
       puts "  import      - Import shell history from files (json, yaml, fish, zsh, nu, bash)"
       puts "  paths       - Show tracked file/directory paths and usage counts"
@@ -455,6 +454,10 @@ module Histlog
         opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
         opts.on("--files", "Show all unique file paths") { options[:files] = true }
         opts.on("--dirs", "Show all unique directory paths") { options[:dirs] = true }
+        opts.on("-c", "--cd", "Auto-cd to top result (prints path to stdout). Implies --dirs") { |v|
+          options[:cd] = true
+        }
+        opts.on("-i", "--interactive", "Use fzf for interactive selection") { options[:interactive] = true }
         opts.on("--regex", "Interpret searchterm as a Ruby regex") { options[:regex] = true }
         opts.on("--count", "Show usage frequency for each path") { options[:count] = true }
         opts.on("--asc", "Order results ascending") { options[:asc] = true }
@@ -477,6 +480,11 @@ module Histlog
       # Accept positional searchterm
       if args.length > 0 && !args[0].start_with?('-')
         options[:searchterm] = args.shift
+      end
+
+      # --cd implies --dirs
+      if options[:cd]
+        options[:dirs] = true
       end
 
       db_path = Histlog::Utils.get_db_path
@@ -586,6 +594,108 @@ module Histlog
         end
 
         data_rows = sort_path_rows(data_rows, options)
+
+        palette = Histlog::Config.colors(:paths)
+        exec_col = palette[:exec]
+        args_col = palette[:args]
+        dir_path_col = palette[:dir_path]
+        reset_col = palette[:reset]
+
+        begin
+          printf("%s%6s%s %s%6s%s %s\n", exec_col, "Exec", reset_col, args_col, "Args", reset_col, "Path")
+          puts "-------------------------"
+        rescue Errno::EPIPE
+          return
+        end
+
+        data_rows.each do |row|
+          exec_count = row['exec'].to_i
+          args_count = row['args'].to_i
+          exec_str = exec_count.to_s.rjust(6)
+          args_str = args_count.to_s.rjust(6)
+
+          display_path = if row['type'] == 'd'
+                           if row['path'] == '/'
+                             "#{dir_path_col}/#{reset_col}"
+                           else
+                             base = row['path'].end_with?('/') ? row['path'].chomp('/') : row['path']
+                             "#{dir_path_col}#{base}#{reset_col}/"
+                           end
+                         else
+                           row['path']
+                         end
+
+          begin
+            puts "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} #{display_path}"
+          rescue Errno::EPIPE
+            return
+          end
+        end
+
+        # Interactive selection helper using fzf and CD behavior
+        def fzf_available?
+          begin
+            which = `which fzf 2>/dev/null`.strip
+            !which.empty?
+          rescue
+            false
+          end
+        end
+
+        def fzf_select(lines)
+          return nil if lines.nil? || lines.empty?
+          return nil unless fzf_available?
+
+          selection = nil
+          begin
+            IO.popen('fzf --ansi --no-sort', 'r+') do |io|
+              io.puts(lines.join("\n"))
+              io.close_write
+              selection = io.read
+            end
+          rescue Errno::ENOENT
+            return nil
+          end
+          selection && !selection.strip.empty? ? selection.strip : nil
+        end
+
+        # If --interactive was requested, run fzf on the plain path list
+        if options[:interactive]
+          plain_lines = data_rows.map do |r|
+            if r['type'] == 'd'
+              r['path'].end_with?('/') ? r['path'] : (r['path'] + '/')
+            else
+              r['path']
+            end
+          end
+
+          if !fzf_available?
+            STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
+            # fall through to normal output
+          else
+            sel = fzf_select(plain_lines)
+            if sel.nil? || sel.empty?
+              # User cancelled or no selection
+              return
+            end
+
+            puts sel
+            return
+          end
+        end
+
+        # If --cd was requested without --interactive, print the top result and exit
+        if options[:cd]
+          first = data_rows.first
+          if first
+            sel_path = first['path']
+            puts sel_path
+            return
+          else
+            puts "No results found."
+            return
+          end
+        end
 
         palette = Histlog::Config.colors(:paths)
         exec_col = palette[:exec]
@@ -1408,155 +1518,6 @@ module Histlog
     end
 
     # ...existing code...
-
-    def show_history_list(args)
-      options = {
-        limit: 20,
-        show_all: false,
-        show_paths: false,
-        filter_command: nil,
-        filter_path: nil
-      }
-
-      OptionParser.new do |opts|
-        opts.banner = "Usage: histlog history [options]"
-        opts.on("-l", "--limit N", Integer,
-                "Number of recent commands to show (default: 20). Negative N returns the first (earliest) N results.") { |n|
-          options[:limit] = n
-        }
-        opts.on("-a", "--all", "Show all commands (ignore limit)") { options[:show_all] = true }
-        opts.on("-p", "--paths", "Show path arguments for commands") { options[:show_paths] = true }
-        opts.on("-c", "--command PATTERN", "Filter commands containing pattern") { |p| options[:filter_command] = p }
-        opts.on("-d", "--dir PATH", "Filter commands that used specific directory") { |p|
-          options[:filter_path] = File.expand_path(p)
-        }
-      end.parse!(args)
-
-      db_path = Histlog::Utils.get_db_path
-      unless File.exist?(db_path)
-        puts "No histlog.db found in current directory"
-        return
-      end
-
-      db = SQLite3::Database.new(db_path)
-      db.results_as_hash = true
-
-      where_conditions = []
-      params = []
-
-      if options[:filter_command]
-        where_conditions << "cmd.command LIKE ?"
-        params << "%#{options[:filter_command]}%"
-      end
-
-      if options[:filter_path]
-        where_conditions << "(p_old.path = ? OR p_new.path = ?)"
-        params << options[:filter_path] << options[:filter_path]
-      end
-
-      where_clause = where_conditions.empty? ? "" : "WHERE #{where_conditions.join(' AND ')}"
-      limit_clause = options[:show_all] ? "" : "LIMIT #{options[:limit]}"
-
-      recent_commands_query = <<-SQL
-        SELECT
-          c.id as command_id,
-          cmd.command AS cmd_text,
-          c.start_time,
-          c.duration,
-          c.exit_code,
-          p_old.path as cwd_old,
-          p_new.path as cwd_new
-        FROM commands c
-        JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
-        LEFT JOIN paths p_old ON c.path_old_id = p_old.id
-        LEFT JOIN paths p_new ON c.path_new_id = p_new.id
-        #{where_clause}
-        ORDER BY c.start_time DESC
-        #{limit_clause}
-      SQL
-
-      recent_commands = db.execute(recent_commands_query, params)
-
-      if recent_commands.empty?
-        puts "No commands found."
-        return
-      end
-
-      # Print header matching interactive layout: Timestamp, Duration, Status, Command
-      palette = Histlog::Config.colors(:history)
-      ts_col = palette[:timestamp]
-      dur_col = palette[:duration]
-      status_col = palette[:status_header]
-      success_col = palette[:status_success]
-      reset_col = palette[:reset]
-      printf("%s%-19s%s  %s%8s%s %s%-4s%s %s\n", ts_col, "Timestamp", reset_col, dur_col, "Duration", reset_col,
-             success_col, "Exit", reset_col, "Command")
-      puts "-" * 43
-      # Color palette for history output
-      palette = Histlog::Config.colors(:history)
-      dur_col = palette[:duration]
-      success_col = palette[:status_success]
-      fail_col = palette[:status_fail]
-      null_col = palette[:status_null]
-      reset_col = palette[:reset]
-
-      recent_commands.each do |cmd|
-        duration = Histlog::Utils.format_duration(cmd['duration'])
-        exit_code_raw = cmd['exit_code'] # could be nil for imported rows
-        # Clean up command text: remove newlines/tabs and collapse multiple spaces
-        raw_cmd = cmd['cmd_text'] || ''
-        clean_cmd = raw_cmd.gsub(/\s+/, ' ').strip
-        command_text = Histlog::Utils.truncate_command(clean_cmd, 80)
-        timestamp = cmd['start_time'] ? Time.at(cmd['start_time']).strftime('%Y-%m-%d %H:%M:%S') : nil
-
-        # Determine exit display: ✓ for 0, '/' for nil, or ✗<code>
-        exit_text = if exit_code_raw == 0
-                      "✓"
-                    elsif exit_code_raw.nil?
-                      "/"
-                    else
-                      "✗#{exit_code_raw}"
-                    end
-
-        exit_padded = exit_text[0, 4].ljust(4)
-        colored_exit = if exit_code_raw == 0
-                         "#{success_col}#{exit_padded}#{reset_col}"
-                       elsif exit_code_raw.nil?
-                         "#{null_col}#{exit_padded}#{reset_col}"
-                       else
-                         "#{fail_col}#{exit_padded}#{reset_col}"
-                       end
-
-        ts_display = timestamp || "????-??-?? ??:??:??"
-        dur_display = duration || ' ?.??? '
-        ts_color = timestamp ? ts_col : null_col
-        dur_color = duration ? dur_col : null_col
-
-        # duration field gets one extra left padding when null
-        dur_field = duration ? sprintf('%8s', dur_display) : sprintf('%9s', dur_display)
-
-        printf("%s%-19s%s  %s%s%s %s    %s\n", ts_color, ts_display, reset_col, dur_color, dur_field, reset_col,
-               colored_exit, command_text)
-
-        if options[:show_paths]
-          path_args = db.execute(<<-SQL, [cmd['command_id']])
-            SELECT p.path, p.type, ca.arg_position
-            FROM path_args ca
-            JOIN paths p ON ca.path_id = p.id
-            WHERE ca.command_id = ?
-            ORDER BY ca.arg_position
-          SQL
-
-          if path_args.any?
-            path_args.each do |path_arg|
-              type_indicator = path_arg['type'] == 'd' ? '📁' : '📄'
-              puts "       #{' ' * 8}     #{type_indicator} [#{path_arg['arg_position']}] #{path_arg['path']}"
-            end
-          end
-        end
-      end
-      db.close
-    end
 
     def query_sessions(args)
       # Connect to database
@@ -5226,8 +5187,6 @@ class HistlogApp
       STDERR.puts "The 'stats' command has moved to 'histlog db stats'."
       STDERR.puts "Run: histlog db stats --help"
       exit 1
-    when 'history'
-      Histlog::CLI.show_history_list(@argv)
     when 'sessions'
       Histlog::CLI.query_sessions(@argv)
     when 'import'
@@ -5243,7 +5202,7 @@ class HistlogApp
       STDERR.puts "Run: histlog db info --help"
       exit 1
     when 'mcp'
-      Histlog::MCP.handle_mcp_server(@argv)
+      handle_mcp_server(@argv)
     when 'maintain'
       STDERR.puts "The 'maintain' command has moved to 'histlog db maintain'."
       STDERR.puts "Run: histlog db maintain --help"
@@ -5260,7 +5219,7 @@ class HistlogApp
       # This case may be triggered by unhandled options passed as commands
       # Re-insert the "command" and let query_interactive handle it
       @argv.unshift(@command)
-      query_interactive(@argv)
+      Histlog::CLI.query_interactive(@argv)
     end
   end
 
