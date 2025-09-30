@@ -77,6 +77,14 @@ module Histlog
       dur[:value] * mult
     end
 
+    # Convert a short pattern into a fuzzy SQL LIKE pattern.
+    # Example: "git" -> "%g%i%t%" which emulates simple fzf-like fuzzy matching.
+    def fuzzy_like_pattern(str)
+      return "%" if str.nil? || str.empty?
+
+      "%" + str.chars.map { |c| Regexp.escape(c) }.join('%') + "%"
+    end
+
     # Parse --time flag value into [start_unix, end_unix] (nil for open-ended)
     # Supports:
     #   2022-12-20 08:00..09:10:40 (on a specific date)
@@ -201,10 +209,6 @@ module Histlog
 
     def build_cleanup_option_parser(options)
       OptionParser.new do |opts|
-        opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
-        opts.on("--command [PATTERN]", "Filter by command text (with optional fuzzy matching)") do |pattern|
-          options[:command_pattern] = pattern
-        end
         opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
         opts.on("--command [PATTERN]", "Filter by command text (with optional fuzzy matching)") do |pattern|
           options[:command_pattern] = pattern
@@ -463,6 +467,7 @@ module Histlog
           options[:roll_up_dirs] = true
         }
         opts.on("--plain", "Output only paths, one per line") { options[:format] = 'plain' }
+        opts.on("--fuzzy", "Enable fuzzy matching for path searchterm") { options[:fuzzy] = true }
       end
     end
 
@@ -1709,6 +1714,14 @@ module Histlog
           options[:session_id] = id.to_i if id
         end
 
+        # Command text filtering
+        opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for command text") { options[:fuzzy] = true }
+        opts.on("--command [PATTERN]", "Filter by command text (with optional fuzzy matching). If given without PATTERN, lists unique commands with counts") do |pattern|
+          # If pattern is nil, user asked for the interactive list of unique commands
+          options[:command_list] = pattern.nil?
+          options[:command_pattern] = pattern
+        end
+
         opts.on("--dir [PATH]", "Commands executed in current or specific directory") do |path|
           options[:dir] = true
           options[:dir_path] = path
@@ -1860,6 +1873,46 @@ module Histlog
       db = SQLite3::Database.new(db_path)
       db.results_as_hash = true
       begin
+        # If user asked for unique command list, run that and return early
+        if options[:command_list]
+          cmd_where = []
+          cmd_params = []
+          if options[:fuzzy] && options[:command_pattern]
+            cmd_where << "cmd.command LIKE ?"
+            cmd_params << Histlog::Utils.fuzzy_like_pattern(options[:command_pattern])
+          elsif options[:command_pattern]
+            cmd_where << "cmd.command LIKE ?"
+            cmd_params << "%#{options[:command_pattern]}%"
+          end
+
+          where_clause = cmd_where.any? ? "WHERE " + cmd_where.join(" AND ") : ""
+          q = <<-SQL
+            SELECT cmd.command AS command_text, COUNT(*) AS usage_count
+            FROM commands c
+            LEFT JOIN cmd_texts cmd ON c.cmd_text_id = cmd.id
+            #{where_clause}
+            GROUP BY cmd.command
+            ORDER BY usage_count DESC, command_text ASC
+            LIMIT 1000
+          SQL
+
+          begin
+            rows = db.execute(q, cmd_params)
+            if rows.empty?
+              puts "No commands found."
+            else
+              rows.each do |r|
+                puts "%6d  %s" % [r['usage_count'] || 0, r['command_text'] || '']
+              end
+            end
+          rescue SQLite3::Exception => e
+            STDERR.puts "Database error: #{e.message}"
+          ensure
+            db.close if db
+          end
+          return
+        end
+
         # Build the base query
         params = []
 
@@ -1911,13 +1964,23 @@ module Histlog
           where_conditions << "c.duration IS NULL"
         end
 
-        # Search term filter (optional)
-        if options[:regex] && options[:search_term] && !options[:search_term].empty?
-          where_conditions << "cmd.command REGEXP ?"
-          params << options[:search_term]
-        elsif options[:search_term] && !options[:search_term].empty?
-          where_conditions << "cmd.command LIKE ?"
-          params << "%#{options[:search_term]}%"
+        # Search term filter (optional) or explicit --command filtering
+        cmd_pattern = options[:command_pattern] || options[:search_term]
+        if options[:command_list]
+          # Special mode: list unique commands. We'll run a separate query below.
+        else
+          if options[:regex] && cmd_pattern && !cmd_pattern.empty?
+            where_conditions << "cmd.command REGEXP ?"
+            params << cmd_pattern
+          elsif cmd_pattern && !cmd_pattern.empty?
+            if options[:fuzzy]
+              where_conditions << "cmd.command LIKE ?"
+              params << Histlog::Utils.fuzzy_like_pattern(cmd_pattern)
+            else
+              where_conditions << "cmd.command LIKE ?"
+              params << "%#{cmd_pattern}%"
+            end
+          end
         end
 
         # Session filter
