@@ -120,18 +120,17 @@ module Histlog
 
       selection = nil
       begin
-        # Use an ANSI-aware, colorful fzf layout for better discoverability.
-        # Keep --ansi to allow color escape sequences in the lines.
-        # The --color argument is intentionally conservative and should work
-        # across different terminal themes; users can override with their
-        # own FZF_DEFAULT_OPTS if desired.
-        # Use quoted color string to avoid shell parsing issues.
-        # Use an ANSI-aware fzf layout. Keep --ansi to allow color escape
-        # sequences in the lines. For some callers (paths) we may want to
-        # disable the preview to keep the UI compact.
-        cmd = "fzf --ansi --no-sort --height=#{height} --layout=reverse"
+        # Configure fzf: colored output, no-wrap. Hide an internal index
+        # (field 1), show field 2 and use field 3 for preview.
+        # Avoid wrapping long lines which breaks table layout.
+        # (including the index) which we can split on "\t" to recover.
+        # Show only the second field in the selection list (the visible display)
+        # while keeping the index (field 1) and the sanitized original (field 3)
+        # available to fzf placeholders. The preview will print field 3 which is
+        # the sanitized command/path string.
+        cmd = "fzf --ansi --no-sort --no-wrap --delimiter=\"\t\" --with-nth=2 --height=#{height} --layout=reverse"
         if preview
-          cmd += " --preview 'echo {}' --preview-window=down:3:wrap"
+          cmd += " --preview 'echo {3}' --preview-window=down:3:wrap"
         end
         IO.popen(cmd, 'r+') do |io|
           # For easier debugging in user environments, allow dumping the
@@ -154,6 +153,30 @@ module Histlog
         return nil
       end
       selection && !selection.strip.empty? ? selection.strip : nil
+    end
+
+    # Sanitize and truncate a line for display inside fzf so very long
+    # paths or commands don't break table layout. Preserve newlines by
+    # converting them to an arrow marker for the display.
+    def sanitize_for_fzf(text, max_width = 120)
+      return '' if text.nil?
+
+      s = text.to_s
+      # Replace newlines with a visible marker and collapse whitespace
+      s = s.gsub(/\r\n|\r|\n/, ' ↵ ').gsub(/\s+/, ' ').strip
+      # If terminal width available via ENV['COLUMNS'], use it to set max_width
+      if ENV['COLUMNS'] && ENV['COLUMNS'].to_i > 0
+        term_w = ENV['COLUMNS'].to_i
+        # reserve columns for counts/flags; use at most 70% of terminal width
+        max_width = [(term_w * 0.7).to_i, 40].max
+      end
+      return s if s.length <= max_width
+
+      # Truncate and add ellipsis in the middle for readability
+      half = (max_width - 1) / 2
+      left = s[0, half]
+      right = s[-half, half]
+      "#{left}…#{right}"
     end
 
     # Convert a short pattern into a fuzzy SQL LIKE pattern.
@@ -502,13 +525,16 @@ module Histlog
 
           # Build selection lines according to requested output format so that
           # --interactive does not implicitly change the output format.
+          display_lines = []
+          originals = []
           if options[:format] == 'plain'
-            plain_lines = limited_rows.map do |r|
-              if r['type'] == 'd'
-                r['path'].end_with?('/') ? r['path'] : (r['path'] + '/')
-              else
-                r['path']
-              end
+            limited_rows.each_with_index do |r, idx|
+              p = r['path']
+              p = p.end_with?('/') ? p : (p + '/') if r['type'] == 'd'
+              # Prepare preview-safe original: replace tabs and encode newlines
+              orig_preview = p.to_s.gsub("\t", ' ').gsub(/\r\n|\r|\n/, '\\n')
+              display_lines << "#{idx}\t#{Histlog::Utils.sanitize_for_fzf(p)}\t#{orig_preview}"
+              originals << p
             end
           else
             palette = Histlog::Utils.colors(:paths)
@@ -517,7 +543,7 @@ module Histlog
             dir_path_col = palette[:dir_path] || ''
             reset_col = palette[:reset] || ''
 
-            plain_lines = limited_rows.map do |r|
+            limited_rows.each_with_index do |r, idx|
               exec_str = r['exec'].to_i.to_s.rjust(6)
               args_str = r['args'].to_i.to_s.rjust(6)
               display_path = if r['type'] == 'd'
@@ -530,7 +556,12 @@ module Histlog
                              else
                                r['path']
                              end
-              "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} │ #{display_path}"
+              display = "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} │ #{Histlog::Utils.sanitize_for_fzf(display_path)}"
+              # fields: index<TAB>display<TAB>preview
+              orig_full = (r['type'] == 'd' && r['path'] != '/' ? (r['path'].chomp('/') + '/') : r['path'])
+              orig_preview = orig_full.to_s.gsub("\t", ' ').gsub(/\r\n|\r|\n/, '\\n')
+              display_lines << "#{idx}\t#{display}\t#{orig_preview}"
+              originals << (r['type'] == 'd' && r['path'] != '/' ? (r['path'].chomp('/') + '/') : r['path'])
             end
           end
 
@@ -540,7 +571,7 @@ module Histlog
           else
             height = options[:height] || 10
             # Disable preview for paths interactive for a simpler UI
-            sel = Histlog::Utils.fzf_select(plain_lines, height, preview: false)
+            sel = Histlog::Utils.fzf_select(display_lines, height, preview: false)
             if sel.nil? || sel.empty?
               # User cancelled or no selection
               return
@@ -550,13 +581,19 @@ module Histlog
             if options[:format] == 'plain'
               puts sel
             else
-              # For the table-like lines we constructed above the path is after the
-              # visible separator. Strip ANSI and split on the separator for
-              # robust extraction.
               sel_no_ansi = sel.gsub(/\e\[[\d;]*m/, '')
-              parts = sel_no_ansi.split(/\s*│\s*/)
-              path_part = parts.last ? parts.last.strip : sel_no_ansi.strip
-              puts path_part
+              # split: index<TAB>visible
+              parts = sel_no_ansi.split("\t", 2)
+              if parts.length == 2 && parts[0] =~ /^\d+$/
+                sel_idx = parts[0].to_i
+                path_part = originals[sel_idx] || ''
+                puts path_part
+              else
+                # Fallback: try previous separator extraction
+                parts2 = sel_no_ansi.split(/\s*│\s*/)
+                path_part = parts2.last ? parts2.last.strip : sel_no_ansi.strip
+                puts path_part
+              end
             end
             return
           end
@@ -860,9 +897,17 @@ module Histlog
             reset_col_i = palette_i[:reset] || ''
 
             if options[:format] == 'plain'
-              plain_lines = rows.map { |row| row['command_text'] || '' }
+              # fields: index<TAB>display<TAB>preview (plain)
+              display_lines = []
+              originals = []
+              rows.each_with_index do |row, idx|
+                cmd = row['command_text'] || ''
+                cmd_preview = cmd.to_s.gsub("\t", ' ').gsub(/\r\n|\r|\n/, '\\n')
+                display_lines << "#{idx}\t#{Histlog::Utils.sanitize_for_fzf(cmd)}\t#{cmd_preview}"
+                originals << cmd
+              end
             else
-              # Use colored fields for better visibility in fzf and tabs for reliable extraction.
+              # fields: index<TAB>display<TAB>preview (colored)
               palette_cols = Histlog::Utils.colors(:commands)
               count_col_i = palette_cols[:count] || ''
               s_flag_col_i = palette_cols[:s_flag] || ''
@@ -870,10 +915,11 @@ module Histlog
               timestamp_col_i = Histlog::Utils.colors(:history)[:timestamp] || ''
               reset_col_i = palette_cols[:reset] || ''
 
-              plain_lines = rows.map do |row|
+              display_lines = []
+              originals = []
+              rows.each_with_index do |row, idx|
                 count = (row['usage_count'] || 0).to_i.to_s.rjust(6)
                 last_used = Histlog::Utils.format_timestamp(row['last_used'])
-                # colored SW flags
                 flag_colored = if row.key?('_same_session') && row['_same_session'] == 1 && row.key?('_same_cwd') && row['_same_cwd'] == 1
                                  "#{s_flag_col_i}S#{w_flag_col_i}W#{reset_col_i}"
                                elsif row.key?('_same_session') && row['_same_session'] == 1
@@ -886,19 +932,35 @@ module Histlog
                 count_colored = "#{count_col_i}#{count}#{reset_col_i}"
                 last_used_colored = "#{timestamp_col_i}#{last_used}#{reset_col_i}"
                 cmd = row['command_text'] || ''
-                "#{count_colored} #{last_used_colored} #{flag_colored} │ #{cmd}"
+                display = "#{count_colored} #{last_used_colored} #{flag_colored} │ #{Histlog::Utils.sanitize_for_fzf(cmd)}"
+                # Prefix an index as first tab-delimited field; fzf will hide
+                # field 1 from display but return it, allowing us to map back
+                # to the originals array.
+                cmd_preview = cmd.to_s.gsub("\t", ' ').gsub(/\r\n|\r|\n/, '\\n')
+                display_lines << "#{idx}\t#{display}\t#{cmd_preview}"
+                originals << cmd
               end
             end
 
             height = options[:height] || 12
-            sel = Histlog::Utils.fzf_select(plain_lines, height)
+            sel = Histlog::Utils.fzf_select(display_lines, height)
             return if sel.nil? || sel.strip.empty?
 
-            # Strip ANSI sequences and extract the command (last '│' separated field)
+            # split: index<TAB>visible
             sel_no_ansi = sel.gsub(/\e\[[\d;]*m/, '')
-            parts = sel_no_ansi.split(/\s*│\s*/)
-            selected_command = parts.last ? parts.last.strip : sel_no_ansi.strip
-            puts selected_command
+            parts = sel_no_ansi.split("\t", 2)
+            if parts.length == 2 && parts[0] =~ /^\d+$/
+              sel_idx = parts[0].to_i
+              orig = originals[sel_idx] || ''
+              # Convert multiline original into a single-line command for output
+              out_cmd = orig.gsub(/\r\n|\r|\n/, '; ').strip
+              puts out_cmd
+            else
+              # Fallback: previous separator extraction
+              parts2 = sel_no_ansi.split(/\s*│\s*/)
+              selected_command = parts2.last ? parts2.last.strip : sel_no_ansi.strip
+              puts selected_command
+            end
             return
           end
         end
@@ -4890,129 +4952,131 @@ end
 def fish_config
   histlog_path = File.expand_path(__FILE__)
   <<~FISH
-    #!/usr/bin/env fish
-    # histlog configuration for fish shell
-    # Add this to your config.fish or source this file
+        #!/usr/bin/env fish
+        # histlog configuration for fish shell
+        # Add this to your config.fish or source this file
 
-    status --is-interactive; or exit
+        status --is-interactive; or exit
 
-    if test -z "$__histlog_session_id"
-      set -gx __histlog_path "#{histlog_path}"
-      set -gx __histlog_session_id (
-        $__histlog_path _on_session
-      )
-    end
+        if test -z "$__histlog_session_id"
+          set -gx __histlog_path "#{histlog_path}"
+          set -gx __histlog_session_id (
+            $__histlog_path _on_session
+          )
+        end
 
-    function __histlog_preexec --on-event fish_preexec
-      set -gx __histlog_command_id (
-        $__histlog_path _on_preexec $argv[1] $__histlog_session_id
-      )
-    end
+        function __histlog_preexec --on-event fish_preexec
+          set -gx __histlog_command_id (
+            $__histlog_path _on_preexec $argv[1] $__histlog_session_id
+          )
+        end
 
-    function __histlog_postcmd --on-event fish_postexec
-      $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
-      set --erase __histlog_command_id
-    end
+        function __histlog_postcmd --on-event fish_postexec
+          $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
+          set --erase __histlog_command_id
+        end
 
-    # Quick helpers:
-    # hlz  - interactive selection (uses fzf) and cd into selected directory
-    # hlZ  - non-interactive: cd to top result
-    function hlz
-      # Pass all arguments through to histlog paths --interactive and take the
-      # first resulting path (if any) for cd.
-      set -l target (histlog paths --dirs --plain --sort-by exec --interactive $argv)
-      if test -n "$target"
-        cd "$target"
-      end
-    end
+        # Quick helpers:
+        # hlz  - interactive selection (uses fzf) and cd into selected directory
+        # hlZ  - non-interactive: cd to top result
+        function hlz
+          # Pass all arguments through to histlog paths --interactive and take the
+          # first resulting path (if any) for cd.
+          set -l target (histlog paths --dirs --plain --sort-by exec --interactive $argv)
+          if test -n "$target"
+            cd "$target"
+          end
+        end
 
-    function hlZ
-      set -l target (histlog paths --dirs --plain --sort-by exec --limit 1 $argv)
-      if test -n "$target"
-        cd "$target"
-      end
-    end
+        function hlZ
+          set -l target (histlog paths --dirs --plain --sort-by exec --limit 1 $argv)
+          if test -n "$target"
+            cd "$target"
+          end
+        end
 
-    function hlc
-      # Interactive command selection and place into the commandline buffer
-      set -l cmd (histlog commands --context --plain --interactive $argv)
-      if test -n "$cmd"
-        commandline -r "$cmd"
-      end
-    end
+        function hlc
+          # Interactive command selection and place into the commandline buffer
+          set -l cmd (histlog commands --context --plain --interactive $argv)
+          if test -n "$cmd"
+            commandline -r "$cmd"
+          end
+        end
 
-    function hlC
-      # Non-interactive: select top command and place into the commandline buffer
-      set -l cmd (histlog commands --context --plain --limit 1 $argv)
-      if test -n "$cmd"
-        commandline -r "$cmd"
-      end
-    end
+
+        function hlC
+          # Non-interactive: select top command and place into the commandline buffer
+          set -l cmd (histlog commands --context --plain --limit 1 $argv)
+          if test -n "$cmd"
+            commandline -r "$cmd"
+          end
+        end
   FISH
 end
 
 def zsh_config
   histlog_path = File.expand_path(__FILE__)
   <<~ZSH
-      #!/usr/bin/env zsh
-      # histlog configuration for zsh shell
-      # Add this to ~/.zshrc or source this file
+          #!/usr/bin/env zsh
+          # histlog configuration for zsh shell
+          # Add this to ~/.zshrc or source this file
 
-      [[ $- != *i* ]] && return
+          [[ $- != *i* ]] && return
 
-      if [[ -z $__histlog_session_id ]]; then
-        export __histlog_path="#{histlog_path}"
-        export __histlog_session_id="$($__histlog_path _on_session)"
-      fi
+          if [[ -z $__histlog_session_id ]]; then
+            export __histlog_path="#{histlog_path}"
+            export __histlog_session_id="$($__histlog_path _on_session)"
+          fi
 
-      function __histlog_preexec() {
-        export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
-      }
+          function __histlog_preexec() {
+            export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
+          }
 
-      function __histlog_postexec() {
-        $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
-        unset __histlog_command_id
-      }
+          function __histlog_postexec() {
+            $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
+            unset __histlog_command_id
+          }
 
-      autoload -Uz add-zsh-hook
-      add-zsh-hook preexec __histlog_preexec
-      add-zsh-hook precmd __histlog_postexec
+          autoload -Uz add-zsh-hook
+          add-zsh-hook preexec __histlog_preexec
+          add-zsh-hook precmd __histlog_postexec
 
-      # Quick helpers:
-      # hlz  - interactive selection (uses fzf) and cd into selected directory
-      # hlZ  - non-interactive: cd to top result
-      hlz() {
-        local target
-        target="$($__histlog_path paths --dirs --plain --sort-by exec --interactive "$@")"
-        if [ -n "$target" ]; then
-          cd -- "$target"
-        fi
-      }
+          # Quick helpers:
+          # hlz  - interactive selection (uses fzf) and cd into selected directory
+          # hlZ  - non-interactive: cd to top result
+          hlz() {
+            local target
+            target="$($__histlog_path paths --dirs --plain --sort-by exec --interactive "$@")"
+            if [ -n "$target" ]; then
+              cd -- "$target"
+            fi
+          }
 
-      hlZ() {
-        local target
-    target="$($__histlog_path paths --dirs --plain --sort-by exec --limit 1 "$@")"
-        if [ -n "$target" ]; then
-          cd -- "$target"
-        fi
-      }
+          hlZ() {
+            local target
+        target="$($__histlog_path paths --dirs --plain --sort-by exec --limit 1 "$@")"
+            if [ -n "$target" ]; then
+              cd -- "$target"
+            fi
+          }
 
-      hlc() {
-        local cmd
-        cmd="$($__histlog_path commands --context --plain --interactive "$@")"
-        if [ -n "$cmd" ]; then
-          # Push cmd into zsh edit buffer
-          print -z -- "$cmd"
-        fi
-      }
+          hlc() {
+            local cmd
+            cmd="$($__histlog_path commands --context --plain --interactive "$@")"
+            if [ -n "$cmd" ]; then
+              # Push cmd into zsh edit buffer
+              print -z -- "$cmd"
+            fi
+          }
 
-      hlC() {
-        local cmd
-        cmd="$($__histlog_path commands --context --plain --limit 1 "$@")"
-        if [ -n "$cmd" ]; then
-          print -z -- "$cmd"
-        fi
-      }
+          hlC() {
+            local cmd
+            cmd="$($__histlog_path commands --context --plain --limit 1 "$@")"
+            if [ -n "$cmd" ]; then
+              print -z -- "$cmd"
+            fi
+          }
+
   ZSH
 end
 
