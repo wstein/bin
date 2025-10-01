@@ -519,7 +519,7 @@ module Histlog
 
         # Interactive selection helper using fzf (module-level helpers fzf_available? and fzf_select are used)
 
-        # If --interactive was requested, run fzf on the plain path list
+        # If --interactive was requested, run fzf on the path list
         if options[:interactive]
           limited_rows = options[:limit] && options[:limit] > 0 ? data_rows.first(options[:limit]) : data_rows
 
@@ -559,9 +559,11 @@ module Histlog
               display = "#{exec_col}#{exec_str}#{reset_col} #{args_col}#{args_str}#{reset_col} │ #{Histlog::Utils.sanitize_for_fzf(display_path)}"
               # fields: index<TAB>display<TAB>preview
               orig_full = (r['type'] == 'd' && r['path'] != '/' ? (r['path'].chomp('/') + '/') : r['path'])
-              orig_preview = orig_full.to_s.gsub("\t", ' ').gsub(/\r\n|\r|\n/, '\\n')
-              display_lines << "#{idx}\t#{display}\t#{orig_preview}"
-              originals << (r['type'] == 'd' && r['path'] != '/' ? (r['path'].chomp('/') + '/') : r['path'])
+              # Show only the path name in preview, not the full path
+              preview_path = orig_full.to_s.gsub("\t", ' ').gsub(/\r\n|\r|\n/, '\\n')
+              preview_path = File.basename(preview_path.end_with?('/') ? preview_path.chomp('/') : preview_path) + (orig_full.end_with?('/') ? '/' : '')
+              display_lines << "#{idx}\t#{display}\t#{preview_path}"
+              originals << orig_full
             end
           end
 
@@ -570,29 +572,44 @@ module Histlog
             # fall through to normal output
           else
             height = options[:height] || 10
-            # Disable preview for paths interactive for a simpler UI
-            sel = Histlog::Utils.fzf_select(display_lines, height, preview: false)
+            # Enable preview for better UX - show just the path name
+            sel = Histlog::Utils.fzf_select(display_lines, height, preview: true)
             if sel.nil? || sel.empty?
               # User cancelled or no selection
               return
             end
 
-            # If the selection was a table-like line, try to extract the path
+            # Improved path extraction from fzf selection
             if options[:format] == 'plain'
-              puts sel
+              # For plain format, the selection is just the path
+              sel_no_ansi = sel.gsub(/\e\[[\d;]*m/, '')
+              puts sel_no_ansi.strip
             else
+              # For formatted output, extract path from the tab-separated fields
               sel_no_ansi = sel.gsub(/\e\[[\d;]*m/, '')
               # split: index<TAB>visible
               parts = sel_no_ansi.split("\t", 2)
-              if parts.length == 2 && parts[0] =~ /^\d+$/
+              if parts.length >= 2 && parts[0] =~ /^\d+$/
+                # Valid tab-separated format: extract index and get original path
                 sel_idx = parts[0].to_i
-                path_part = originals[sel_idx] || ''
-                puts path_part
+                if sel_idx >= 0 && sel_idx < originals.length
+                  puts originals[sel_idx]
+                else
+                  # Fallback: try to extract path from the visible part
+                  visible_part = parts[1] || ''
+                  path_part = visible_part.split(/\s*│\s*/).last || visible_part
+                  puts path_part.strip
+                end
               else
-                # Fallback: try previous separator extraction
+                # Fallback: try to extract path from the visible part
                 parts2 = sel_no_ansi.split(/\s*│\s*/)
-                path_part = parts2.last ? parts2.last.strip : sel_no_ansi.strip
-                puts path_part
+                if parts2.length >= 2
+                  path_part = parts2.last.strip
+                  puts path_part
+                else
+                  # Last resort: use the whole selection
+                  puts sel_no_ansi.strip
+                end
               end
             end
             return
@@ -4952,130 +4969,130 @@ end
 def fish_config
   histlog_path = File.expand_path(__FILE__)
   <<~FISH
-        #!/usr/bin/env fish
-        # histlog configuration for fish shell
-        # Add this to your config.fish or source this file
+    #!/usr/bin/env fish
+    # histlog configuration for fish shell
+    # Add this to your config.fish or source this file
 
-        status --is-interactive; or exit
+    status --is-interactive; or exit
 
-        if test -z "$__histlog_session_id"
-          set -gx __histlog_path "#{histlog_path}"
-          set -gx __histlog_session_id (
-            $__histlog_path _on_session
-          )
-        end
+    if test -z "$__histlog_session_id"
+      set -gx __histlog_path "#{histlog_path}"
+      set -gx __histlog_session_id (
+        $__histlog_path _on_session
+      )
+    end
 
-        function __histlog_preexec --on-event fish_preexec
-          set -gx __histlog_command_id (
-            $__histlog_path _on_preexec $argv[1] $__histlog_session_id
-          )
-        end
+    function __histlog_preexec --on-event fish_preexec
+      set -gx __histlog_command_id (
+        $__histlog_path _on_preexec $argv[1] $__histlog_session_id
+      )
+    end
 
-        function __histlog_postcmd --on-event fish_postexec
-          $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
-          set --erase __histlog_command_id
-        end
+    function __histlog_postcmd --on-event fish_postexec
+      $__histlog_path _on_postcmd $__histlog_command_id $CMD_DURATION $status
+      set --erase __histlog_command_id
+    end
 
-        # Quick helpers:
-        # hlz  - interactive selection (uses fzf) and cd into selected directory
-        # hlZ  - non-interactive: cd to top result
-        function hlz
-          # Pass all arguments through to histlog paths --interactive and take the
-          # first resulting path (if any) for cd.
-          set -l target (histlog paths --dirs --plain --sort-by exec --interactive $argv)
-          if test -n "$target"
-            cd "$target"
-          end
-        end
+    # Quick helpers:
+    # hlz  - interactive selection (uses fzf) and cd into selected directory
+    # hlZ  - non-interactive: cd to top result
+    function hlz
+      # Pass all arguments through to histlog paths --interactive and take the
+      # first resulting path (if any) for cd.
+      set -l target (histlog paths --dirs --sort-by exec --interactive $argv)
+      if test -n "$target"
+        cd "$target"
+      end
+    end
 
-        function hlZ
-          set -l target (histlog paths --dirs --plain --sort-by exec --limit 1 $argv)
-          if test -n "$target"
-            cd "$target"
-          end
-        end
+    function hlZ
+      set -l target (histlog paths --dirs --plain --sort-by exec --limit 1 $argv)
+      if test -n "$target"
+        cd "$target"
+      end
+    end
 
-        function hlc
-          # Interactive command selection and place into the commandline buffer
-          set -l cmd (histlog commands --context --plain --interactive $argv)
-          if test -n "$cmd"
-            commandline -r "$cmd"
-          end
-        end
+    function hlc
+      # Interactive command selection and place into the commandline buffer
+      set -l cmd (histlog commands --context --interactive $argv)
+      if test -n "$cmd"
+        commandline -r "$cmd"
+      end
+    end
 
 
-        function hlC
-          # Non-interactive: select top command and place into the commandline buffer
-          set -l cmd (histlog commands --context --plain --limit 1 $argv)
-          if test -n "$cmd"
-            commandline -r "$cmd"
-          end
-        end
+    function hlC
+      # Non-interactive: select top command and place into the commandline buffer
+      set -l cmd (histlog commands --context --plain --limit 1 $argv)
+      if test -n "$cmd"
+        commandline -r "$cmd"
+      end
+    end
   FISH
 end
 
 def zsh_config
   histlog_path = File.expand_path(__FILE__)
   <<~ZSH
-          #!/usr/bin/env zsh
-          # histlog configuration for zsh shell
-          # Add this to ~/.zshrc or source this file
+      #!/usr/bin/env zsh
+      # histlog configuration for zsh shell
+      # Add this to ~/.zshrc or source this file
 
-          [[ $- != *i* ]] && return
+      [[ $- != *i* ]] && return
 
-          if [[ -z $__histlog_session_id ]]; then
-            export __histlog_path="#{histlog_path}"
-            export __histlog_session_id="$($__histlog_path _on_session)"
-          fi
+      if [[ -z $__histlog_session_id ]]; then
+        export __histlog_path="#{histlog_path}"
+        export __histlog_session_id="$($__histlog_path _on_session)"
+      fi
 
-          function __histlog_preexec() {
-            export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
-          }
+      function __histlog_preexec() {
+        export __histlog_command_id="$($__histlog_path _on_preexec "$1" "$__histlog_session_id")"
+      }
 
-          function __histlog_postexec() {
-            $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
-            unset __histlog_command_id
-          }
+      function __histlog_postexec() {
+        $__histlog_path _on_postcmd "$__histlog_command_id" "$CMD_DURATION" "$?"
+        unset __histlog_command_id
+      }
 
-          autoload -Uz add-zsh-hook
-          add-zsh-hook preexec __histlog_preexec
-          add-zsh-hook precmd __histlog_postexec
+      autoload -Uz add-zsh-hook
+      add-zsh-hook preexec __histlog_preexec
+      add-zsh-hook precmd __histlog_postexec
 
-          # Quick helpers:
-          # hlz  - interactive selection (uses fzf) and cd into selected directory
-          # hlZ  - non-interactive: cd to top result
-          hlz() {
-            local target
-            target="$($__histlog_path paths --dirs --plain --sort-by exec --interactive "$@")"
-            if [ -n "$target" ]; then
-              cd -- "$target"
-            fi
-          }
+      # Quick helpers:
+      # hlz  - interactive selection (uses fzf) and cd into selected directory
+      # hlZ  - non-interactive: cd to top result
+      hlz() {
+        local target
+        target="$($__histlog_path paths --dirs --plain --sort-by exec --interactive "$@")"
+        if [ -n "$target" ]; then
+          cd -- "$target"
+        fi
+      }
 
-          hlZ() {
-            local target
-        target="$($__histlog_path paths --dirs --plain --sort-by exec --limit 1 "$@")"
-            if [ -n "$target" ]; then
-              cd -- "$target"
-            fi
-          }
+      hlZ() {
+        local target
+    target="$($__histlog_path paths --dirs --plain --sort-by exec --limit 1 "$@")"
+        if [ -n "$target" ]; then
+          cd -- "$target"
+        fi
+      }
 
-          hlc() {
-            local cmd
-            cmd="$($__histlog_path commands --context --plain --interactive "$@")"
-            if [ -n "$cmd" ]; then
-              # Push cmd into zsh edit buffer
-              print -z -- "$cmd"
-            fi
-          }
+      hlc() {
+        local cmd
+        cmd="$($__histlog_path commands --context --plain --interactive "$@")"
+        if [ -n "$cmd" ]; then
+          # Push cmd into zsh edit buffer
+          print -z -- "$cmd"
+        fi
+      }
 
-          hlC() {
-            local cmd
-            cmd="$($__histlog_path commands --context --plain --limit 1 "$@")"
-            if [ -n "$cmd" ]; then
-              print -z -- "$cmd"
-            fi
-          }
+      hlC() {
+        local cmd
+        cmd="$($__histlog_path commands --context --plain --limit 1 "$@")"
+        if [ -n "$cmd" ]; then
+          print -z -- "$cmd"
+        fi
+      }
 
   ZSH
 end
