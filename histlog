@@ -114,7 +114,7 @@ module Histlog
       end
     end
 
-    def fzf_select(lines, height = 10, preview: true)
+    def fzf_select(lines, height = 16, preview: true)
       return nil if lines.nil? || lines.empty?
       return nil unless fzf_available?
 
@@ -573,7 +573,7 @@ module Histlog
             STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
             # fall through to normal output
           else
-            height = options[:height] || 10
+            height = options[:height] || 16
             # Enable preview for better UX - show just the path name
             sel = Histlog::Utils.fzf_select(display_lines, height, preview: true)
             if sel.nil? || sel.empty?
@@ -966,7 +966,7 @@ module Histlog
               end
             end
 
-            height = options[:height] || 12
+            height = options[:height] || 16
             sel = Histlog::Utils.fzf_select(display_lines, height)
             return if sel.nil? || sel.strip.empty?
 
@@ -2289,7 +2289,7 @@ module Histlog
                 if !Histlog::Utils.fzf_available?
                   STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
                 else
-                  height = options[:height] || 10
+                  height = options[:height] || 16
                   sel = Histlog::Utils.fzf_select(plain_lines, height)
                   if sel && !sel.empty?
                     if options[:format] == 'plain'
@@ -2729,7 +2729,7 @@ module Histlog
             STDERR.puts "fzf not found in PATH; please install fzf to use --interactive"
             # fall through to normal output
           else
-            height = options[:height] || 10
+            height = options[:height] || 16
             sel = Histlog::Utils.fzf_select(plain_lines, height)
             if sel.nil? || sel.empty?
               db.close if db
