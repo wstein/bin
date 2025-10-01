@@ -300,7 +300,8 @@ module Histlog
     def build_paths_option_parser(options)
       OptionParser.new do |opts|
         opts.banner = "Usage: histlog paths [--files] [--dirs] [SEARCHTERM] [--regex] [--count] [--asc|--desc] [--sort-by FIELD]"
-        opts.on("--session [ID]", "Commands from current session (requires __histlog_session_id) or specific session ID") do |id|
+        opts.on("--session [ID]",
+                "Commands from current session (requires __histlog_session_id) or specific session ID") do |id|
           options[:session] = true
           options[:session_id] = id.to_i if id
         end
@@ -335,7 +336,8 @@ module Histlog
         opts.on("--limit N", Integer, "Limit number of commands displayed") { |n| options[:limit] = n }
         opts.on("--regex", "Interpret searchterm as a Ruby regex") { options[:regex] = true }
         opts.on("--fuzzy", "Enable fuzzy (fzf-like) matching for the search term") { options[:fuzzy] = true }
-        opts.on("--session [ID]", "Commands from current session (requires __histlog_session_id) or specific session ID") do |id|
+        opts.on("--session [ID]",
+                "Commands from current session (requires __histlog_session_id) or specific session ID") do |id|
           options[:session] = true
           options[:session_id] = id.to_i if id
         end
@@ -844,7 +846,8 @@ module Histlog
           # Determine if this command_text has any executions in the current session
           if env_session_id && env_session_id > 0
             begin
-              chk_s = db.get_first_value("SELECT COUNT(*) FROM commands WHERE cmd_text_id = ? AND session_id = ?", [r['cmd_text_id'], env_session_id])
+              chk_s = db.get_first_value("SELECT COUNT(*) FROM commands WHERE cmd_text_id = ? AND session_id = ?",
+                                         [r['cmd_text_id'], env_session_id])
               r['_same_session'] = chk_s.to_i > 0 ? 1 : 0
             rescue SQLite3::Exception
               r['_same_session'] = 0
@@ -855,7 +858,11 @@ module Histlog
 
           # Determine if this command_text was executed in the current working directory
           begin
-            chk_c = db.get_first_value("SELECT COUNT(*) FROM commands c JOIN paths p ON (c.path_new_id = p.id OR c.path_old_id = p.id) WHERE c.cmd_text_id = ? AND p.path = ?", [r['cmd_text_id'], cwd])
+            chk_c = db.get_first_value(
+              "SELECT COUNT(*) FROM commands c JOIN paths p ON (c.path_new_id = p.id OR c.path_old_id = p.id) WHERE c.cmd_text_id = ? AND p.path = ?", [
+                r['cmd_text_id'], cwd
+              ]
+            )
             r['_same_cwd'] = chk_c.to_i > 0 ? 1 : 0
           rescue SQLite3::Exception
             r['_same_cwd'] = 0
@@ -995,7 +1002,8 @@ module Histlog
           # Header: Count, Last Used, SW flag, Command (user requested column order)
           # Use the same SW coloring as the data columns for consistency.
           header_flag = s_flag_col + 'S' + w_flag_col + 'W' + reset_col
-          printf("%s%6s%s %s%-19s%s %s%s%s %s\n", count_col, "Count", reset_col, timestamp_col, "Last Used", reset_col, flag_col, header_flag, reset_col, "Command")
+          printf("%s%6s%s %s%-19s%s %s%s%s %s\n", count_col, "Count", reset_col, timestamp_col, "Last Used", reset_col,
+                 flag_col, header_flag, reset_col, "Command")
           puts "--------------------------------------------------------------------------"
         rescue Errno::EPIPE
           return
@@ -1580,13 +1588,13 @@ module Histlog
         # Print summary after execution
         db.close if db
         puts "\n=== Maintenance Summary ==="
-        old_size = defined?(original_size) ? original_size : File.size(db_path)
-        new_size = File.size(db_path)
+        old_size = defined?(original_size) && original_size ? original_size : (File.size(db_path) rescue 0)
+        new_size = File.size(db_path) rescue 0
         puts "Database size before: #{Histlog::Utils.format_bytes(old_size)}"
         puts "Database size after:  #{Histlog::Utils.format_bytes(new_size)}"
-        savings = old_size - new_size
-        percentage = savings > 0 ? (savings.to_f / old_size * 100).round(2) : 0
-        if savings > 0
+        savings = (old_size || 0) - (new_size || 0)
+        if old_size && old_size > 0 && savings > 0
+          percentage = (savings.to_f / old_size * 100).round(2)
           puts "Space saved:         #{Histlog::Utils.format_bytes(savings)} (#{percentage}%)"
         else
           puts "Space saved:         0 (already optimized)"
@@ -1834,7 +1842,8 @@ module Histlog
         opts.banner = "Usage: histlog init [--install] [--force] [--rc-file PATH] <shell>"
         opts.on("--install", "Install the init snippet into the shell rc file (appends)") { options[:install] = true }
         opts.on("--force", "Overwrite existing histlog snippet in rc file if present") { options[:force] = true }
-        opts.on("--rc-file PATH", String, "Install to a specific rc file instead of the default for the shell") do |path|
+        opts.on("--rc-file PATH", String,
+                "Install to a specific rc file instead of the default for the shell") do |path|
           options[:rc_file] = File.expand_path(path)
         end
         opts.on("-h", "--help", "Show this help") do
@@ -2323,14 +2332,22 @@ module Histlog
                   same_cwd = 0
                   begin
                     if env_session_id && env_session_id > 0
-                      chk = db.get_first_value("SELECT COUNT(*) FROM commands c JOIN cmd_texts ct ON c.cmd_text_id = ct.id WHERE ct.command = ? AND c.session_id = ?", [command_text, env_session_id])
+                      chk = db.get_first_value(
+                        "SELECT COUNT(*) FROM commands c JOIN cmd_texts ct ON c.cmd_text_id = ct.id WHERE ct.command = ? AND c.session_id = ?", [
+                          command_text, env_session_id
+                        ]
+                      )
                       same_session = chk.to_i > 0 ? 1 : 0
                     end
                   rescue SQLite3::Exception
                     same_session = 0
                   end
                   begin
-                    chk2 = db.get_first_value("SELECT COUNT(*) FROM commands c JOIN cmd_texts ct ON c.cmd_text_id = ct.id JOIN paths p ON (c.path_new_id = p.id OR c.path_old_id = p.id) WHERE ct.command = ? AND p.path = ?", [command_text, cwd])
+                    chk2 = db.get_first_value(
+                      "SELECT COUNT(*) FROM commands c JOIN cmd_texts ct ON c.cmd_text_id = ct.id JOIN paths p ON (c.path_new_id = p.id OR c.path_old_id = p.id) WHERE ct.command = ? AND p.path = ?", [
+                        command_text, cwd
+                      ]
+                    )
                     same_cwd = chk2.to_i > 0 ? 1 : 0
                   rescue SQLite3::Exception
                     same_cwd = 0
