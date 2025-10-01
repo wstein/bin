@@ -171,10 +171,108 @@ module Histlog
     rescue
       "                   "
     end
+
+    # Helpers for installing init snippets into rc files
+    def default_rc_for_shell(shell)
+      home = Dir.home
+      case shell
+      when 'fish'
+        File.join(home, '.config', 'fish', 'config.fish')
+      when 'zsh'
+        File.join(home, '.zshrc')
+      when 'nu', 'nushell'
+        File.join(home, '.config', 'nushell', 'config.nu')
+      else
+        nil
+      end
+    end
+
+    def install_snippet_to_rc(rc_file, snippet, force = false)
+      require 'fileutils'
+
+      rc_file = File.expand_path(rc_file)
+      dir = File.dirname(rc_file)
+      FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
+
+      # Ensure snippet ends with a newline
+      snippet = snippet.end_with?("\n") ? snippet : snippet + "\n"
+
+      start_marker = "# >>> histlog init start\n"
+      end_marker = "# <<< histlog init end\n"
+
+      if File.exist?(rc_file)
+        content = File.read(rc_file)
+        # Backup existing file
+        timestamp = Time.now.strftime('%Y%m%d%H%M%S')
+        backup = "#{rc_file}.histlog.bak.#{timestamp}"
+        FileUtils.cp(rc_file, backup)
+
+        if content.include?(start_marker) && content.include?(end_marker)
+          if !force
+            raise "histlog snippet already present in #{rc_file}; use --force to replace"
+          end
+
+          # Replace existing snippet block
+          new_block = start_marker + snippet + end_marker
+          new_content = content.sub(/# >>> histlog init start.*?# <<< histlog init end/m, new_block)
+          File.write(rc_file, new_content)
+        else
+          # Append snippet at the end
+          File.open(rc_file, 'a') do |f|
+            f.write("\n") unless content.end_with?("\n")
+            f.write(start_marker)
+            f.write(snippet)
+            f.write(end_marker)
+          end
+        end
+      else
+        # Create new rc file with the snippet
+        File.open(rc_file, 'w', 0600) do |f|
+          f.write("# Created by histlog on #{Time.now}\n")
+          f.write(start_marker)
+          f.write(snippet)
+          f.write(end_marker)
+        end
+      end
+    end
   end
 
   module CLI
     module_function
+
+    def show_help(all = false)
+      puts "Usage: histlog <command> [options]"
+      puts ""
+
+      puts "Available commands:"
+      puts "  query       - Flexible interactive query of your command history"
+      puts "  sessions    - List and inspect recorded shell sessions"
+      puts "  import      - Import shell history from files (json, yaml, fish, zsh, nu, bash)"
+      puts "  paths       - Show tracked file/directory paths and usage counts"
+      puts "  db          - Database operations (cleanup, info, stats, maintain)"
+      puts "  init        - Print shell integration snippets for supported shells"
+      puts "  mcp         - Run the MCP server (developer feature)"
+      puts "  help        - Show this help"
+
+      puts ""
+      puts "Global flags:"
+      puts "  -h, --help        Show top-level help (this page)"
+      puts "  --help-all        Show full help including porcelain/internal commands"
+      puts ""
+      puts "Environment variables (affect behavior):"
+      puts "  HISTLOG_DB        Path to the histlog SQLite database (overrides default)"
+
+      if all
+        puts ""
+        puts "Porcelain / internal commands (normally hidden):"
+        puts "  _on_session - Initialize a new shell session (internal)"
+        puts "  _on_preexec - Record command start (internal)"
+        puts "  _on_postcmd - Record command completion (internal)"
+      end
+
+      puts ""
+      puts "For command-specific help run: histlog <command> --help"
+    end
 
     def build_paths_option_parser(options)
       OptionParser.new do |opts|
@@ -1713,14 +1811,14 @@ module Histlog
       end
 
       # Install requested: determine rc file and append snippet safely
-      rc_file = options[:rc_file] || default_rc_for_shell(shell)
+      rc_file = options[:rc_file] || Histlog::Utils.default_rc_for_shell(shell)
       unless rc_file
         STDERR.puts "Could not determine rc file for shell '#{shell}'. Use --rc-file PATH to specify the target file."
         exit 1
       end
 
       begin
-        install_snippet_to_rc(rc_file, snippet, options[:force])
+        Histlog::Utils.install_snippet_to_rc(rc_file, snippet, options[:force])
         puts "Installed histlog snippet to #{rc_file}"
       rescue => e
         STDERR.puts "Failed to install snippet: #{e.message}"
