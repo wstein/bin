@@ -3,6 +3,8 @@
 
 require 'uri'
 require 'set'
+require 'optparse'
+require 'json'
 
 class URLExtractor
   # Regex pattern to match URLs in text
@@ -35,6 +37,16 @@ class URLExtractor
   def sorted_urls
     # Return sorted canonical URLs
     @dedup_map.values.map { |entry| entry[:canonical] }.sort
+  end
+
+  def deduplicated_data
+    # Return deduplicated data organized by key, sorted by canonical URL
+    @dedup_map.sort_by { |_, entry| entry[:canonical] }.to_h
+  end
+
+  def total_variations
+    # Total count of URL variations across all deduplicated entries
+    @dedup_map.values.sum { |entry| entry[:variations].length }
   end
 
   def dedup_key(uri, host, port, path)
@@ -140,16 +152,100 @@ class URLExtractor
   end
 end
 
+class CLI
+  def initialize
+    @options = {
+      format: 'text',
+      verbose: false,
+      show_variations: false
+    }
+  end
+
+  def parse_options
+    OptionParser.new do |opts|
+      opts.banner = 'Usage: 2links [options] [FILE]'
+      opts.separator ''
+      opts.separator 'Extract, canonicalize, and deduplicate URLs from text'
+      opts.separator ''
+
+      opts.on('-f', '--format FORMAT', 'Output format: text|json (default: text)') do |fmt|
+        @options[:format] = fmt
+      end
+
+      opts.on('-v', '--verbose', 'Show extraction statistics') do
+        @options[:verbose] = true
+      end
+
+      opts.on('-V', '--variations', 'Include URL variations in JSON output') do
+        @options[:show_variations] = true
+      end
+
+      opts.on('-h', '--help', 'Show this help message') do
+        puts opts
+        exit 0
+      end
+
+      opts.on('--version', 'Show version') do
+        puts '2links 1.0.0'
+        exit 0
+      end
+    end.parse!
+  end
+
+  def run
+    parse_options
+
+    # Read input from file or stdin
+    input = if ARGV.any?
+              File.read(ARGV[0])
+            else
+              $stdin.read
+            end
+
+    extractor = URLExtractor.new(input)
+    extractor.extract.deduplicate
+
+    output(extractor)
+  end
+
+  private
+
+  def output(extractor)
+    case @options[:format]
+    when 'json'
+      output_json(extractor)
+    else
+      output_text(extractor)
+    end
+
+    print_stats(extractor) if @options[:verbose]
+  end
+
+  def output_text(extractor)
+    extractor.sorted_urls.each { |url| puts url }
+  end
+
+  def output_json(extractor)
+    data = extractor.deduplicated_data.map do |key, entry|
+      obj = {
+        canonical_url: entry[:canonical],
+        domain: URI.parse(entry[:canonical]).host,
+        count: entry[:count]
+      }
+      obj[:variations] = entry[:variations] if @options[:show_variations]
+      obj
+    end
+    puts JSON.pretty_generate(data)
+  end
+
+  def print_stats(extractor)
+    warn "\n[2links] Statistics:"
+    warn "  Unique canonical URLs: #{extractor.sorted_urls.length}"
+    warn "  Total variations found: #{extractor.total_variations}"
+  end
+end
+
 # Main execution
 if __FILE__ == $0
-  input = $stdin.read
-
-  extractor = URLExtractor.new(input)
-  extractor.extract.deduplicate
-
-  urls = extractor.sorted_urls
-  urls.each { |url| puts url }
-
-  # Optional: print stats to stderr
-  warn "\n[2links] Extracted #{urls.length} unique URLs" if ENV['VERBOSE']
+  CLI.new.run
 end
