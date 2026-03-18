@@ -1,0 +1,155 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'uri'
+require 'set'
+
+class URLExtractor
+  # Regex pattern to match URLs in text
+  # Matches http(s), ftp, and other common schemes
+  # Stops at quotes, angle brackets, and whitespace
+  URL_PATTERN = %r{
+    (?:https?|ftp)://
+    [^\s"'<>]+
+  }x
+
+  def initialize(text)
+    @text = text
+    @urls = []
+    @dedup_map = {} # maps dedup key (scheme-agnostic) to {canonical:, variations:, schemes:, count:}
+  end
+
+  def extract
+    # Find all URL matches in text
+    @text.scan(URL_PATTERN) do |url_string|
+      process_url(url_string)
+    end
+    self
+  end
+
+  def deduplicate
+    # Deduplication already happens in process_url via @canonical_map
+    self
+  end
+
+  def sorted_urls
+    # Return sorted canonical URLs
+    @dedup_map.values.map { |entry| entry[:canonical] }.sort
+  end
+
+  def dedup_key(uri, host, port, path)
+    # Dedup key is scheme-agnostic: used to identify duplicate URLs with different schemes
+    # format: host:port/path (no scheme)
+    key = host&.downcase || ''
+    key += ":#{port}" if port && !default_port?(uri.scheme, port)
+    key += path
+    key
+  end
+
+  def canonical_form(url_string)
+    begin
+      uri = URI.parse(url_string)
+
+      # Validate scheme
+      return nil unless %w[http https ftp].include?(uri.scheme)
+
+      # Warn on internal IPs
+      warn_on_internal_ip(uri.host) if uri.host
+
+      # Warn on user info
+      warn_on_user_info(uri) if uri.user
+
+      # Build canonical form
+      scheme = uri.scheme&.downcase
+      host = uri.host&.downcase
+      port = uri.port
+      path = uri.path || ''
+
+      # Normalize path: ensure leading / for non-empty paths, strip trailing /
+      path = "/#{path}" unless path.empty? || path.start_with?('/')
+      path = path.sub(%r{/$}, '') if path != '/' # strip trailing slash except for root
+
+      # Create dedup key (scheme-agnostic)
+      key = dedup_key(uri, host, port, path)
+
+      # Build the canonical URL
+      canonical_url = "#{scheme}://#{host}"
+      canonical_url += ":#{port}" if port && !default_port?(scheme, port)
+      canonical_url += path
+
+      # Return both canonical URL and dedup key
+      {
+        scheme: scheme,
+        host: host,
+        port: port,
+        path: path,
+        key: key,
+        url: canonical_url
+      }
+    rescue URI::InvalidURIError, StandardError => e
+      warn "Warning: Invalid URL '#{url_string}': #{e.message}"
+      nil
+    end
+  end
+
+  private
+
+  def process_url(url_string)
+    parsed = canonical_form(url_string)
+    return if parsed.nil?
+
+    key = parsed[:key]
+
+    # Track variations and update canonical if needed (prefer https)
+    if @dedup_map[key]
+      entry = @dedup_map[key]
+      entry[:variations] << url_string unless entry[:variations].include?(url_string)
+      entry[:count] += 1
+
+      # Update canonical if this is https and current is not
+      if parsed[:scheme] == 'https' && entry[:canonical] !~ /^https:/
+        entry[:canonical] = parsed[:url]
+      end
+    else
+      @dedup_map[key] = {
+        canonical: parsed[:url],
+        variations: [url_string],
+        count: 1,
+        schemes: [parsed[:scheme]]
+      }
+    end
+  end
+
+  def default_port?(scheme, port)
+    case scheme
+    when 'http'  then port == 80
+    when 'https' then port == 443
+    when 'ftp'   then port == 21
+    else false
+    end
+  end
+
+  def warn_on_internal_ip(host)
+    if host =~ /\A(localhost|127\.|192\.168\.|10\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)/
+      warn "Warning: Internal IP detected: #{host}"
+    end
+  end
+
+  def warn_on_user_info(uri)
+    warn "Warning: URL contains user info (stripped): #{uri.user}@***"
+  end
+end
+
+# Main execution
+if __FILE__ == $0
+  input = $stdin.read
+
+  extractor = URLExtractor.new(input)
+  extractor.extract.deduplicate
+
+  urls = extractor.sorted_urls
+  urls.each { |url| puts url }
+
+  # Optional: print stats to stderr
+  warn "\n[2links] Extracted #{urls.length} unique URLs" if ENV['VERBOSE']
+end
