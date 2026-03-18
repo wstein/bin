@@ -311,7 +311,9 @@ class URLExtractor
     return nil if relative_path.empty?
 
     begin
-      base_uri = URI.parse(@base_url)
+      base_uri = normalize_base_url(@base_url)
+      return nil if base_uri.nil?
+
       # Remove query and fragment from relative path
       clean_path = relative_path.sub(/[?#].*/, '')
 
@@ -322,6 +324,18 @@ class URLExtractor
       @warnings << "Failed to resolve relative URL '#{relative_path}': #{e.message}"
       nil
     end
+  end
+
+  def normalize_base_url(url)
+    return nil if url.nil? || url.empty?
+
+    # If URL doesn't have a scheme, add https://
+    url = "https://#{url}" unless url =~ /^[a-z]+:\/\//i
+
+    URI.parse(url)
+  rescue StandardError => e
+    @warnings << "Invalid base URL '#{url}': #{e.message}"
+    nil
   end
 
   def deduplicate
@@ -533,7 +547,7 @@ class CLI
         @options[:filter] = domain
       end
 
-      opts.on('-b', '--base-url URL', 'Base URL for resolving relative URLs') do |url|
+      opts.on('-b', '--base-url URL', 'Base URL for resolving relative URLs (auto-adds https:// if no scheme)') do |url|
         @options[:base_url] = url
       end
 
