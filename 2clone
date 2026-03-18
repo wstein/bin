@@ -1,0 +1,132 @@
+#!/usr/bin/env sh
+# 2clone: A small portable helper that clones a repository URL stored in the
+# clipboard (or passed as an argument) into a predictable directory hierarchy.
+# The heavy lifting lives in this script; a lightweight wrapper (e.g. fish)
+# can simply call it and `cd` into the returned directory.
+
+# $1 - string to print
+Print() {
+    printf '%s' "$1"
+}
+
+# $1 - string to print
+Println() {
+    printf '%s\n' "$1"
+}
+
+# $1 - value to return
+# returns - prints argument to stdout then exits
+Return() {
+    printf '%s' "$1"
+    exit 0
+}
+
+# Display usage/help message on stderr.
+Help() {
+    Println "Usage: 2clone [--dry-run] [URL]" >&2
+    Println "" >&2
+    Println "Clones a git repository from URL, supplied as an argument or" >&2
+    Println "read from the clipboard.  The target directory is" >&2
+    Println "\$HOME/host/path, where host and path are deduced from the URL." >&2
+    Println "E.g. https://github.com/user/repo.git → \$HOME/github.com/user/repo" >&2
+}
+
+# $@ - arguments
+# sets global 'url' and 'dryrun'
+ParseArgs() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --dry-run) dryrun=1 ;;
+            --help) Help ; exit 0 ;;
+            --*) Println "Unknown option: $1" >&2; exit 1 ;;
+            *) url="$1" ;;
+        esac
+        shift
+    done
+}
+
+# Trim leading/trailing whitespace and remove trailing slash.
+#
+# $1 - input string
+# returns - trimmed string
+Trim() {
+    v=$(printf '%s' "$1" | awk '{gsub(/^ +| +$/,"",$0); printf "%s",$0}')
+    printf '%s' "${v%/}"
+}
+
+# Parse a repository URL into host and path components.
+#
+# $1 - URL (possibly including protocol)
+# returns - prints host and path separated by space; exits nonzero on failure
+ParseURL() {
+    u=$1
+    # strip protocol prefix if present
+    case "$u" in
+        *://*) u=${u#*://} ;; # remove scheme
+    esac
+    # ssh style contains @
+    if printf '%s' "$u" | grep -q '@'; then
+        t=${u#*@}
+        host=${t%%[:/]*}
+        if printf '%s' "$u" | grep -q ':'; then
+            path=${u#*:}
+        else
+            path=${t#*/}
+        fi
+    else
+        host=${u%%/*}
+        path=${u#*/}
+    fi
+    # normalise host
+    host=$(printf '%s' "$host" | sed -e 's/^www\.//')
+    # strip trailing .git
+    path=$(printf '%s' "$path" | sed -e 's/\.git$//')
+    if [ -z "$host" ] || [ -z "$path" ]; then
+        return 1
+    fi
+    printf '%s %s' "$host" "$path"
+}
+
+# $@ - command line args
+# returns - prints target directory to stdout, messages on stderr
+Main() {
+    url=""; dryrun=0
+    ParseArgs "$@"
+
+    if [ -z "$url" ]; then
+        uname=$(uname 2>/dev/null)
+        if [ "$uname" = "Darwin" ]; then
+            url=$(pbpaste)
+        else
+            url=$(wl-paste --no-newline 2>/dev/null)
+        fi
+    fi
+    if [ -z "$url" ]; then
+        Println "2clone: clipboard is empty and no URL argument given" >&2
+        exit 1
+    fi
+
+    orig=$url
+    url=$(Trim "$url")
+
+    if ! parsed=$(ParseURL "$url"); then
+        Println "2clone: could not parse host/path from URL: $url" >&2
+        exit 1
+    fi
+    host=${parsed%% *}
+    path=${parsed#* }
+
+    target="$HOME/$host/$path"
+
+    Println "Cloning $orig → $target" >&2
+    mkdir -p "$(dirname "$target")"
+    cmd="git clone --recurse-submodules '$orig' '$target'"
+    if [ "$dryrun" -eq 1 ]; then
+        Println "$cmd" >&2
+        Return "$target"
+    fi
+    eval "$cmd"
+    Return "$target"
+}
+
+Main "$@"
