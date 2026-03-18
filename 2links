@@ -1,6 +1,219 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+=begin
+2links - URL Extractor, Canonicalizer, and Deduplicator
+========================================================
+
+## SPECIFICATION
+
+2links is a command-line tool that extracts, normalizes, and deduplicates URLs from
+text input. It canonicalizes URLs to a standard form and removes duplicates that point
+to the same resource, preferring HTTPS over HTTP and sorting output alphabetically.
+
+## SUPPORTED SCHEMES
+
+- http:// and https://
+- ftp://
+
+## CONTRACT
+
+### Input
+- Plain text with embedded URLs (any supported scheme)
+- Optional HTML with href="..." attributes (with --html flag)
+- Accepts from stdin or file argument
+- Max URL length: 2048 characters (standard)
+
+### Processing Pipeline
+1. **Extraction:** Regex scan for plain text URLs + optional HTML href parsing
+2. **Validation:** URI.parse() with strict scheme whitelist
+3. **Canonicalization:** Normalize scheme/host/path, strip trailing slashes
+4. **Deduplication:** Group by scheme-agnostic key, prefer https
+5. **Sorting:** Alphabetical by canonical URL
+6. **Output:** Text (default) or JSON format
+
+### Canonicalization Rules
+
+1. Parse URL with URI.parse()
+2. Validate scheme (http|https|ftp only)
+3. Lowercase scheme and hostname
+4. Strip trailing slash (except for root "/")
+5. Query params/fragments: PRESERVED in original, OMITTED in canonical key
+6. User info (user:pass@): STRIPPED and WARNED
+7. Default ports omitted (80→http, 443→https, 21→ftp)
+
+### Deduplication Logic
+
+- **Key:** Scheme-agnostic (host:port/path)
+- **Preference:** HTTPS > HTTP > FTP
+- **Fallback:** Count most common representation
+
+Example:
+  Input:  https://github.com/user/repo
+          http://github.com/user/repo
+          https://github.com/user/repo/
+  Output: https://github.com/user/repo (single canonical, https preferred)
+
+### Output Formats
+
+#### Text (default)
+One canonical URL per line, sorted alphabetically.
+Clean, Unix-friendly, easily piped.
+
+#### JSON (--format json)
+Array of objects with:
+  {
+    "canonical_url": "https://...",
+    "domain": "example.com",
+    "count": 2,
+    "variations": ["https://...", "http://..."]  # optional with --variations
+  }
+
+## USAGE
+
+### Basic Examples
+
+  # Extract from file
+  ./2links urls.txt
+
+  # Extract from stdin
+  cat page.html | ./2links
+
+  # Extract from file with stats
+  ./2links input.txt --verbose
+
+  # JSON output with variations
+  ./2links urls.txt --format json --variations
+
+  # Parse HTML href attributes
+  ./2links page.html --html
+
+  # Extract and filter by domain
+  ./2links urls.txt --filter github.com
+
+  # Exclude internal IPs
+  ./2links mixed_urls.txt --no-internal
+
+### Command-Line Options
+
+  -f, --format FORMAT         Output format: text|json (default: text)
+  -H, --html                  Parse HTML href="..." attributes
+  -F, --filter DOMAIN         Filter URLs by domain (supports partial match)
+  -o, --output FILE           Write output to file instead of stdout
+  -v, --verbose               Show statistics, warnings, and counts
+  -V, --variations            Include URL variations in JSON output
+      --no-internal           Exclude localhost and private IP addresses
+  -h, --help                  Show help message
+      --version               Show version
+
+## EDGE CASES & WARNINGS
+
+### Detected Issues (with --verbose)
+
+- **Internal IPs:** localhost, 127.x, 192.168.x, 10.x, 172.16-31.x
+- **User Info in URLs:** user:pass@host (stripped, warned)
+- **Invalid URLs:** Logged but skipped (doesn't halt processing)
+- **Malformed Input:** Continues gracefully, reports counts
+
+### Statistics Reported
+
+- URLs found (regex matches)
+- URLs valid (parse successful)
+- URLs invalid (parse failed)
+- Unique canonical URLs
+- Total variations (all original forms)
+- Internal IP detections
+- User info detections
+
+## DESIGN DECISIONS
+
+| Decision | Rationale |
+|----------|-----------|
+| Scheme-agnostic dedup key | Allows http/https equivalence without false positives |
+| HTTPS preference | Security-aware default, aligns with modern practices |
+| Query params in identity | Omitted (canonical URLs are stable targets, params are ephemeral) |
+| No network I/O | Offline operation: fast, secure, no external dependencies |
+| Stateful class design | Maintains state for chaining, multi-call workflows |
+| Optional HTML parsing | Flexibility without breaking plain-text use case |
+
+## EXAMPLES
+
+### Example 1: Basic Text Extraction
+
+  Input:
+    Check https://github.com/user/repo
+    Old link: http://github.com/user/repo
+
+  Command:
+    $ ./2links input.txt
+
+  Output:
+    https://github.com/user/repo
+
+### Example 2: HTML Parsing
+
+  Input:
+    <a href="https://example.com">Example</a>
+    Visit https://example.com for details
+
+  Command:
+    $ ./2links page.html --html --format json --variations
+
+  Output:
+    [
+      {
+        "canonical_url": "https://example.com",
+        "domain": "example.com",
+        "count": 2,
+        "variations": ["https://example.com"]
+      }
+    ]
+
+### Example 3: Filtering and Stats
+
+  Command:
+    $ ./2links urls.txt --filter github --verbose --no-internal
+
+  Output:
+    https://github.com/user/repo1
+    https://github.com/user/repo2
+
+    [2links] Statistics:
+      URLs found: 47
+      URLs valid: 45
+      URLs invalid: 2
+      Unique canonical URLs: 23
+      Total variations: 45
+      Internal IPs detected: 3
+
+## ROADMAP
+
+### Phase 5 (In Progress)
+- ✅ --output flag for file output
+- ✅ --filter flag for domain/scheme filtering
+- ⚠️ --no-internal flag to exclude private IPs
+- Future: --base-url for relative URL resolution
+
+### Phase 6 (Planned)
+- Full Nokogiri HTML parsing (not just href)
+- Markdown link extraction
+- robots.txt / sitemap.xml support
+- Bulk file processing
+
+### Phase 7+ (Long-term)
+- Web crawler mode
+- Database persistence
+- API/HTTP server mode
+- Parallel processing
+
+## VERSION
+
+2links 1.0.0
+Ruby 3.0+
+No external dependencies (pure stdlib)
+
+=end
+
 require 'uri'
 require 'set'
 require 'optparse'
