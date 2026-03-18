@@ -188,10 +188,10 @@ Array of objects with:
 
 ## ROADMAP
 
-### Phase 5 (In Progress)
+### Phase 5 (Complete) ✅
 - ✅ --output flag for file output
 - ✅ --filter flag for domain/scheme filtering
-- ⚠️ --no-internal flag to exclude private IPs
+- ✅ --no-internal flag to exclude private IPs
 - Future: --base-url for relative URL resolution
 
 ### Phase 6 (Planned)
