@@ -272,14 +272,20 @@ class URLExtractor
     self
   end
 
-  def sorted_urls
-    # Return sorted canonical URLs
-    @dedup_map.values.map { |entry| entry[:canonical] }.sort
+  def sorted_urls(filter: nil)
+    # Return sorted canonical URLs, optionally filtered by domain
+    urls = @dedup_map.values.map { |entry| entry[:canonical] }.sort
+    return urls unless filter
+
+    urls.select { |url| URI.parse(url).host&.include?(filter) }
   end
 
-  def deduplicated_data
-    # Return deduplicated data organized by key, sorted by canonical URL
-    @dedup_map.sort_by { |_, entry| entry[:canonical] }.to_h
+  def deduplicated_data(filter: nil)
+    # Return deduplicated data organized by key, sorted by canonical URL, optionally filtered
+    data = @dedup_map.sort_by { |_, entry| entry[:canonical] }.to_h
+    return data unless filter
+
+    data.select { |_, entry| URI.parse(entry[:canonical]).host&.include?(filter) }
   end
 
   def total_variations
@@ -407,7 +413,9 @@ class CLI
       format: 'text',
       verbose: false,
       show_variations: false,
-      parse_html: false
+      parse_html: false,
+      output_file: nil,
+      filter: nil
     }
   end
 
@@ -422,8 +430,16 @@ class CLI
         @options[:format] = fmt
       end
 
+      opts.on('-F', '--filter DOMAIN', 'Filter URLs by domain (partial match)') do |domain|
+        @options[:filter] = domain
+      end
+
       opts.on('-H', '--html', 'Parse HTML href attributes (in addition to plain text URLs)') do
         @options[:parse_html] = true
+      end
+
+      opts.on('-o', '--output FILE', 'Write output to file instead of stdout') do |file|
+        @options[:output_file] = file
       end
 
       opts.on('-v', '--verbose', 'Show extraction statistics') do
@@ -465,22 +481,31 @@ class CLI
   private
 
   def output(extractor)
-    case @options[:format]
-    when 'json'
-      output_json(extractor)
+    output_content = case @options[:format]
+                     when 'json'
+                       generate_json(extractor)
+                     else
+                       generate_text(extractor)
+                     end
+
+    # Write to file or stdout
+    if @options[:output_file]
+      File.write(@options[:output_file], output_content)
+      warn "[2links] Output written to #{@options[:output_file]}" if @options[:verbose]
     else
-      output_text(extractor)
+      print output_content
     end
 
     print_stats(extractor) if @options[:verbose]
   end
 
-  def output_text(extractor)
-    extractor.sorted_urls.each { |url| puts url }
+  def generate_text(extractor)
+    urls = extractor.sorted_urls(filter: @options[:filter])
+    urls.map { |url| "#{url}\n" }.join
   end
 
-  def output_json(extractor)
-    data = extractor.deduplicated_data.map do |key, entry|
+  def generate_json(extractor)
+    data = extractor.deduplicated_data(filter: @options[:filter]).map do |key, entry|
       obj = {
         canonical_url: entry[:canonical],
         domain: URI.parse(entry[:canonical]).host,
@@ -489,7 +514,7 @@ class CLI
       obj[:variations] = entry[:variations] if @options[:show_variations]
       obj
     end
-    puts JSON.pretty_generate(data)
+    JSON.pretty_generate(data)
   end
 
   def print_stats(extractor)
