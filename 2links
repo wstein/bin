@@ -315,7 +315,12 @@ class URLExtractor
 
       # Normalize path: ensure leading / for non-empty paths, strip trailing /
       path = "/#{path}" unless path.empty? || path.start_with?('/')
-      path = path.sub(%r{/$}, '') if path != '/' # strip trailing slash except for root
+
+      # Resolve . and .. in path (e.g., /path/to/file/.. becomes /path/to)
+      path = normalize_path(path)
+
+      # Strip trailing slash except for root
+      path = path.sub(%r{/$}, '') if path != '/'
 
       # Create dedup key (scheme-agnostic)
       key = dedup_key(uri, host, port, path)
@@ -346,8 +351,10 @@ class URLExtractor
   def process_url(url_string)
     @stats[:urls_found] += 1
 
-    # Clean trailing punctuation from URL text
-    url_string = url_string.sub(/[)\]}\.,;:!?]+\z/, '')
+    # Clean trailing punctuation from URL text (but not . or : which are part of URLs)
+    # Removes: ) ] } , ; ! ?
+    # Preserves: . (for .. in paths) and : (for scheme)
+    url_string = url_string.sub(/[)\]},;!?]+\z/, '')
 
     parsed = canonical_form(url_string)
     if parsed.nil?
@@ -412,6 +419,24 @@ class URLExtractor
 
     host =~ /\A(localhost|127\.|192\.168\.|10\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)/
   end
+
+  def normalize_path(path)
+    # Normalize path: resolve . and .. segments
+    # /path/to/./file becomes /path/to/file
+    # /path/to/file/.. becomes /path/to
+    segments = path.split('/').reject { |seg| seg.empty? || seg == '.' }
+    normalized = []
+
+    segments.each do |segment|
+      if segment == '..'
+        normalized.pop if normalized.any?
+      else
+        normalized << segment
+      end
+    end
+
+    '/' + normalized.join('/')
+  end
 end
 
 class CLI
@@ -472,12 +497,21 @@ class CLI
   def run
     parse_options
 
-    # Read input from file or stdin
+    # Read input from file, stdin, or clipboard
     input = if ARGV.any?
               File.read(ARGV[0])
+            elsif $stdin.tty?
+              # Interactive terminal: read from clipboard
+              read_from_clipboard
             else
+              # stdin is piped: read from stdin
               $stdin.read
             end
+
+    if input.nil? || input.empty?
+      warn "[2links] Error: No input provided and clipboard is empty"
+      exit 1
+    end
 
     extractor = URLExtractor.new(
       input,
@@ -486,6 +520,19 @@ class CLI
     extractor.extract.deduplicate
 
     output(extractor)
+  end
+
+  def read_from_clipboard
+    uname = `uname 2>/dev/null`.strip
+    case uname
+    when 'Darwin'
+      `pbpaste 2>/dev/null`.chomp
+    else
+      # Try wayland clipboard (Linux)
+      `wl-paste --no-newline 2>/dev/null`.chomp rescue nil
+    end
+  rescue StandardError
+    nil
   end
 
   private
