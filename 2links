@@ -15,14 +15,20 @@ class URLExtractor
     [^\s"'<>]+
   }x
 
+  # Regex pattern to match href attributes in HTML
+  HREF_PATTERN = %r{
+    href\s*=\s*["]([^"]*)["]
+  }xi
+
   # Track warnings and stats
   attr_reader :warnings, :stats
 
-  def initialize(text)
+  def initialize(text, parse_html: false)
     @text = text
     @urls = []
     @dedup_map = {} # maps dedup key (scheme-agnostic) to {canonical:, variations:, schemes:, count:}
     @warnings = []
+    @parse_html = parse_html
     @stats = {
       urls_found: 0,
       urls_valid: 0,
@@ -33,7 +39,15 @@ class URLExtractor
   end
 
   def extract
-    # Find all URL matches in text
+    # Extract from HTML href attributes if enabled
+    if @parse_html
+      @text.scan(HREF_PATTERN) do |href|
+        # Only process if it looks like a URL
+        process_url(href) if href =~ /\A(?:https?|ftp):\/\//
+      end
+    end
+
+    # Find all URL matches in text using general pattern
     @text.scan(URL_PATTERN) do |url_string|
       process_url(url_string)
     end
@@ -179,7 +193,8 @@ class CLI
     @options = {
       format: 'text',
       verbose: false,
-      show_variations: false
+      show_variations: false,
+      parse_html: false
     }
   end
 
@@ -192,6 +207,10 @@ class CLI
 
       opts.on('-f', '--format FORMAT', 'Output format: text|json (default: text)') do |fmt|
         @options[:format] = fmt
+      end
+
+      opts.on('-H', '--html', 'Parse HTML href attributes (in addition to plain text URLs)') do
+        @options[:parse_html] = true
       end
 
       opts.on('-v', '--verbose', 'Show extraction statistics') do
@@ -224,7 +243,7 @@ class CLI
               $stdin.read
             end
 
-    extractor = URLExtractor.new(input)
+    extractor = URLExtractor.new(input, parse_html: @options[:parse_html])
     extractor.extract.deduplicate
 
     output(extractor)
