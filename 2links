@@ -92,6 +92,12 @@ Array of objects with:
   # JSON output with variations
   ./2links urls.txt --format json --variations
 
+  # Extract relative URLs from HTML (requires base URL)
+  ./2links page.html --base-url https://example.com
+
+  # Mix of absolute and relative URLs
+  ./2links mixed.html --base-url https://docs.example.com -o urls.txt
+
   # Filter and exclude internal
   ./2links urls.txt --filter github.com --no-internal
 
@@ -103,6 +109,7 @@ Array of objects with:
   -f, --format FORMAT         Output format: text|json (default: text)
   -F, --filter DOMAIN         Filter URLs by domain (supports partial match)
   -o, --output FILE           Write output to file instead of stdout
+  -b, --base-url URL          Base URL for resolving relative URLs (e.g., https://example.com)
   -v, --verbose               Show statistics, warnings, and counts
   -V, --variations            Include URL variations in JSON output
       --no-internal           Exclude localhost and private IP addresses
@@ -113,6 +120,7 @@ Array of objects with:
 
 ### Detected Issues (with --verbose)
 
+- **Relative URLs:** /path/to/resource (requires --base-url to resolve)
 - **Internal IPs:** localhost, 127.x, 192.168.x, 10.x, 172.16-31.x
 - **User Info in URLs:** user:pass@host (stripped, warned)
 - **Invalid URLs:** Logged but skipped (doesn't halt processing)
@@ -191,6 +199,25 @@ Array of objects with:
       Total variations: 45
       Internal IPs detected: 3
 
+### Example 4: Extracting Relative URLs from HTML
+
+  Input (HTML with relative URLs):
+    <a href="/support/solutions/folders/17000121866">Support</a>
+    <a href="/docs/getting-started">Documentation</a>
+    <a href="/api/v1/endpoints">API</a>
+
+  Command (without base-url):
+    $ ./2links page.html --verbose
+    [No URLs extracted - relative URLs require --base-url]
+
+  Command (with base-url):
+    $ ./2links page.html --base-url https://example.com
+
+  Output:
+    https://example.com/api/v1/endpoints
+    https://example.com/docs/getting-started
+    https://example.com/support/solutions/folders/17000121866
+
 ## ROADMAP
 
 ### Phase 5 (Complete) ✅
@@ -223,27 +250,34 @@ require 'optparse'
 require 'json'
 
 class URLExtractor
-  # Regex pattern to match URLs in any text format
+  # Regex pattern to match absolute URLs in any text format
   # Matches: scheme://host[:port]/path
   # Format-agnostic: works with HTML, JSON, Markdown, code, etc.
-  # Greedy but lets URI.parse validation filter invalid matches
   URL_PATTERN = %r{
     (?:https?|ftp)://[^\s"'<>]+
+  }x
+
+  # Regex pattern to match relative URLs (paths starting with / or relative paths)
+  # Matches: /path/to/resource, /path?query=param, ./relative, ../sibling
+  RELATIVE_URL_PATTERN = %r{
+    (?:^|[>\s"])(/[^\s"'<>]*|\.\.?/[^\s"'<>]*)
   }x
 
   # Track warnings and stats
   attr_reader :warnings, :stats
 
-  def initialize(text, exclude_internal: false)
+  def initialize(text, exclude_internal: false, base_url: nil)
     @text = text
     @urls = []
     @dedup_map = {} # maps dedup key (scheme-agnostic) to {canonical:, variations:, schemes:, count:}
     @warnings = []
     @exclude_internal = exclude_internal
+    @base_url = base_url
     @stats = {
       urls_found: 0,
       urls_valid: 0,
       urls_invalid: 0,
+      relative_urls: 0,
       internal_ips: 0,
       user_info_urls: 0,
       excluded_internal: 0
@@ -251,12 +285,43 @@ class URLExtractor
   end
 
   def extract
-    # Extract all URLs from text (format-agnostic)
+    # Extract absolute URLs from text (format-agnostic)
     # Works with HTML, JSON, Markdown, code, YAML, etc.
     @text.scan(URL_PATTERN) do |url_string|
       process_url(url_string)
     end
+
+    # Extract relative URLs if base_url is provided
+    if @base_url
+      @text.scan(RELATIVE_URL_PATTERN) do |match|
+        relative_url = match.is_a?(Array) ? match.last : match
+        next if relative_url.nil? || relative_url.empty?
+
+        # Resolve relative URL against base
+        absolute_url = resolve_relative_url(relative_url.strip)
+        process_url(absolute_url) if absolute_url
+        @stats[:relative_urls] += 1
+      end
+    end
+
     self
+  end
+
+  def resolve_relative_url(relative_path)
+    return nil if relative_path.empty?
+
+    begin
+      base_uri = URI.parse(@base_url)
+      # Remove query and fragment from relative path
+      clean_path = relative_path.sub(/[?#].*/, '')
+
+      # Resolve the relative path
+      resolved = base_uri.merge(clean_path)
+      resolved.to_s
+    rescue StandardError => e
+      @warnings << "Failed to resolve relative URL '#{relative_path}': #{e.message}"
+      nil
+    end
   end
 
   def deduplicate
@@ -448,7 +513,8 @@ class CLI
       show_variations: false,
       output_file: nil,
       filter: nil,
-      exclude_internal: false
+      exclude_internal: false,
+      base_url: nil
     }
   end
 
@@ -465,6 +531,10 @@ class CLI
 
       opts.on('-F', '--filter DOMAIN', 'Filter URLs by domain (partial match)') do |domain|
         @options[:filter] = domain
+      end
+
+      opts.on('-b', '--base-url URL', 'Base URL for resolving relative URLs') do |url|
+        @options[:base_url] = url
       end
 
       opts.on('-o', '--output FILE', 'Write output to file instead of stdout') do |file|
@@ -516,7 +586,8 @@ class CLI
 
     extractor = URLExtractor.new(
       input,
-      exclude_internal: @options[:exclude_internal]
+      exclude_internal: @options[:exclude_internal],
+      base_url: @options[:base_url]
     )
     extractor.extract.deduplicate
 
@@ -578,7 +649,8 @@ class CLI
   def print_stats(extractor)
     stats = extractor.stats
     warn "\n[2links] Statistics:"
-    warn "  URLs found: #{stats[:urls_found]}"
+    warn "  URLs found (absolute): #{stats[:urls_found]}"
+    warn "  URLs found (relative): #{stats[:relative_urls]}" if stats[:relative_urls] > 0
     warn "  URLs valid: #{stats[:urls_valid]}"
     warn "  URLs invalid: #{stats[:urls_invalid]}" if stats[:urls_invalid] > 0
     warn "  Excluded (internal): #{stats[:excluded_internal]}" if stats[:excluded_internal] > 0
