@@ -236,18 +236,20 @@ class URLExtractor
   # Track warnings and stats
   attr_reader :warnings, :stats
 
-  def initialize(text, parse_html: false)
+  def initialize(text, parse_html: false, exclude_internal: false)
     @text = text
     @urls = []
     @dedup_map = {} # maps dedup key (scheme-agnostic) to {canonical:, variations:, schemes:, count:}
     @warnings = []
     @parse_html = parse_html
+    @exclude_internal = exclude_internal
     @stats = {
       urls_found: 0,
       urls_valid: 0,
       urls_invalid: 0,
       internal_ips: 0,
-      user_info_urls: 0
+      user_info_urls: 0,
+      excluded_internal: 0
     }
   end
 
@@ -360,6 +362,12 @@ class URLExtractor
       return
     end
 
+    # Skip internal IPs if exclude_internal flag is set
+    if @exclude_internal && internal_ip?(parsed[:host])
+      @stats[:excluded_internal] += 1
+      return
+    end
+
     @stats[:urls_valid] += 1
     key = parsed[:key]
 
@@ -405,6 +413,12 @@ class URLExtractor
     @warnings << msg
     @stats[:user_info_urls] += 1
   end
+
+  def internal_ip?(host)
+    return false unless host
+
+    host =~ /\A(localhost|127\.|192\.168\.|10\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)/
+  end
 end
 
 class CLI
@@ -415,7 +429,8 @@ class CLI
       show_variations: false,
       parse_html: false,
       output_file: nil,
-      filter: nil
+      filter: nil,
+      exclude_internal: false
     }
   end
 
@@ -450,6 +465,10 @@ class CLI
         @options[:show_variations] = true
       end
 
+      opts.on('--no-internal', 'Exclude localhost and private IP addresses') do
+        @options[:exclude_internal] = true
+      end
+
       opts.on('-h', '--help', 'Show this help message') do
         puts opts
         exit 0
@@ -472,7 +491,11 @@ class CLI
               $stdin.read
             end
 
-    extractor = URLExtractor.new(input, parse_html: @options[:parse_html])
+    extractor = URLExtractor.new(
+      input,
+      parse_html: @options[:parse_html],
+      exclude_internal: @options[:exclude_internal]
+    )
     extractor.extract.deduplicate
 
     output(extractor)
@@ -523,6 +546,7 @@ class CLI
     warn "  URLs found: #{stats[:urls_found]}"
     warn "  URLs valid: #{stats[:urls_valid]}"
     warn "  URLs invalid: #{stats[:urls_invalid]}" if stats[:urls_invalid] > 0
+    warn "  Excluded (internal): #{stats[:excluded_internal]}" if stats[:excluded_internal] > 0
     warn "  Unique canonical URLs: #{extractor.sorted_urls.length}"
     warn "  Total variations: #{extractor.total_variations}"
 
