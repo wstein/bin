@@ -15,10 +15,21 @@ class URLExtractor
     [^\s"'<>]+
   }x
 
+  # Track warnings and stats
+  attr_reader :warnings, :stats
+
   def initialize(text)
     @text = text
     @urls = []
     @dedup_map = {} # maps dedup key (scheme-agnostic) to {canonical:, variations:, schemes:, count:}
+    @warnings = []
+    @stats = {
+      urls_found: 0,
+      urls_valid: 0,
+      urls_invalid: 0,
+      internal_ips: 0,
+      user_info_urls: 0
+    }
   end
 
   def extract
@@ -99,7 +110,8 @@ class URLExtractor
         url: canonical_url
       }
     rescue URI::InvalidURIError, StandardError => e
-      warn "Warning: Invalid URL '#{url_string}': #{e.message}"
+      msg = "Invalid URL '#{url_string}': #{e.message}"
+      @warnings << msg
       nil
     end
   end
@@ -107,9 +119,15 @@ class URLExtractor
   private
 
   def process_url(url_string)
-    parsed = canonical_form(url_string)
-    return if parsed.nil?
+    @stats[:urls_found] += 1
 
+    parsed = canonical_form(url_string)
+    if parsed.nil?
+      @stats[:urls_invalid] += 1
+      return
+    end
+
+    @stats[:urls_valid] += 1
     key = parsed[:key]
 
     # Track variations and update canonical if needed (prefer https)
@@ -143,12 +161,16 @@ class URLExtractor
 
   def warn_on_internal_ip(host)
     if host =~ /\A(localhost|127\.|192\.168\.|10\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)/
-      warn "Warning: Internal IP detected: #{host}"
+      msg = "Internal IP detected: #{host}"
+      @warnings << msg
+      @stats[:internal_ips] += 1
     end
   end
 
   def warn_on_user_info(uri)
-    warn "Warning: URL contains user info (stripped): #{uri.user}@***"
+    msg = "URL contains user info (stripped): #{uri.user}@***"
+    @warnings << msg
+    @stats[:user_info_urls] += 1
   end
 end
 
@@ -239,9 +261,26 @@ class CLI
   end
 
   def print_stats(extractor)
+    stats = extractor.stats
     warn "\n[2links] Statistics:"
+    warn "  URLs found: #{stats[:urls_found]}"
+    warn "  URLs valid: #{stats[:urls_valid]}"
+    warn "  URLs invalid: #{stats[:urls_invalid]}" if stats[:urls_invalid] > 0
     warn "  Unique canonical URLs: #{extractor.sorted_urls.length}"
-    warn "  Total variations found: #{extractor.total_variations}"
+    warn "  Total variations: #{extractor.total_variations}"
+
+    if stats[:internal_ips] > 0
+      warn "  Internal IPs detected: #{stats[:internal_ips]}"
+    end
+    if stats[:user_info_urls] > 0
+      warn "  URLs with user info: #{stats[:user_info_urls]}"
+    end
+
+    # Print warnings if any
+    if extractor.warnings.any?
+      warn "\n[2links] Warnings:"
+      extractor.warnings.each { |warning| warn "  - #{warning}" }
+    end
   end
 end
 
