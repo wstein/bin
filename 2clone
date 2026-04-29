@@ -61,6 +61,70 @@ Trim() {
     printf '%s' "${v%/}"
 }
 
+# Strip query strings, fragments, and common web UI suffixes so browser URLs
+# clone the underlying repository root.
+#
+# $1 - repository path without protocol/host
+# returns - normalized repository path
+NormalizeRepoPath() {
+    path=$1
+    path=${path%%\?*}
+    path=${path%%\#*}
+
+    case "$path" in
+        */-/*)
+            path=${path%%/-/*}
+            ;;
+        */tree/*)
+            path=${path%%/tree/*}
+            ;;
+        */blob/*)
+            path=${path%%/blob/*}
+            ;;
+        */src/*)
+            path=${path%%/src/*}
+            ;;
+    esac
+
+    printf '%s' "${path%/}"
+}
+
+# Build a normalized clone URL while preserving the original transport when
+# possible (e.g. SSH stays SSH).
+#
+# $1 - original URL
+# $2 - normalized host
+# $3 - normalized repository path
+# returns - clone URL
+BuildCloneURL() {
+    original=$1
+    host=$2
+    path=$3
+
+    case "$original" in
+        *://*)
+            scheme=${original%%://*}
+            rest=${original#*://}
+            case "$rest" in
+                *@*)
+                    userinfo=${rest%%@*}
+                    printf '%s://%s@%s/%s' "$scheme" "$userinfo" "$host" "$path"
+                    ;;
+                *)
+                    printf '%s://%s/%s' "$scheme" "$host" "$path"
+                    ;;
+            esac
+            ;;
+        *@*:* )
+            ssh_host=${original%%:*}
+            printf '%s:%s' "$ssh_host" "$path"
+            ;;
+        *)
+            printf 'https://%s/%s' "$host" "$path"
+            ;;
+    esac
+}
+
 # Parse a repository URL into host and path components.
 #
 # $1 - URL (possibly including protocol)
@@ -86,6 +150,7 @@ ParseURL() {
     fi
     # normalise host
     host=$(printf '%s' "$host" | sed -e 's/^www\.//')
+    path=$(NormalizeRepoPath "$path")
     # strip trailing .git
     path=$(printf '%s' "$path" | sed -e 's/\.git$//')
     if [ -z "$host" ] || [ -z "$path" ]; then
@@ -122,11 +187,12 @@ Main() {
     fi
     host=${parsed%% *}
     path=${parsed#* }
+    clone_url=$(BuildCloneURL "$url" "$host" "$path")
 
     target="$HOME/$host/$path"
 
     Println "Cloning $orig → $target" >&2
-    cmd="git clone --depth '$depth' --recurse-submodules '$orig' '$target'"
+    cmd="git clone --depth '$depth' --recurse-submodules '$clone_url' '$target'"
     if [ "$dryrun" -eq 1 ]; then
         Println "$cmd" >&2
         Return "$target"
