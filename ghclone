@@ -9,12 +9,14 @@ usage() {
 	echo "Options:"
 	echo "  -b, --branch <branch>      Use <branch> instead of default branch"
 	echo "  -d, --develop              Use develop branch instead of default branch"
+	echo "  -D, --depth <depth>        Clone with <depth> history entries (default: 100)"
 	echo "  -h, --help                 Display this help message"
 	exit 0
 }
 
 parse_args() {
 	USAGE=0
+	DEPTH=100
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -33,6 +35,15 @@ parse_args() {
 
 		-d | --develop)
 			BRANCH="develop"
+			;;
+
+		--depth=*)
+			DEPTH="${1#*=}"
+			;;
+
+		-D | --depth)
+			shift
+			DEPTH="$1"
 			;;
 
 		*)
@@ -74,7 +85,8 @@ parse_args() {
 }
 
 execute() {
-	test -n "${BRANCH}" && OPTS="--branch=${BRANCH}"
+	OPTS="--depth=${DEPTH}"
+	test -n "${BRANCH}" && OPTS="${OPTS} --branch=${BRANCH}"
 
 	CMDLINE="git clone ${OPTS} https://github.com/${USER}/${REPO} ${FOLDER}"
 	echo "${CMDLINE}" >&2
