@@ -64,3 +64,51 @@ single_line_lists true
 
 Lists containing objects or nested non-scalar values remain expanded so the
 indented structure stays clear.
+
+== j2as
+
+`j2as` converts JSON Lines / JSONL to AION delimited stream syntax. It reads one
+JSON value per input line and writes one AION stream value per output line:
+
+----
+cat input.jsonl | j2as
+j2as --no-contract input.jsonl output.aionl
+----
+
+Supported CLI options:
+
+* `--contract` emits `contract urn:aion:delimited-stream` as the first output
+  line. This is the default.
+* `--no-contract` omits the contract header.
+
+JSONL input must contain exactly one valid JSON value per non-empty line. Blank
+lines are rejected, including whitespace-only lines, while a single final
+newline is accepted. Object key order is preserved.
+
+Example input:
+
+----
+"line1"
+2
+3
+[1,2,3]
+{"type":"test","desc":"this is test data"}
+{"tag":"#release","kind":"record","literal":"true","num_as_text":"123"}
+----
+
+Default output:
+
+----
+contract urn:aion:delimited-stream
+"line1"
+2
+3
+[1 2 3]
+{type test desc "this is test data"}
+{tag #release kind record literal "true" num_as_text "123"}
+----
+
+Top-level JSON strings are emitted as quoted AION strings. Strings inside
+objects and arrays use the compact delimited rendering rules: ordinary strings
+may be bare, while reserved literals, number-like strings, strings with
+whitespace, and control-character strings are quoted and escaped.
