@@ -5,21 +5,37 @@ defmodule J2AD do
 
   @usage """
   Usage:
-    j2ad.exs [--pretty] [--width=N] INPUT.json
-    j2ad.exs [--pretty] [--width=N] INPUT.json OUTPUT.aion
-    cat INPUT.json | j2ad.exs [--pretty] [--width=N]
+    j2ad [options] [INPUT.json [OUTPUT.aion]]
+    cat INPUT.json | j2ad [options]
 
   Converts JSON to AION delimited syntax.
+
+  Options:
+    --pretty                  Pretty (expanded) output
+    --no-pretty               Compact output (overrides config file)
+    --width=N                 Target line width (default: 100, min: 40)
+    --object-threshold=N      Expand objects with >= N fields even when compact
+                              form fits; 0 disables this heuristic (default: 3)
+    --expand-lists            Expand lists that contain non-scalar elements
+    --no-expand-lists         Disable list expansion heuristic
+
+  Config file (~/.j2adrc or .j2adrc in the current directory):
+    pretty            true|false
+    width             N
+    object_threshold  N
+    expand_lists      true|false
+
+  CLI flags override .j2adrc which overrides ~/.j2adrc which overrides defaults.
 
   Default compact output:
     {"name":"Tom","age":100,"tags":["user","admin","a b c"]}
     -> {name Tom age 100 tags [user admin "a b c"]}
 
-  Pretty output uses fuzzy layout rules:
-    - Scalars and small structures stay inline when they fit.
-    - Objects with 3+ fields are always expanded (opening brace on same line as key).
+  Pretty output uses fuzzy layout:
+    - Scalars and small structures stay inline when they fit within width.
+    - Objects with >= object_threshold fields are always expanded.
     - Lists containing non-scalar elements are always expanded.
-    - Opening { and [ stay on the same line as the key name.
+    - Opening { and [ appear on the same line as the key name.
 
   Example:
     {
@@ -43,6 +59,7 @@ defmodule J2AD do
   @unsafe_atom_chars ~r/[\s{}\[\]"]/
   @indent_unit 2
   @default_width 100
+  @default_object_threshold 3
 
   def main(argv) do
     {opts, args} = parse_args(argv)
@@ -89,61 +106,207 @@ defmodule J2AD do
       System.halt(1)
   end
 
+  defp default_opts do
+    %{
+      pretty?: false,
+      width: @default_width,
+      object_threshold: @default_object_threshold,
+      expand_lists: true
+    }
+  end
+
   defp parse_args(argv) do
     {flags, args} = Enum.split_with(argv, &String.starts_with?(&1, "--"))
 
-    {width_flags, other_flags} =
-      Enum.split_with(flags, &String.starts_with?(&1, "--width="))
+    opts =
+      default_opts()
+      |> merge_config(load_config(Path.expand("~/.j2adrc")))
+      |> merge_config(load_config(".j2adrc"))
+      |> merge_cli_flags(flags)
 
-    unknown_flags = other_flags -- ["--pretty"]
+    {opts, args}
+  end
 
-    if unknown_flags != [] do
-      IO.puts(:stderr, "unknown option(s): #{Enum.join(unknown_flags, ", ")}")
+  defp merge_config(opts, extra), do: Map.merge(opts, extra)
+
+  defp merge_cli_flags(opts, flags) do
+    bool_flags = ["--pretty", "--no-pretty", "--expand-lists", "--no-expand-lists"]
+
+    {value_flags, plain_flags} = Enum.split_with(flags, &String.contains?(&1, "="))
+
+    {width_flags, threshold_flags, unknown_value} =
+      Enum.reduce(value_flags, {[], [], []}, fn flag, {w, t, u} ->
+        cond do
+          String.starts_with?(flag, "--width=") -> {[flag | w], t, u}
+          String.starts_with?(flag, "--object-threshold=") -> {w, [flag | t], u}
+          true -> {w, t, [flag | u]}
+        end
+      end)
+
+    unknown = (plain_flags -- bool_flags) ++ unknown_value
+
+    if unknown != [] do
+      IO.puts(:stderr, "unknown option(s): #{Enum.join(unknown, ", ")}")
       IO.puts(:stderr, @usage)
       System.halt(64)
     end
 
     width =
       case width_flags do
-        [] ->
-          @default_width
-
-        [flag] ->
-          parse_width!(flag)
-
-        _ ->
-          IO.puts(:stderr, "error: --width may be provided only once")
-          System.halt(64)
+        [] -> opts.width
+        [flag] -> parse_flag_int!(flag, "--width", min: 40)
+        _ -> flag_error("--width may be provided only once")
       end
 
-    opts = %{
-      pretty?: "--pretty" in flags,
-      width: width
-    }
+    object_threshold =
+      case threshold_flags do
+        [] -> opts.object_threshold
+        [flag] -> parse_flag_int!(flag, "--object-threshold", min: 0)
+        _ -> flag_error("--object-threshold may be provided only once")
+      end
 
-    {opts, args}
+    pretty? =
+      cond do
+        "--no-pretty" in plain_flags -> false
+        "--pretty" in plain_flags -> true
+        true -> opts.pretty?
+      end
+
+    expand_lists =
+      cond do
+        "--no-expand-lists" in plain_flags -> false
+        "--expand-lists" in plain_flags -> true
+        true -> opts.expand_lists
+      end
+
+    %{
+      opts
+      | pretty?: pretty?,
+        width: width,
+        object_threshold: object_threshold,
+        expand_lists: expand_lists
+    }
   end
 
-  defp parse_width!("--width=" <> raw) do
+  defp parse_flag_int!(flag, name, min: min) do
+    raw = flag |> String.split("=", parts: 2) |> List.last()
+
     case Integer.parse(raw) do
-      {value, ""} when value >= 40 ->
+      {value, ""} when value >= min ->
         value
 
       _ ->
-        IO.puts(:stderr, "error: --width must be an integer >= 40")
-        System.halt(64)
+        flag_error("#{name} must be an integer >= #{min}")
     end
   end
 
-  defp read_stdin do
-    IO.read(:stdio, :eof)
+  defp flag_error(msg) do
+    IO.puts(:stderr, "error: #{msg}")
+    System.halt(64)
   end
 
-  defp convert_and_write(json_text, :stdio, opts) do
-    IO.puts(convert!(json_text, opts))
+  # ---------------------------------------------------------------------------
+  # Config file
+  # ---------------------------------------------------------------------------
+
+  defp load_config(path) do
+    case File.read(path) do
+      {:ok, content} ->
+        parse_config(content, path)
+
+      {:error, :enoent} ->
+        %{}
+
+      {:error, reason} ->
+        IO.puts(:stderr, "warning: cannot read #{path}: #{:file.format_error(reason)}")
+        %{}
+    end
   end
 
-  defp convert!(json_text, opts) do
+  defp parse_config(content, path) do
+    content
+    |> String.split("\n")
+    |> Enum.with_index(1)
+    |> Enum.reject(fn {line, _} ->
+      t = String.trim(line)
+      t == "" or String.starts_with?(t, "#")
+    end)
+    |> Enum.reduce(%{}, fn {line, lineno}, acc ->
+      case String.split(String.trim(line), ~r/\s+/, parts: 2) do
+        [key, value] ->
+          parse_config_entry(acc, key, String.trim(value), path, lineno)
+
+        _ ->
+          IO.puts(:stderr, "warning: #{path}:#{lineno}: malformed line, ignoring")
+          acc
+      end
+    end)
+  end
+
+  defp parse_config_entry(acc, key, value, path, lineno) do
+    warn = fn msg -> IO.puts(:stderr, "warning: #{path}:#{lineno}: #{msg}, ignoring") end
+
+    case key do
+      "width" ->
+        case Integer.parse(value) do
+          {n, ""} when n >= 40 ->
+            Map.put(acc, :width, n)
+
+          _ ->
+            warn.("width must be an integer >= 40")
+            acc
+        end
+
+      "object_threshold" ->
+        case Integer.parse(value) do
+          {n, ""} when n >= 0 ->
+            Map.put(acc, :object_threshold, n)
+
+          _ ->
+            warn.("object_threshold must be a non-negative integer")
+            acc
+        end
+
+      "expand_lists" ->
+        case parse_bool(value) do
+          {:ok, b} ->
+            Map.put(acc, :expand_lists, b)
+
+          :error ->
+            warn.("expand_lists must be true/false/on/off/yes/no")
+            acc
+        end
+
+      "pretty" ->
+        case parse_bool(value) do
+          {:ok, b} ->
+            Map.put(acc, :pretty?, b)
+
+          :error ->
+            warn.("pretty must be true/false/on/off/yes/no")
+            acc
+        end
+
+      _ ->
+        warn.("unknown key #{inspect(key)}")
+        acc
+    end
+  end
+
+  defp parse_bool(v) do
+    case String.downcase(v) do
+      s when s in ["true", "on", "yes", "1"] -> {:ok, true}
+      s when s in ["false", "off", "no", "0"] -> {:ok, false}
+      _ -> :error
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Public API (also used by tests)
+  # ---------------------------------------------------------------------------
+
+  @doc false
+  def convert!(json_text, opts) do
     value = decode!(json_text)
 
     if opts.pretty? do
@@ -151,6 +314,21 @@ defmodule J2AD do
     else
       render_compact(value)
     end
+  end
+
+  @doc false
+  def parse_config_text(text), do: parse_config(text, "<text>")
+
+  # ---------------------------------------------------------------------------
+  # I/O helpers
+  # ---------------------------------------------------------------------------
+
+  defp read_stdin do
+    IO.read(:stdio, :eof)
+  end
+
+  defp convert_and_write(json_text, :stdio, opts) do
+    IO.puts(convert!(json_text, opts))
   end
 
   defp decode!(json_text) do
@@ -221,7 +399,7 @@ defmodule J2AD do
   defp render_pretty({:object, entries} = obj, level, opts) do
     compact = render_compact(obj)
 
-    if level > 0 and fits?(compact, level, opts) and not should_expand?(obj) do
+    if level > 0 and fits?(compact, level, opts) and not should_expand?(obj, opts) do
       compact
     else
       render_record_block(entries, level, opts)
@@ -231,7 +409,7 @@ defmodule J2AD do
   defp render_pretty(value, level, opts) when is_list(value) do
     compact = render_compact(value)
 
-    if fits?(compact, level, opts) and not should_expand?(value) do
+    if fits?(compact, level, opts) and not should_expand?(value, opts) do
       compact
     else
       render_list_block(value, level, opts)
@@ -268,7 +446,7 @@ defmodule J2AD do
         line_prefix <> render_scalar(child)
 
       fits?(compact_child, level, opts, String.length(key_text) + 1) and
-          not should_expand?(child) ->
+          not should_expand?(child, opts) ->
         line_prefix <> compact_child
 
       match?({:object, _}, child) ->
@@ -328,11 +506,14 @@ defmodule J2AD do
   end
 
   # Fuzzy heuristics: expand even when compact form fits within width.
-  # Objects with 3+ fields and lists with any non-scalar element are expanded
-  # so that complex structures remain readable at a glance.
-  defp should_expand?({:object, entries}), do: length(entries) > 2
-  defp should_expand?(list) when is_list(list), do: Enum.any?(list, &(not scalar?(&1)))
-  defp should_expand?(_), do: false
+  # Thresholds are configurable via CLI flags and config file.
+  defp should_expand?({:object, entries}, opts),
+    do: opts.object_threshold > 0 and length(entries) >= opts.object_threshold
+
+  defp should_expand?(list, opts) when is_list(list),
+    do: opts.expand_lists and Enum.any?(list, &(not scalar?(&1)))
+
+  defp should_expand?(_, _opts), do: false
 
   defp fits?(text, level, opts, extra_prefix_len \\ 0) do
     String.length(text) + level * @indent_unit + extra_prefix_len <= opts.width
@@ -393,4 +574,6 @@ defmodule J2AD do
   end
 end
 
-J2AD.main(System.argv())
+unless System.get_env("J2AD_TESTING") do
+  J2AD.main(System.argv())
+end
