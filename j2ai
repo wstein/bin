@@ -1,0 +1,220 @@
+#!/usr/bin/env elixir
+
+defmodule J2AI do
+  @moduledoc false
+
+  @usage """
+  Usage:
+    j2ai.exs INPUT.json
+    j2ai.exs INPUT.json OUTPUT.aion
+    cat INPUT.json | j2ai.exs
+
+  Converts JSON to AION indented syntax.
+
+  Examples:
+    {"name":"Tom","age":100,"tags":["user","admin","a b c"]}
+
+  becomes:
+    # "contract urn:aion:indented",
+    record
+      name Tom
+      age 100
+      tags list
+        user
+        admin
+        "a b c"
+  """
+
+  @reserved_atoms MapSet.new([
+                    "record",
+                    "list",
+                    "note",
+                    "true",
+                    "false",
+                    "null"
+                  ])
+
+  @unsafe_atom_chars ~r/[\s{}\[\]"]/
+
+  @indent_unit 2
+
+  def main(argv) do
+    case argv do
+      ["-h"] ->
+        IO.write(@usage)
+
+      ["--help"] ->
+        IO.write(@usage)
+
+      [] ->
+        read_stdin()
+        |> convert_and_write(:stdio)
+
+      [input] ->
+        input
+        |> File.read!()
+        |> convert_and_write(:stdio)
+
+      [input, output] ->
+        rendered =
+          input
+          |> File.read!()
+          |> convert!()
+
+        File.write!(output, rendered <> "\n")
+
+      _ ->
+        IO.puts(:stderr, @usage)
+        System.halt(64)
+    end
+  rescue
+    error in File.Error ->
+      IO.puts(:stderr, "file error: #{Exception.message(error)}")
+      System.halt(66)
+
+    error in JSON.DecodeError ->
+      IO.puts(:stderr, "invalid JSON: #{Exception.message(error)}")
+      System.halt(65)
+
+    error ->
+      IO.puts(:stderr, "error: #{Exception.message(error)}")
+      System.halt(1)
+  end
+
+  defp read_stdin do
+    IO.read(:stdio, :eof)
+  end
+
+  defp convert_and_write(json_text, :stdio) do
+    IO.puts(convert!(json_text))
+  end
+
+  defp convert!(json_text) do
+    value = JSON.decode!(json_text)
+
+    [
+      # "contract urn:aion:indented",
+      render_root(value)
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp render_root(value) when is_map(value) do
+    ["record" | render_record_fields(value, 1)]
+    |> Enum.join("\n")
+  end
+
+  defp render_root(value) when is_list(value) do
+    ["list" | render_list_items(value, 1)]
+    |> Enum.join("\n")
+  end
+
+  defp render_root(value) do
+    render_scalar(value)
+  end
+
+  defp render_record_fields(map, level) do
+    Enum.flat_map(map, fn {key, value} ->
+      render_field(key, value, level)
+    end)
+  end
+
+  defp render_field(key, value, level) when is_map(value) do
+    indent = indent(level)
+
+    [
+      "#{indent}#{render_key(key)} record"
+      | render_record_fields(value, level + 1)
+    ]
+  end
+
+  defp render_field(key, value, level) when is_list(value) do
+    indent = indent(level)
+
+    [
+      "#{indent}#{render_key(key)} list"
+      | render_list_items(value, level + 1)
+    ]
+  end
+
+  defp render_field(key, value, level) do
+    indent = indent(level)
+    ["#{indent}#{render_key(key)} #{render_scalar(value)}"]
+  end
+
+  defp render_list_items(list, level) do
+    Enum.flat_map(list, fn value ->
+      render_list_item(value, level)
+    end)
+  end
+
+  defp render_list_item(value, level) when is_map(value) do
+    indent = indent(level)
+
+    [
+      "#{indent}record"
+      | render_record_fields(value, level + 1)
+    ]
+  end
+
+  defp render_list_item(value, level) when is_list(value) do
+    indent = indent(level)
+
+    [
+      "#{indent}list"
+      | render_list_items(value, level + 1)
+    ]
+  end
+
+  defp render_list_item(value, level) do
+    ["#{indent(level)}#{render_scalar(value)}"]
+  end
+
+  defp render_key(key) when is_binary(key) do
+    render_atom_or_string(key)
+  end
+
+  defp render_scalar(value) when is_binary(value), do: render_atom_or_string(value)
+  defp render_scalar(value) when is_integer(value), do: Integer.to_string(value)
+  defp render_scalar(value) when is_float(value), do: render_float(value)
+  defp render_scalar(true), do: "true"
+  defp render_scalar(false), do: "false"
+  defp render_scalar(nil), do: "null"
+
+  defp render_atom_or_string(value) do
+    if safe_atom?(value) do
+      value
+    else
+      render_string(value)
+    end
+  end
+
+  defp safe_atom?(""), do: false
+
+  defp safe_atom?(value) do
+    not MapSet.member?(@reserved_atoms, value) and
+      not String.match?(value, @unsafe_atom_chars)
+  end
+
+  defp render_string(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\r", "\\r")
+      |> String.replace("\t", "\\t")
+
+    "\"" <> escaped <> "\""
+  end
+
+  defp render_float(value) do
+    :erlang.float_to_binary(value, [:short])
+  end
+
+  defp indent(level) do
+    String.duplicate(" ", level * @indent_unit)
+  end
+end
+
+J2AI.main(System.argv())

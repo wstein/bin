@@ -1,0 +1,355 @@
+#!/usr/bin/env elixir
+
+defmodule J2AD do
+  @moduledoc false
+
+  @usage """
+  Usage:
+    j2ad.exs [--pretty] [--width=N] INPUT.json
+    j2ad.exs [--pretty] [--width=N] INPUT.json OUTPUT.aion
+    cat INPUT.json | j2ad.exs [--pretty] [--width=N]
+
+  Converts JSON to AION delimited syntax.
+
+  Default compact output:
+    {"name":"Tom","age":100,"tags":["user","admin","a b c"]}
+    -> {name Tom age 100 tags [user admin "a b c"]}
+
+  Pretty output:
+    {
+      name Tom
+      age 100
+      tags [user admin "a b c"]
+      meta {active true empty null}
+    }
+
+  Compact pretty output keeps nested records/lists inline when they fit within
+  the configured width budget.
+  """
+
+  @reserved_atoms MapSet.new([
+                    "true",
+                    "false",
+                    "null"
+                  ])
+
+  @unsafe_atom_chars ~r/[\s{}\[\]"]/
+  @indent_unit 2
+  @default_width 100
+
+  def main(argv) do
+    {opts, args} = parse_args(argv)
+
+    case args do
+      ["-h"] ->
+        IO.write(@usage)
+
+      ["--help"] ->
+        IO.write(@usage)
+
+      [] ->
+        read_stdin()
+        |> convert_and_write(:stdio, opts)
+
+      [input] ->
+        input
+        |> File.read!()
+        |> convert_and_write(:stdio, opts)
+
+      [input, output] ->
+        rendered =
+          input
+          |> File.read!()
+          |> convert!(opts)
+
+        File.write!(output, rendered <> "\n")
+
+      _ ->
+        IO.puts(:stderr, @usage)
+        System.halt(64)
+    end
+  rescue
+    error in File.Error ->
+      IO.puts(:stderr, "file error: #{Exception.message(error)}")
+      System.halt(66)
+
+    error in JSON.DecodeError ->
+      IO.puts(:stderr, "invalid JSON: #{Exception.message(error)}")
+      System.halt(65)
+
+    error ->
+      IO.puts(:stderr, "error: #{Exception.message(error)}")
+      System.halt(1)
+  end
+
+  defp parse_args(argv) do
+    {flags, args} = Enum.split_with(argv, &String.starts_with?(&1, "--"))
+
+    {width_flags, other_flags} =
+      Enum.split_with(flags, &String.starts_with?(&1, "--width="))
+
+    unknown_flags = other_flags -- ["--pretty"]
+
+    if unknown_flags != [] do
+      IO.puts(:stderr, "unknown option(s): #{Enum.join(unknown_flags, ", ")}")
+      IO.puts(:stderr, @usage)
+      System.halt(64)
+    end
+
+    width =
+      case width_flags do
+        [] ->
+          @default_width
+
+        [flag] ->
+          parse_width!(flag)
+
+        _ ->
+          IO.puts(:stderr, "error: --width may be provided only once")
+          System.halt(64)
+      end
+
+    opts = %{
+      pretty?: "--pretty" in flags,
+      width: width
+    }
+
+    {opts, args}
+  end
+
+  defp parse_width!("--width=" <> raw) do
+    case Integer.parse(raw) do
+      {value, ""} when value >= 40 ->
+        value
+
+      _ ->
+        IO.puts(:stderr, "error: --width must be an integer >= 40")
+        System.halt(64)
+    end
+  end
+
+  defp read_stdin do
+    IO.read(:stdio, :eof)
+  end
+
+  defp convert_and_write(json_text, :stdio, opts) do
+    IO.puts(convert!(json_text, opts))
+  end
+
+  defp convert!(json_text, opts) do
+    value = JSON.decode!(json_text)
+
+    if opts.pretty? do
+      render_pretty(value, 0, opts)
+    else
+      render_compact(value)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Compact rendering
+  # ---------------------------------------------------------------------------
+
+  defp render_compact(value) when is_map(value) do
+    inner =
+      value
+      |> Enum.map(fn {key, value} ->
+        render_key(key) <> " " <> render_compact(value)
+      end)
+      |> Enum.join(" ")
+
+    "{" <> inner <> "}"
+  end
+
+  defp render_compact(value) when is_list(value) do
+    inner =
+      value
+      |> Enum.map(&render_compact/1)
+      |> Enum.join(" ")
+
+    "[" <> inner <> "]"
+  end
+
+  defp render_compact(value), do: render_scalar(value)
+
+  # ---------------------------------------------------------------------------
+  # Pretty rendering
+  # ---------------------------------------------------------------------------
+
+  defp render_pretty(value, level, opts) when is_map(value) do
+    compact = render_compact(value)
+
+    if level > 0 and fits?(compact, level, opts) do
+      compact
+    else
+      render_record_block(value, level, opts)
+    end
+  end
+
+  defp render_pretty(value, level, opts) when is_list(value) do
+    compact = render_compact(value)
+
+    if fits?(compact, level, opts) do
+      compact
+    else
+      render_list_block(value, level, opts)
+    end
+  end
+
+  defp render_pretty(value, _level, _opts), do: render_scalar(value)
+
+  defp render_record_block(map, level, opts) do
+    if map_size(map) == 0 do
+      "{}"
+    else
+      open = "{"
+
+      body =
+        map
+        |> Enum.map(fn {key, child} ->
+          render_record_line(key, child, level + 1, opts)
+        end)
+        |> Enum.join("\n")
+
+      close = indent(level) <> "}"
+
+      Enum.join([open, body, close], "\n")
+    end
+  end
+
+  defp render_record_line(key, child, level, opts) do
+    key_text = render_key(key)
+    line_prefix = indent(level) <> key_text <> " "
+
+    compact_child = render_compact(child)
+
+    cond do
+      scalar?(child) ->
+        line_prefix <> render_scalar(child)
+
+      fits?(compact_child, level, opts, String.length(key_text) + 1) ->
+        line_prefix <> compact_child
+
+      is_map(child) ->
+        line_prefix <> "\n" <> render_nested_record_block(child, level, opts)
+
+      is_list(child) ->
+        line_prefix <> "\n" <> render_nested_list_block(child, level, opts)
+    end
+  end
+
+  defp render_list_block(list, level, opts) do
+    if list == [] do
+      "[]"
+    else
+      open = "["
+
+      body =
+        list
+        |> Enum.map(fn child ->
+          indent(level + 1) <> render_pretty(child, level + 1, opts)
+        end)
+        |> Enum.join("\n")
+
+      close = indent(level) <> "]"
+
+      Enum.join([open, body, close], "\n")
+    end
+  end
+
+  defp render_nested_record_block(map, level, opts) do
+    open = indent(level) <> "{"
+
+    body =
+      map
+      |> Enum.map(fn {key, child} ->
+        render_record_line(key, child, level + 1, opts)
+      end)
+      |> Enum.join("\n")
+
+    close = indent(level) <> "}"
+
+    Enum.join([open, body, close], "\n")
+  end
+
+  defp render_nested_list_block(list, level, opts) do
+    compact = render_compact(list)
+
+    if fits?(compact, level, opts) do
+      indent(level) <> compact
+    else
+      open = indent(level) <> "["
+
+      body =
+        list
+        |> Enum.map(fn child ->
+          indent(level + 1) <> render_pretty(child, level + 1, opts)
+        end)
+        |> Enum.join("\n")
+
+      close = indent(level) <> "]"
+
+      Enum.join([open, body, close], "\n")
+    end
+  end
+
+  defp fits?(text, level, opts, extra_prefix_len \\ 0) do
+    String.length(text) + level * @indent_unit + extra_prefix_len <= opts.width
+  end
+
+  # ---------------------------------------------------------------------------
+  # Scalars and atoms
+  # ---------------------------------------------------------------------------
+
+  defp render_key(key) when is_binary(key) do
+    render_atom_or_string(key)
+  end
+
+  defp render_scalar(value) when is_binary(value), do: render_atom_or_string(value)
+  defp render_scalar(value) when is_integer(value), do: Integer.to_string(value)
+  defp render_scalar(value) when is_float(value), do: render_float(value)
+  defp render_scalar(true), do: "true"
+  defp render_scalar(false), do: "false"
+  defp render_scalar(nil), do: "null"
+
+  defp render_atom_or_string(value) do
+    if safe_atom?(value) do
+      value
+    else
+      render_string(value)
+    end
+  end
+
+  defp safe_atom?(""), do: false
+
+  defp safe_atom?(value) do
+    not MapSet.member?(@reserved_atoms, value) and
+      not String.match?(value, @unsafe_atom_chars)
+  end
+
+  defp render_string(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\r", "\\r")
+      |> String.replace("\t", "\\t")
+
+    "\"" <> escaped <> "\""
+  end
+
+  defp render_float(value) do
+    :erlang.float_to_binary(value, [:short])
+  end
+
+  defp scalar?(value) do
+    is_binary(value) or is_integer(value) or is_float(value) or is_boolean(value) or is_nil(value)
+  end
+
+  defp indent(level) do
+    String.duplicate(" ", level * @indent_unit)
+  end
+end
+
+J2AD.main(System.argv())
