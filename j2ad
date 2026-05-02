@@ -137,7 +137,7 @@ defmodule J2AD do
   end
 
   defp convert!(json_text, opts) do
-    value = JSON.decode!(json_text)
+    value = decode!(json_text)
 
     if opts.pretty? do
       render_pretty(value, 0, opts)
@@ -146,13 +146,48 @@ defmodule J2AD do
     end
   end
 
+  defp decode!(json_text) do
+    decoders = [
+      object_finish: fn acc, old_acc -> {{:object, Enum.reverse(acc)}, old_acc} end
+    ]
+
+    case JSON.decode(json_text, :ok, decoders) do
+      {decoded, :ok, ""} ->
+        decoded
+
+      {:error, {:unexpected_end, offset}} ->
+        raise JSON.DecodeError,
+          message: "unexpected end of JSON binary at position (byte offset) #{offset}",
+          data: json_text,
+          offset: offset
+
+      {:error, {:invalid_byte, offset, byte}} ->
+        raise JSON.DecodeError,
+          message: "invalid byte #{byte} at position (byte offset) #{offset}",
+          data: json_text,
+          offset: offset
+
+      {:error, {:unexpected_sequence, offset, bytes}} ->
+        raise JSON.DecodeError,
+          message: "unexpected sequence #{inspect(bytes)} at position (byte offset) #{offset}",
+          data: json_text,
+          offset: offset
+
+      {_, :ok, rest} ->
+        raise JSON.DecodeError,
+          message: "unexpected trailing content",
+          data: json_text,
+          offset: byte_size(json_text) - byte_size(rest)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Compact rendering
   # ---------------------------------------------------------------------------
 
-  defp render_compact(value) when is_map(value) do
+  defp render_compact({:object, entries}) do
     inner =
-      value
+      entries
       |> Enum.map(fn {key, value} ->
         render_key(key) <> " " <> render_compact(value)
       end)
@@ -176,13 +211,13 @@ defmodule J2AD do
   # Pretty rendering
   # ---------------------------------------------------------------------------
 
-  defp render_pretty(value, level, opts) when is_map(value) do
-    compact = render_compact(value)
+  defp render_pretty({:object, entries} = obj, level, opts) do
+    compact = render_compact(obj)
 
     if level > 0 and fits?(compact, level, opts) do
       compact
     else
-      render_record_block(value, level, opts)
+      render_record_block(entries, level, opts)
     end
   end
 
@@ -198,14 +233,14 @@ defmodule J2AD do
 
   defp render_pretty(value, _level, _opts), do: render_scalar(value)
 
-  defp render_record_block(map, level, opts) do
-    if map_size(map) == 0 do
+  defp render_record_block(entries, level, opts) do
+    if entries == [] do
       "{}"
     else
       open = "{"
 
       body =
-        map
+        entries
         |> Enum.map(fn {key, child} ->
           render_record_line(key, child, level + 1, opts)
         end)
@@ -230,8 +265,9 @@ defmodule J2AD do
       fits?(compact_child, level, opts, String.length(key_text) + 1) ->
         line_prefix <> compact_child
 
-      is_map(child) ->
-        line_prefix <> "\n" <> render_nested_record_block(child, level, opts)
+      match?({:object, _}, child) ->
+        {:object, entries} = child
+        line_prefix <> "\n" <> render_nested_record_block(entries, level, opts)
 
       is_list(child) ->
         line_prefix <> "\n" <> render_nested_list_block(child, level, opts)
@@ -257,11 +293,11 @@ defmodule J2AD do
     end
   end
 
-  defp render_nested_record_block(map, level, opts) do
+  defp render_nested_record_block(entries, level, opts) do
     open = indent(level) <> "{"
 
     body =
-      map
+      entries
       |> Enum.map(fn {key, child} ->
         render_record_line(key, child, level + 1, opts)
       end)

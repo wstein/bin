@@ -90,7 +90,7 @@ defmodule J2AI do
   end
 
   defp convert!(json_text) do
-    value = JSON.decode!(json_text)
+    value = decode!(json_text)
 
     [
       # "contract urn:aion:indented",
@@ -99,8 +99,43 @@ defmodule J2AI do
     |> Enum.join("\n")
   end
 
-  defp render_root(value) when is_map(value) do
-    ["record" | render_record_fields(value, 1)]
+  defp decode!(json_text) do
+    decoders = [
+      object_finish: fn acc, old_acc -> {{:object, Enum.reverse(acc)}, old_acc} end
+    ]
+
+    case JSON.decode(json_text, :ok, decoders) do
+      {decoded, :ok, ""} ->
+        decoded
+
+      {:error, {:unexpected_end, offset}} ->
+        raise JSON.DecodeError,
+          message: "unexpected end of JSON binary at position (byte offset) #{offset}",
+          data: json_text,
+          offset: offset
+
+      {:error, {:invalid_byte, offset, byte}} ->
+        raise JSON.DecodeError,
+          message: "invalid byte #{byte} at position (byte offset) #{offset}",
+          data: json_text,
+          offset: offset
+
+      {:error, {:unexpected_sequence, offset, bytes}} ->
+        raise JSON.DecodeError,
+          message: "unexpected sequence #{inspect(bytes)} at position (byte offset) #{offset}",
+          data: json_text,
+          offset: offset
+
+      {_, :ok, rest} ->
+        raise JSON.DecodeError,
+          message: "unexpected trailing content",
+          data: json_text,
+          offset: byte_size(json_text) - byte_size(rest)
+    end
+  end
+
+  defp render_root({:object, entries}) do
+    ["record" | render_record_fields(entries, 1)]
     |> Enum.join("\n")
   end
 
@@ -113,18 +148,18 @@ defmodule J2AI do
     render_scalar(value)
   end
 
-  defp render_record_fields(map, level) do
-    Enum.flat_map(map, fn {key, value} ->
+  defp render_record_fields(entries, level) do
+    Enum.flat_map(entries, fn {key, value} ->
       render_field(key, value, level)
     end)
   end
 
-  defp render_field(key, value, level) when is_map(value) do
+  defp render_field(key, {:object, entries}, level) do
     indent = indent(level)
 
     [
       "#{indent}#{render_key(key)} record"
-      | render_record_fields(value, level + 1)
+      | render_record_fields(entries, level + 1)
     ]
   end
 
@@ -148,12 +183,12 @@ defmodule J2AI do
     end)
   end
 
-  defp render_list_item(value, level) when is_map(value) do
+  defp render_list_item({:object, entries}, level) do
     indent = indent(level)
 
     [
       "#{indent}record"
-      | render_record_fields(value, level + 1)
+      | render_record_fields(entries, level + 1)
     ]
   end
 
