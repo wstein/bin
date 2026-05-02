@@ -1,0 +1,313 @@
+#!/usr/bin/env elixir
+
+defmodule J2AS do
+  @moduledoc false
+
+  @usage """
+  Usage:
+    j2as [options] INPUT.jsonl
+    j2as [options] INPUT.jsonl OUTPUT.aionl
+    cat INPUT.jsonl | j2as [options]
+
+  Converts JSON Lines / JSONL to AION delimited stream syntax.
+
+  Options:
+    --contract       Emit `contract urn:aion:delimited-stream` as first line.
+                     Enabled by default.
+    --no-contract    Do not emit the contract header.
+    -h, --help       Show this help.
+
+  JSONL input:
+    "line1"
+    2
+    3
+    [1,2,3]
+    {"type": "test", "desc": "this is test data"}
+
+  AION stream output:
+    contract urn:aion:delimited-stream
+    "line1"
+    2
+    3
+    [1 2 3]
+    {type test desc "this is test data"}
+
+  Rules:
+    - Each non-empty input line must be exactly one valid JSON value.
+    - Blank lines are invalid, matching JSON Lines discipline.
+    - Each input value becomes exactly one output line.
+    - Objects preserve source key order.
+    - AION stream output uses no hash comments.
+  """
+
+  @contract "contract urn:aion:delimited-stream"
+  @reserved_unquoted MapSet.new(["true", "false", "null"])
+  @unsafe_unquoted_chars ~r/[\s{}\[\]"]/
+
+  def main(argv) do
+    {opts, args} = parse_args(argv)
+
+    case args do
+      [] ->
+        read_stdin()
+        |> convert_and_write(:stdio, opts)
+
+      [input] ->
+        input
+        |> File.read!()
+        |> convert_and_write(:stdio, opts)
+
+      [input, output] ->
+        rendered =
+          input
+          |> File.read!()
+          |> convert!(opts)
+
+        File.write!(output, rendered <> "\n")
+
+      _ ->
+        IO.puts(:stderr, @usage)
+        System.halt(64)
+    end
+  rescue
+    error in File.Error ->
+      IO.puts(:stderr, "file error: #{Exception.message(error)}")
+      System.halt(66)
+
+    error in JSON.DecodeError ->
+      IO.puts(:stderr, "invalid JSONL: #{Exception.message(error)}")
+      System.halt(65)
+
+    error ->
+      IO.puts(:stderr, "error: #{Exception.message(error)}")
+      System.halt(1)
+  end
+
+  defp parse_args(argv) do
+    {cli_opts, args, invalid} =
+      OptionParser.parse(argv,
+        strict: [
+          contract: :boolean,
+          help: :boolean
+        ],
+        aliases: [h: :help]
+      )
+
+    if invalid != [] do
+      invalid
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.join(", ")
+      |> then(fn flags ->
+        IO.puts(:stderr, "error: unknown option(s): #{flags}")
+        IO.puts(:stderr, @usage)
+        System.halt(64)
+      end)
+    end
+
+    if Keyword.get(cli_opts, :help, false) do
+      IO.write(@usage)
+      System.halt(0)
+    end
+
+    opts = %{
+      contract?: cli_bool(cli_opts, :contract, true)
+    }
+
+    {opts, args}
+  end
+
+  defp cli_bool(cli_opts, key, default) do
+    values = Keyword.get_values(cli_opts, key)
+
+    cond do
+      false in values -> false
+      true in values -> true
+      true -> default
+    end
+  end
+
+  defp read_stdin do
+    IO.read(:stdio, :eof)
+  end
+
+  defp convert_and_write(jsonl_text, :stdio, opts) do
+    IO.puts(convert!(jsonl_text, opts))
+  end
+
+  @doc false
+  def convert!(jsonl_text, opts \\ %{contract?: true}) do
+    values =
+      jsonl_text
+      |> split_jsonl_lines()
+      |> Enum.map(fn {line, line_no} ->
+        decode_line!(line, line_no)
+      end)
+
+    rendered_values = Enum.map(values, &render_stream_value/1)
+
+    if opts.contract? do
+      Enum.join([@contract | rendered_values], "\n")
+    else
+      Enum.join(rendered_values, "\n")
+    end
+  end
+
+  defp split_jsonl_lines(text) do
+    text
+    |> String.split(~r/\r\n|\n|\r/, trim: false)
+    |> drop_final_empty_line()
+    |> Enum.with_index(1)
+    |> Enum.map(fn {line, line_no} -> {String.trim(line), line_no} end)
+    |> Enum.map(fn
+      {"", line_no} ->
+        raise JSON.DecodeError,
+          message: "blank line at JSONL line #{line_no}; blank lines are not valid JSON values",
+          data: text,
+          offset: 0
+
+      pair ->
+        pair
+    end)
+  end
+
+  defp drop_final_empty_line(lines) do
+    case Enum.reverse(lines) do
+      ["" | rest] -> Enum.reverse(rest)
+      _ -> lines
+    end
+  end
+
+  defp decode_line!(line, line_no) do
+    decode!(line)
+  rescue
+    error in JSON.DecodeError ->
+      raise JSON.DecodeError,
+        message: "line #{line_no}: #{Exception.message(error)}",
+        data: line,
+        offset: Map.get(error, :offset, 0)
+  end
+
+  defp decode!(json_text) do
+    decoders = [
+      object_finish: fn acc, old_acc -> {{:object, Enum.reverse(acc)}, old_acc} end
+    ]
+
+    case JSON.decode(json_text, :ok, decoders) do
+      {decoded, :ok, ""} ->
+        decoded
+
+      {:error, {:unexpected_end, offset}} ->
+        raise JSON.DecodeError,
+          message: "unexpected end of JSON binary at byte offset #{offset}",
+          data: json_text,
+          offset: offset
+
+      {:error, {:invalid_byte, offset, byte}} ->
+        raise JSON.DecodeError,
+          message: "invalid byte #{byte} at byte offset #{offset}",
+          data: json_text,
+          offset: offset
+
+      {:error, {:unexpected_sequence, offset, bytes}} ->
+        raise JSON.DecodeError,
+          message: "unexpected sequence #{inspect(bytes)} at byte offset #{offset}",
+          data: json_text,
+          offset: offset
+
+      {_, :ok, rest} ->
+        raise JSON.DecodeError,
+          message: "unexpected trailing content",
+          data: json_text,
+          offset: byte_size(json_text) - byte_size(rest)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # AION delimited compact rendering
+  # ---------------------------------------------------------------------------
+
+  defp render_stream_value(value) when is_binary(value), do: render_string(value)
+  defp render_stream_value(value), do: render_compact(value)
+
+  defp render_compact({:object, entries}) do
+    inner =
+      entries
+      |> Enum.map(fn {key, value} ->
+        render_key(key) <> " " <> render_compact(value)
+      end)
+      |> Enum.join(" ")
+
+    "{" <> inner <> "}"
+  end
+
+  defp render_compact(value) when is_list(value) do
+    inner =
+      value
+      |> Enum.map(&render_compact/1)
+      |> Enum.join(" ")
+
+    "[" <> inner <> "]"
+  end
+
+  defp render_compact(value), do: render_scalar(value)
+
+  defp render_key(key) when is_binary(key), do: render_unquoted_or_string(key)
+
+  defp render_scalar(value) when is_binary(value), do: render_unquoted_or_string(value)
+  defp render_scalar(value) when is_integer(value), do: Integer.to_string(value)
+  defp render_scalar(value) when is_float(value), do: render_float(value)
+  defp render_scalar(true), do: "true"
+  defp render_scalar(false), do: "false"
+  defp render_scalar(nil), do: "null"
+
+  defp render_unquoted_or_string(value) do
+    if safe_unquoted?(value) do
+      value
+    else
+      render_string(value)
+    end
+  end
+
+  defp safe_unquoted?(""), do: false
+
+  defp safe_unquoted?(value) do
+    not MapSet.member?(@reserved_unquoted, value) and
+      not number_like?(value) and
+      not String.match?(value, @unsafe_unquoted_chars) and
+      not Enum.any?(String.to_charlist(value), &(&1 < 0x20))
+  end
+
+  defp number_like?(value) do
+    Regex.match?(~r/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/, value)
+  end
+
+  defp render_string(value) do
+    escaped = value |> String.to_charlist() |> Enum.map_join(&escape_string_char/1)
+    "\"" <> escaped <> "\""
+  end
+
+  defp escape_string_char(?\\), do: "\\\\"
+  defp escape_string_char(?"), do: "\\\""
+  defp escape_string_char(?\b), do: "\\b"
+  defp escape_string_char(?\f), do: "\\f"
+  defp escape_string_char(?\n), do: "\\n"
+  defp escape_string_char(?\r), do: "\\r"
+  defp escape_string_char(?\t), do: "\\u0009"
+
+  defp escape_string_char(char) when char < 0x20 do
+    char
+    |> Integer.to_string(16)
+    |> String.pad_leading(4, "0")
+    |> then(&"\\u#{&1}")
+  end
+
+  defp escape_string_char(char), do: <<char::utf8>>
+
+  defp render_float(value) do
+    :erlang.float_to_binary(value, [:short])
+  end
+end
+
+unless System.get_env("J2AS_TESTING") do
+  J2AS.main(System.argv())
+end
