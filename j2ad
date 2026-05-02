@@ -13,8 +13,8 @@ defmodule J2AD do
   Options:
     --pretty                  Pretty (expanded) output
     --no-pretty               Compact output (overrides config file)
-    --width=N                 Target line width (default: 100, min: 40)
-    --object-threshold=N      Expand objects with >= N fields even when compact
+    --width N                 Target line width (default: 100, min: 40)
+    --object-threshold N      Expand objects with >= N fields even when compact
                               form fits; 0 disables this heuristic (default: 3)
     --expand-lists            Expand lists that contain non-scalar elements
     --no-expand-lists         Disable list expansion heuristic
@@ -24,6 +24,9 @@ defmodule J2AD do
     width             N
     object_threshold  N
     expand_lists      true|false
+
+  Options may also use --width=N and --object-threshold=N forms. Config files
+  support whole-line and inline # comments.
 
   CLI flags override .j2adrc which overrides ~/.j2adrc which overrides defaults.
 
@@ -116,87 +119,93 @@ defmodule J2AD do
   end
 
   defp parse_args(argv) do
-    {flags, args} = Enum.split_with(argv, &String.starts_with?(&1, "--"))
+    {cli_opts, args, invalid} =
+      OptionParser.parse(argv,
+        strict: [
+          pretty: :boolean,
+          width: :integer,
+          object_threshold: :integer,
+          expand_lists: :boolean,
+          help: :boolean
+        ],
+        aliases: [h: :help]
+      )
+
+    if invalid != [] do
+      invalid_option_error(invalid)
+    end
 
     opts =
       default_opts()
       |> merge_config(load_config(Path.expand("~/.j2adrc")))
       |> merge_config(load_config(".j2adrc"))
-      |> merge_cli_flags(flags)
+      |> merge_cli_flags(cli_opts)
 
-    {opts, args}
+    if Keyword.get(cli_opts, :help, false) do
+      {opts, ["--help" | args]}
+    else
+      {opts, args}
+    end
   end
 
   defp merge_config(opts, extra), do: Map.merge(opts, extra)
 
-  defp merge_cli_flags(opts, flags) do
-    bool_flags = ["--pretty", "--no-pretty", "--expand-lists", "--no-expand-lists"]
+  defp invalid_option_error(invalid) do
+    cond do
+      Enum.any?(invalid, &(elem(&1, 0) == "--width")) ->
+        flag_error("--width must be an integer >= 40")
 
-    {value_flags, plain_flags} = Enum.split_with(flags, &String.contains?(&1, "="))
+      Enum.any?(invalid, &(elem(&1, 0) == "--object-threshold")) ->
+        flag_error("--object-threshold must be an integer >= 0")
 
-    {width_flags, threshold_flags, unknown_value} =
-      Enum.reduce(value_flags, {[], [], []}, fn flag, {w, t, u} ->
-        cond do
-          String.starts_with?(flag, "--width=") -> {[flag | w], t, u}
-          String.starts_with?(flag, "--object-threshold=") -> {w, [flag | t], u}
-          true -> {w, t, [flag | u]}
-        end
-      end)
-
-    unknown = (plain_flags -- bool_flags) ++ unknown_value
-
-    if unknown != [] do
-      IO.puts(:stderr, "unknown option(s): #{Enum.join(unknown, ", ")}")
-      IO.puts(:stderr, @usage)
-      System.halt(64)
+      true ->
+        invalid
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.join(", ")
+        |> then(&flag_error("unknown option(s): #{&1}"))
     end
+  end
 
-    width =
-      case width_flags do
-        [] -> opts.width
-        [flag] -> parse_flag_int!(flag, "--width", min: 40)
-        _ -> flag_error("--width may be provided only once")
-      end
-
-    object_threshold =
-      case threshold_flags do
-        [] -> opts.object_threshold
-        [flag] -> parse_flag_int!(flag, "--object-threshold", min: 0)
-        _ -> flag_error("--object-threshold may be provided only once")
-      end
-
-    pretty? =
-      cond do
-        "--no-pretty" in plain_flags -> false
-        "--pretty" in plain_flags -> true
-        true -> opts.pretty?
-      end
-
-    expand_lists =
-      cond do
-        "--no-expand-lists" in plain_flags -> false
-        "--expand-lists" in plain_flags -> true
-        true -> opts.expand_lists
-      end
-
+  defp merge_cli_flags(opts, cli_opts) do
     %{
       opts
-      | pretty?: pretty?,
-        width: width,
-        object_threshold: object_threshold,
-        expand_lists: expand_lists
+      | pretty?: cli_bool(cli_opts, :pretty, opts.pretty?),
+        width: cli_int(cli_opts, :width, "--width", opts.width, min: 40),
+        object_threshold:
+          cli_int(
+            cli_opts,
+            :object_threshold,
+            "--object-threshold",
+            opts.object_threshold,
+            min: 0
+          ),
+        expand_lists: cli_bool(cli_opts, :expand_lists, opts.expand_lists)
     }
   end
 
-  defp parse_flag_int!(flag, name, min: min) do
-    raw = flag |> String.split("=", parts: 2) |> List.last()
+  defp cli_bool(cli_opts, key, default) do
+    values = Keyword.get_values(cli_opts, key)
 
-    case Integer.parse(raw) do
-      {value, ""} when value >= min ->
+    cond do
+      false in values -> false
+      true in values -> true
+      true -> default
+    end
+  end
+
+  defp cli_int(cli_opts, key, name, default, min: min) do
+    case Keyword.get_values(cli_opts, key) do
+      [] ->
+        default
+
+      [value] when is_integer(value) and value >= min ->
         value
 
-      _ ->
+      [_value] ->
         flag_error("#{name} must be an integer >= #{min}")
+
+      _ ->
+        flag_error("#{name} may be provided only once")
     end
   end
 
@@ -227,6 +236,7 @@ defmodule J2AD do
     content
     |> String.split("\n")
     |> Enum.with_index(1)
+    |> Enum.map(fn {line, lineno} -> {strip_inline_comment(line), lineno} end)
     |> Enum.reject(fn {line, _} ->
       t = String.trim(line)
       t == "" or String.starts_with?(t, "#")
@@ -241,6 +251,13 @@ defmodule J2AD do
           acc
       end
     end)
+  end
+
+  defp strip_inline_comment(line) do
+    line
+    |> String.split("#", parts: 2)
+    |> hd()
+    |> String.trim()
   end
 
   defp parse_config_entry(acc, key, value, path, lineno) do

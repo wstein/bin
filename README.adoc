@@ -1,3 +1,34 @@
 = My shell scripts
 
 Should be compatible with POSIX shell.
+
+== j2ad
+
+`j2ad` converts JSON to AION delimited syntax. It reads JSON from a file or
+standard input and writes compact output by default:
+
+----
+cat input.json | j2ad
+j2ad --pretty --width 80 input.json output.aion
+----
+
+Supported CLI options:
+
+* `--pretty` / `--no-pretty` toggles expanded output.
+* `--width N` or `--width=N` sets the target pretty-print width. The minimum is
+  `40`.
+* `--object-threshold N` or `--object-threshold=N` expands objects with at
+  least `N` fields even when the compact form fits. Set `0` to disable that
+  heuristic.
+* `--expand-lists` / `--no-expand-lists` toggles expansion of lists containing
+  non-scalar values.
+
+Configuration is read from `~/.j2adrc` and then `.j2adrc`; CLI options override
+both files. Config files accept whole-line and inline `#` comments:
+
+----
+pretty true
+width 80 # keep output readable in terminals
+object_threshold 3
+expand_lists true
+----

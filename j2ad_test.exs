@@ -26,6 +26,19 @@ defmodule J2ADTest do
   defp pretty(json, overrides \\ %{}),
     do: J2AD.convert!(json, opts(Map.merge(%{pretty?: true}, overrides)))
 
+  defp run_cli(args, input) do
+    path = Path.join(System.tmp_dir!(), "j2ad-test-#{System.unique_integer([:positive])}.json")
+    File.write!(path, input)
+
+    try do
+      System.cmd("env", ["-u", "J2AD_TESTING", "elixir", "j2ad" | args ++ [path]],
+        stderr_to_stdout: true
+      )
+    after
+      File.rm(path)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Compact: objects
   # ---------------------------------------------------------------------------
@@ -326,6 +339,20 @@ defmodule J2ADTest do
       assert J2AD.parse_config_text("# comment\nwidth 80\n# another") == %{width: 80}
     end
 
+    test "inline # comments are ignored after values" do
+      config = """
+      width 80 # keep compact lines readable
+      object_threshold 0 # disable expansion heuristic
+      pretty true # expand root objects
+      """
+
+      assert J2AD.parse_config_text(config) == %{
+               width: 80,
+               object_threshold: 0,
+               pretty?: true
+             }
+    end
+
     test "blank lines are ignored" do
       assert J2AD.parse_config_text("\n\nwidth 80\n\n") == %{width: 80}
     end
@@ -403,6 +430,32 @@ defmodule J2ADTest do
         end)
 
       assert result == %{width: 80, object_threshold: 2}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # CLI options
+  # ---------------------------------------------------------------------------
+
+  describe "CLI options" do
+    test "accepts --width N with OptionParser argument style" do
+      {output, 0} =
+        run_cli(
+          ["--pretty", "--width", "40", "--object-threshold", "0"],
+          ~s|{"outer":{"longkey1":"longvalue1","longkey2":"longvalue2"}}|
+        )
+
+      assert output == "{\n  outer {\n    longkey1 longvalue1\n    longkey2 longvalue2\n  }\n}\n"
+    end
+
+    test "still accepts --width=N and --object-threshold=N" do
+      {output, 0} =
+        run_cli(
+          ["--pretty", "--width=1000", "--object-threshold=0"],
+          ~s|{"outer":{"x":1,"y":2,"z":3}}|
+        )
+
+      assert output == "{\n  outer {x 1 y 2 z 3}\n}\n"
     end
   end
 
