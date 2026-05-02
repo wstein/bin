@@ -5,11 +5,25 @@ defmodule J2AI do
 
   @usage """
   Usage:
-    j2ai.exs INPUT.json
-    j2ai.exs INPUT.json OUTPUT.aion
-    cat INPUT.json | j2ai.exs
+    j2ai [options] [INPUT.json [OUTPUT.aion]]
+    cat INPUT.json | j2ai [options]
 
   Converts JSON to AION indented syntax.
+
+  Options:
+    --width N                 Target line width for single-line lists
+                              (default: 100, min: 40)
+    --single-line-lists       Render scalar-only lists on one line when they fit
+    --no-single-line-lists    Always render lists as blocks
+
+  Config file (~/.j2airc or .j2airc in the current directory):
+    width              N
+    single_line_lists  true|false
+
+  Options may also use --width=N. Config files support whole-line and inline
+  # comments.
+
+  CLI flags override .j2airc which overrides ~/.j2airc which overrides defaults.
 
   Examples:
     {"name":"Tom","age":100,"tags":["user","admin","a b c"]}
@@ -19,10 +33,7 @@ defmodule J2AI do
     record
       name Tom
       age 100
-      tags list
-        user
-        admin
-        "a b c"
+      tags [user admin "a b c"]
   """
 
   @reserved_atoms MapSet.new([
@@ -37,9 +48,12 @@ defmodule J2AI do
   @unsafe_atom_chars ~r/[\s{}\[\]"]/
 
   @indent_unit 2
+  @default_width 100
 
   def main(argv) do
-    case argv do
+    {opts, args} = parse_args(argv)
+
+    case args do
       ["-h"] ->
         IO.write(@usage)
 
@@ -48,18 +62,18 @@ defmodule J2AI do
 
       [] ->
         read_stdin()
-        |> convert_and_write(:stdio)
+        |> convert_and_write(:stdio, opts)
 
       [input] ->
         input
         |> File.read!()
-        |> convert_and_write(:stdio)
+        |> convert_and_write(:stdio, opts)
 
       [input, output] ->
         rendered =
           input
           |> File.read!()
-          |> convert!()
+          |> convert!(opts)
 
         File.write!(output, rendered <> "\n")
 
@@ -81,23 +95,193 @@ defmodule J2AI do
       System.halt(1)
   end
 
+  defp default_opts do
+    %{
+      width: @default_width,
+      single_line_lists: true
+    }
+  end
+
+  defp parse_args(argv) do
+    {cli_opts, args, invalid} =
+      OptionParser.parse(argv,
+        strict: [
+          width: :integer,
+          single_line_lists: :boolean,
+          help: :boolean
+        ],
+        aliases: [h: :help]
+      )
+
+    if invalid != [] do
+      invalid_option_error(invalid)
+    end
+
+    opts =
+      default_opts()
+      |> merge_config(load_config(Path.expand("~/.j2airc")))
+      |> merge_config(load_config(".j2airc"))
+      |> merge_cli_flags(cli_opts)
+
+    if Keyword.get(cli_opts, :help, false) do
+      {opts, ["--help" | args]}
+    else
+      {opts, args}
+    end
+  end
+
+  defp merge_config(opts, extra), do: Map.merge(opts, extra)
+
+  defp invalid_option_error(invalid) do
+    cond do
+      Enum.any?(invalid, &(elem(&1, 0) == "--width")) ->
+        flag_error("--width must be an integer >= 40")
+
+      true ->
+        invalid
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.join(", ")
+        |> then(&flag_error("unknown option(s): #{&1}"))
+    end
+  end
+
+  defp merge_cli_flags(opts, cli_opts) do
+    %{
+      opts
+      | width: cli_int(cli_opts, :width, "--width", opts.width, min: 40),
+        single_line_lists: cli_bool(cli_opts, :single_line_lists, opts.single_line_lists)
+    }
+  end
+
+  defp cli_bool(cli_opts, key, default) do
+    values = Keyword.get_values(cli_opts, key)
+
+    cond do
+      false in values -> false
+      true in values -> true
+      true -> default
+    end
+  end
+
+  defp cli_int(cli_opts, key, name, default, min: min) do
+    case Keyword.get_values(cli_opts, key) do
+      [] ->
+        default
+
+      [value] when is_integer(value) and value >= min ->
+        value
+
+      [_value] ->
+        flag_error("#{name} must be an integer >= #{min}")
+
+      _ ->
+        flag_error("#{name} may be provided only once")
+    end
+  end
+
+  defp flag_error(msg) do
+    IO.puts(:stderr, "error: #{msg}")
+    System.halt(64)
+  end
+
+  defp load_config(path) do
+    case File.read(path) do
+      {:ok, content} ->
+        parse_config(content, path)
+
+      {:error, :enoent} ->
+        %{}
+
+      {:error, reason} ->
+        IO.puts(:stderr, "warning: cannot read #{path}: #{:file.format_error(reason)}")
+        %{}
+    end
+  end
+
+  defp parse_config(content, path) do
+    content
+    |> String.split("\n")
+    |> Enum.with_index(1)
+    |> Enum.map(fn {line, lineno} -> {strip_inline_comment(line), lineno} end)
+    |> Enum.reject(fn {line, _} -> line == "" end)
+    |> Enum.reduce(%{}, fn {line, lineno}, acc ->
+      case String.split(line, ~r/\s+/, parts: 2) do
+        [key, value] ->
+          parse_config_entry(acc, key, String.trim(value), path, lineno)
+
+        _ ->
+          IO.puts(:stderr, "warning: #{path}:#{lineno}: malformed line, ignoring")
+          acc
+      end
+    end)
+  end
+
+  defp strip_inline_comment(line) do
+    line
+    |> String.split("#", parts: 2)
+    |> hd()
+    |> String.trim()
+  end
+
+  defp parse_config_entry(acc, key, value, path, lineno) do
+    warn = fn msg -> IO.puts(:stderr, "warning: #{path}:#{lineno}: #{msg}, ignoring") end
+
+    case key do
+      "width" ->
+        case Integer.parse(value) do
+          {n, ""} when n >= 40 ->
+            Map.put(acc, :width, n)
+
+          _ ->
+            warn.("width must be an integer >= 40")
+            acc
+        end
+
+      "single_line_lists" ->
+        case parse_bool(value) do
+          {:ok, b} ->
+            Map.put(acc, :single_line_lists, b)
+
+          :error ->
+            warn.("single_line_lists must be true/false/on/off/yes/no")
+            acc
+        end
+
+      _ ->
+        warn.("unknown key #{inspect(key)}")
+        acc
+    end
+  end
+
+  defp parse_bool(v) do
+    case String.downcase(v) do
+      s when s in ["true", "on", "yes", "1"] -> {:ok, true}
+      s when s in ["false", "off", "no", "0"] -> {:ok, false}
+      _ -> :error
+    end
+  end
+
   defp read_stdin do
     IO.read(:stdio, :eof)
   end
 
-  defp convert_and_write(json_text, :stdio) do
-    IO.puts(convert!(json_text))
+  defp convert_and_write(json_text, :stdio, opts) do
+    IO.puts(convert!(json_text, opts))
   end
 
-  defp convert!(json_text) do
+  @doc false
+  def convert!(json_text, opts \\ default_opts()) do
     value = decode!(json_text)
 
     [
       # "contract urn:aion:indented",
-      render_root(value)
+      render_root(value, opts)
     ]
     |> Enum.join("\n")
   end
+
+  @doc false
+  def parse_config_text(text), do: parse_config(text, "<text>")
 
   defp decode!(json_text) do
     decoders = [
@@ -134,75 +318,97 @@ defmodule J2AI do
     end
   end
 
-  defp render_root({:object, entries}) do
-    ["record" | render_record_fields(entries, 1)]
+  defp render_root({:object, entries}, opts) do
+    ["record" | render_record_fields(entries, 1, opts)]
     |> Enum.join("\n")
   end
 
-  defp render_root(value) when is_list(value) do
-    ["list" | render_list_items(value, 1)]
+  defp render_root(value, opts) when is_list(value) do
+    ["list" | render_list_items(value, 1, opts)]
     |> Enum.join("\n")
   end
 
-  defp render_root(value) do
+  defp render_root(value, _opts) do
     render_scalar(value)
   end
 
-  defp render_record_fields(entries, level) do
+  defp render_record_fields(entries, level, opts) do
     Enum.flat_map(entries, fn {key, value} ->
-      render_field(key, value, level)
+      render_field(key, value, level, opts)
     end)
   end
 
-  defp render_field(key, {:object, entries}, level) do
+  defp render_field(key, {:object, entries}, level, opts) do
     indent = indent(level)
 
     [
       "#{indent}#{render_key(key)} record"
-      | render_record_fields(entries, level + 1)
+      | render_record_fields(entries, level + 1, opts)
     ]
   end
 
-  defp render_field(key, value, level) when is_list(value) do
+  defp render_field(key, value, level, opts) when is_list(value) do
     indent = indent(level)
+    key_text = render_key(key)
+    compact = render_compact_list(value)
 
-    [
-      "#{indent}#{render_key(key)} list"
-      | render_list_items(value, level + 1)
-    ]
+    if compact && fits?(key_text <> " " <> compact, level, opts) do
+      ["#{indent}#{key_text} #{compact}"]
+    else
+      [
+        "#{indent}#{key_text} list"
+        | render_list_items(value, level + 1, opts)
+      ]
+    end
   end
 
-  defp render_field(key, value, level) do
+  defp render_field(key, value, level, _opts) do
     indent = indent(level)
     ["#{indent}#{render_key(key)} #{render_scalar(value)}"]
   end
 
-  defp render_list_items(list, level) do
+  defp render_list_items(list, level, opts) do
     Enum.flat_map(list, fn value ->
-      render_list_item(value, level)
+      render_list_item(value, level, opts)
     end)
   end
 
-  defp render_list_item({:object, entries}, level) do
+  defp render_list_item({:object, entries}, level, opts) do
     indent = indent(level)
 
     [
       "#{indent}record"
-      | render_record_fields(entries, level + 1)
+      | render_record_fields(entries, level + 1, opts)
     ]
   end
 
-  defp render_list_item(value, level) when is_list(value) do
+  defp render_list_item(value, level, opts) when is_list(value) do
     indent = indent(level)
+    compact = render_compact_list(value)
 
-    [
-      "#{indent}list"
-      | render_list_items(value, level + 1)
-    ]
+    if compact && fits?(compact, level, opts) do
+      ["#{indent}#{compact}"]
+    else
+      [
+        "#{indent}list"
+        | render_list_items(value, level + 1, opts)
+      ]
+    end
   end
 
-  defp render_list_item(value, level) do
+  defp render_list_item(value, level, _opts) do
     ["#{indent(level)}#{render_scalar(value)}"]
+  end
+
+  defp render_compact_list(list) do
+    if Enum.all?(list, &scalar?/1) do
+      inner = list |> Enum.map(&render_scalar/1) |> Enum.join(" ")
+      "[" <> inner <> "]"
+    end
+  end
+
+  defp fits?(text, level, opts) do
+    opts.single_line_lists and String.length(text) + level * @indent_unit <= opts.width
   end
 
   defp render_key(key) when is_binary(key) do
@@ -247,9 +453,15 @@ defmodule J2AI do
     :erlang.float_to_binary(value, [:short])
   end
 
+  defp scalar?(value) do
+    is_binary(value) or is_integer(value) or is_float(value) or is_boolean(value) or is_nil(value)
+  end
+
   defp indent(level) do
     String.duplicate(" ", level * @indent_unit)
   end
 end
 
-J2AI.main(System.argv())
+unless System.get_env("J2AI_TESTING") do
+  J2AI.main(System.argv())
+end
