@@ -112,3 +112,20 @@ Top-level JSON strings are emitted as quoted AION strings. Strings inside
 objects and arrays use the compact delimited rendering rules: ordinary strings
 may be bare, while reserved literals, number-like strings, strings with
 whitespace, and control-character strings are quoted and escaped.
+
+== Development
+
+Format the Elixir scripts and tests before committing:
+
+----
+mix format
+mix format --check-formatted
+----
+
+Run the converter test suites directly:
+
+----
+elixir test/j2ad_test.exs
+elixir test/j2ai_test.exs
+elixir test/j2as_test.exs
+----

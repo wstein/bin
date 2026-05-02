@@ -1,7 +1,7 @@
 #!/usr/bin/env elixir
 
 System.put_env("J2AS_TESTING", "true")
-Code.require_file("j2as", __DIR__)
+Code.require_file("../j2as", __DIR__)
 
 ExUnit.start()
 

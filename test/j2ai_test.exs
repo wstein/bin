@@ -1,7 +1,7 @@
 #!/usr/bin/env elixir
 
 System.put_env("J2AI_TESTING", "true")
-Code.require_file("j2ai", __DIR__)
+Code.require_file("../j2ai", __DIR__)
 
 ExUnit.start()
 

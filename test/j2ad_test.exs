@@ -2,7 +2,7 @@
 
 # Load the module without executing main().
 System.put_env("J2AD_TESTING", "true")
-Code.require_file("j2ad", __DIR__)
+Code.require_file("../j2ad", __DIR__)
 
 ExUnit.start()
 
