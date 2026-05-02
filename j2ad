@@ -15,16 +15,23 @@ defmodule J2AD do
     {"name":"Tom","age":100,"tags":["user","admin","a b c"]}
     -> {name Tom age 100 tags [user admin "a b c"]}
 
-  Pretty output:
+  Pretty output uses fuzzy layout rules:
+    - Scalars and small structures stay inline when they fit.
+    - Objects with 3+ fields are always expanded (opening brace on same line as key).
+    - Lists containing non-scalar elements are always expanded.
+    - Opening { and [ stay on the same line as the key name.
+
+  Example:
     {
       name Tom
       age 100
       tags [user admin "a b c"]
-      meta {active true empty null}
+      address {
+        street "1 Main St"
+        city Springfield
+      }
+      meta {active true}
     }
-
-  Compact pretty output keeps nested records/lists inline when they fit within
-  the configured width budget.
   """
 
   @reserved_atoms MapSet.new([
@@ -214,7 +221,7 @@ defmodule J2AD do
   defp render_pretty({:object, entries} = obj, level, opts) do
     compact = render_compact(obj)
 
-    if level > 0 and fits?(compact, level, opts) do
+    if level > 0 and fits?(compact, level, opts) and not should_expand?(obj) do
       compact
     else
       render_record_block(entries, level, opts)
@@ -224,7 +231,7 @@ defmodule J2AD do
   defp render_pretty(value, level, opts) when is_list(value) do
     compact = render_compact(value)
 
-    if fits?(compact, level, opts) do
+    if fits?(compact, level, opts) and not should_expand?(value) do
       compact
     else
       render_list_block(value, level, opts)
@@ -237,8 +244,6 @@ defmodule J2AD do
     if entries == [] do
       "{}"
     else
-      open = "{"
-
       body =
         entries
         |> Enum.map(fn {key, child} ->
@@ -248,7 +253,7 @@ defmodule J2AD do
 
       close = indent(level) <> "}"
 
-      Enum.join([open, body, close], "\n")
+      Enum.join(["{", body, close], "\n")
     end
   end
 
@@ -262,15 +267,16 @@ defmodule J2AD do
       scalar?(child) ->
         line_prefix <> render_scalar(child)
 
-      fits?(compact_child, level, opts, String.length(key_text) + 1) ->
+      fits?(compact_child, level, opts, String.length(key_text) + 1) and
+          not should_expand?(child) ->
         line_prefix <> compact_child
 
       match?({:object, _}, child) ->
         {:object, entries} = child
-        line_prefix <> "\n" <> render_nested_record_block(entries, level, opts)
+        line_prefix <> render_object_block_inline(entries, level, opts)
 
       is_list(child) ->
-        line_prefix <> "\n" <> render_nested_list_block(child, level, opts)
+        line_prefix <> render_list_block_inline(child, level, opts)
     end
   end
 
@@ -278,8 +284,6 @@ defmodule J2AD do
     if list == [] do
       "[]"
     else
-      open = "["
-
       body =
         list
         |> Enum.map(fn child ->
@@ -289,33 +293,29 @@ defmodule J2AD do
 
       close = indent(level) <> "]"
 
-      Enum.join([open, body, close], "\n")
+      Enum.join(["[", body, close], "\n")
     end
   end
 
-  defp render_nested_record_block(entries, level, opts) do
-    open = indent(level) <> "{"
-
-    body =
-      entries
-      |> Enum.map(fn {key, child} ->
-        render_record_line(key, child, level + 1, opts)
-      end)
-      |> Enum.join("\n")
-
-    close = indent(level) <> "}"
-
-    Enum.join([open, body, close], "\n")
-  end
-
-  defp render_nested_list_block(list, level, opts) do
-    compact = render_compact(list)
-
-    if fits?(compact, level, opts) do
-      indent(level) <> compact
+  defp render_object_block_inline(entries, level, opts) do
+    if entries == [] do
+      "{}"
     else
-      open = indent(level) <> "["
+      body =
+        entries
+        |> Enum.map(fn {key, child} ->
+          render_record_line(key, child, level + 1, opts)
+        end)
+        |> Enum.join("\n")
 
+      "{\n" <> body <> "\n" <> indent(level) <> "}"
+    end
+  end
+
+  defp render_list_block_inline(list, level, opts) do
+    if list == [] do
+      "[]"
+    else
       body =
         list
         |> Enum.map(fn child ->
@@ -323,11 +323,16 @@ defmodule J2AD do
         end)
         |> Enum.join("\n")
 
-      close = indent(level) <> "]"
-
-      Enum.join([open, body, close], "\n")
+      "[\n" <> body <> "\n" <> indent(level) <> "]"
     end
   end
+
+  # Fuzzy heuristics: expand even when compact form fits within width.
+  # Objects with 3+ fields and lists with any non-scalar element are expanded
+  # so that complex structures remain readable at a glance.
+  defp should_expand?({:object, entries}), do: length(entries) > 2
+  defp should_expand?(list) when is_list(list), do: Enum.any?(list, &(not scalar?(&1)))
+  defp should_expand?(_), do: false
 
   defp fits?(text, level, opts, extra_prefix_len \\ 0) do
     String.length(text) + level * @indent_unit + extra_prefix_len <= opts.width
