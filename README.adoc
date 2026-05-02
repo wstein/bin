@@ -36,3 +36,31 @@ width 80 # keep output readable in terminals
 object_threshold 3
 expand_lists true
 ----
+
+== j2ai
+
+`j2ai` converts JSON to AION indented syntax. It reads JSON from a file or
+standard input and writes scalar-only lists on one line when they fit:
+
+----
+cat input.json | j2ai
+j2ai --width 80 --no-single-line-lists input.json output.aion
+----
+
+Supported CLI options:
+
+* `--width N` or `--width=N` sets the target width for single-line lists. The
+  minimum is `40`.
+* `--single-line-lists` / `--no-single-line-lists` toggles compact rendering for
+  scalar-only lists.
+
+Configuration is read from `~/.j2airc` and then `.j2airc`; CLI options override
+both files. Config files accept whole-line and inline `#` comments:
+
+----
+width 80 # keep list fields readable in terminals
+single_line_lists true
+----
+
+Lists containing objects or nested non-scalar values remain expanded so the
+indented structure stays clear.
