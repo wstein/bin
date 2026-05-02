@@ -240,6 +240,25 @@ defmodule J2ADTest do
     test "list stays compact when it fits within a narrow width" do
       assert pretty(~s|{"x":[1,2]}|, %{width: 40}) == "{\n  x [1 2]\n}"
     end
+
+    test "very large width keeps nested objects compact when heuristics are disabled" do
+      assert pretty(~s|{"outer":{"x":1,"y":2,"z":3}}|, %{
+               width: 10_000,
+               object_threshold: 0
+             }) == "{\n  outer {x 1 y 2 z 3}\n}"
+    end
+
+    test "zero width expands nested structures without crashing" do
+      assert pretty(~s|{"outer":{"x":1}}|, %{width: 0, object_threshold: 0}) ==
+               "{\n  outer {\n    x 1\n  }\n}"
+    end
+
+    test "root array with nested objects expands predictably" do
+      assert pretty(~s|[{"id":1,"meta":{"ok":true}},{"id":2,"meta":{"ok":false}}]|, %{
+               object_threshold: 2
+             }) ==
+               "[\n  {\n    id 1\n    meta {ok true}\n  }\n  {\n    id 2\n    meta {ok false}\n  }\n]"
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -493,6 +512,14 @@ defmodule J2ADTest do
     test "control characters are escaped" do
       assert compact(~S|{"k":"a\nb"}|) == ~s|{k "a\\nb"}|
       assert compact(~S|{"k":"a\tb"}|) == ~s|{k "a\\tb"}|
+    end
+
+    test "backspace and formfeed control characters are escaped" do
+      assert compact(~S|{"k":"a\bb\fc"}|) == ~s|{k "a\\bb\\fc"}|
+    end
+
+    test "other JSON control characters use unicode escapes" do
+      assert compact(~S|{"k":"a\u0001b"}|) == ~s|{k "a\\u0001b"}|
     end
   end
 

@@ -12,6 +12,10 @@ cat input.json | j2ad
 j2ad --pretty --width 80 input.json output.aion
 ----
 
+Strings that are valid AION atoms are emitted bare. Strings that need quoting
+escape JSON-sensitive characters, including quotes, backslashes, newlines,
+tabs, backspace, formfeed, and other control characters.
+
 Supported CLI options:
 
 * `--pretty` / `--no-pretty` toggles expanded output.

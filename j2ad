@@ -563,20 +563,32 @@ defmodule J2AD do
 
   defp safe_atom?(value) do
     not MapSet.member?(@reserved_atoms, value) and
-      not String.match?(value, @unsafe_atom_chars)
+      not String.match?(value, @unsafe_atom_chars) and
+      not Enum.any?(String.to_charlist(value), &(&1 < 0x20))
   end
 
   defp render_string(value) do
-    escaped =
-      value
-      |> String.replace("\\", "\\\\")
-      |> String.replace("\"", "\\\"")
-      |> String.replace("\n", "\\n")
-      |> String.replace("\r", "\\r")
-      |> String.replace("\t", "\\t")
+    escaped = value |> String.to_charlist() |> Enum.map_join(&escape_string_char/1)
 
     "\"" <> escaped <> "\""
   end
+
+  defp escape_string_char(?\\), do: "\\\\"
+  defp escape_string_char(?"), do: "\\\""
+  defp escape_string_char(?\b), do: "\\b"
+  defp escape_string_char(?\f), do: "\\f"
+  defp escape_string_char(?\n), do: "\\n"
+  defp escape_string_char(?\r), do: "\\r"
+  defp escape_string_char(?\t), do: "\\t"
+
+  defp escape_string_char(char) when char < 0x20 do
+    char
+    |> Integer.to_string(16)
+    |> String.pad_leading(4, "0")
+    |> then(&"\\u#{&1}")
+  end
+
+  defp escape_string_char(char), do: <<char::utf8>>
 
   defp render_float(value) do
     :erlang.float_to_binary(value, [:short])
